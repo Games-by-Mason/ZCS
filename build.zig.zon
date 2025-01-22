@@ -1,0 +1,18 @@
+.{
+    .name = "zcs",
+    .version = "0.0.0",
+    .minimum_zig_version = "0.14.0-dev.2544+94df665fe",
+    .dependencies = .{
+        .slot_map = .{
+            .url = "https://github.com/Games-by-Mason/SlotMap/archive/301f27fbf708792403ef1c2a3731ba047b248e05.tar.gz",
+            .hash = "1220e195fce03a02a13c90b2a3bdbb2556cb581e84de4ca12524ac4d4c7d6d8faf59",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "LICENSE",
+        "README.md",
+    },
+}
