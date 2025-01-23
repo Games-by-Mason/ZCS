@@ -36,20 +36,27 @@ const CommandBuffer = @This();
 
 const meta = @import("meta.zig");
 
-/// All entities queued for destruction.
-destroy_queue: std.ArrayListUnmanaged(Entity),
 tags: std.ArrayListUnmanaged(SubCmd.Tag),
 args: std.ArrayListUnmanaged(u64),
 comp_buf: std.ArrayListAlignedUnmanaged(u8, Entities.max_align),
+/// Each create command pops an entity from reserved. It is allowable to peek at this array to
+/// gain access to entity IDs before the create command is issued.
+reserved: std.ArrayListUnmanaged(Entity),
+/// All entities queued for destruction.
+destroy_queue: std.ArrayListUnmanaged(Entity),
 
 /// Initializes a command buffer with at least enough capacity for the given number of commands.
-pub fn init(gpa: Allocator, es: *const Entities, capacity: usize) Allocator.Error!@This() {
-    return initSeparateCapacities(gpa, .initFromCmds(es, capacity));
+pub fn init(gpa: Allocator, es: *Entities, capacity: usize) error{ OutOfMemory, Overflow }!@This() {
+    return initSeparateCapacities(gpa, es, .initFromCmds(es, capacity));
 }
 
 /// Initializes the command buffer with separate capacities for each internal buffer. Generally, you
 /// should prefer `init`.
-pub fn initSeparateCapacities(gpa: Allocator, capacities: Capacities) Allocator.Error!@This() {
+pub fn initSeparateCapacities(
+    gpa: Allocator,
+    es: *Entities,
+    capacities: Capacities,
+) error{ OutOfMemory, Overflow }!@This() {
     comptime assert(Component.Id.max < std.math.maxInt(u64));
 
     var tags: std.ArrayListUnmanaged(SubCmd.Tag) = try .initCapacity(gpa, capacities.tags);
@@ -67,16 +74,25 @@ pub fn initSeparateCapacities(gpa: Allocator, capacities: Capacities) Allocator.
     var destroy_queue: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacities.destroy);
     errdefer destroy_queue.deinit(gpa);
 
+    var reserved: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacities.reserved);
+    errdefer reserved.deinit(gpa);
+    _ = es;
+    // for (0..reserved.capacity) |_| {
+    //     reserved.appendAssumeCapacity(try Entity.createChecked(es, .{}));
+    // }
+
     return .{
         .tags = tags,
         .args = args,
         .comp_buf = comp_buf,
         .destroy_queue = destroy_queue,
+        .reserved = reserved,
     };
 }
 
 /// Destroys the command buffer.
 pub fn deinit(self: *@This(), gpa: Allocator) void {
+    self.reserved.deinit(gpa);
     self.destroy_queue.deinit(gpa);
     self.comp_buf.deinit(gpa);
     self.args.deinit(gpa);
@@ -673,6 +689,7 @@ pub const ComponentIterator = struct {
 
 /// Per buffer capacity.
 pub const Capacities = struct {
+    reserved: usize,
     tags: usize,
     args: usize,
     comp_buf: usize,
@@ -681,6 +698,9 @@ pub const Capacities = struct {
     /// Sets each buffer capacity to be at least enough for the given number of commands.
     pub fn initFromCmds(es: *const Entities, cmds: usize) Capacities {
         _ = rename_when_changing_encoding;
+
+        // We can at most create one entity per command.
+        const reserved_cap = cmds;
 
         // Worst case component data size. Technically we could make this slightly tighter since
         // alignment must be a power of two, but this calculation is much simpler.
@@ -709,6 +729,7 @@ pub const Capacities = struct {
         const destroy_cap = cmds;
 
         return .{
+            .reserved = reserved_cap,
             .tags = tags_cap,
             .args = args_cap,
             .comp_buf = comp_buf_cap,

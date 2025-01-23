@@ -77,7 +77,7 @@ test "command buffers" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    const capacity = 10000;
+    const capacity = 100000;
 
     const comps: []const type = &.{ Key, RigidBody, Model, Tag };
 
@@ -723,11 +723,12 @@ test "command buffer overflow" {
 
     // Tag/destroy overflow
     {
-        var cb = try zcs.CommandBuffer.initSeparateCapacities(gpa, .{
+        var cb = try zcs.CommandBuffer.initSeparateCapacities(gpa, &es, .{
             .tags = 0,
             .args = 100,
             .comp_buf = 100,
             .destroy = 0,
+            .reserved = 100,
         });
         defer cb.deinit(gpa);
 
@@ -748,11 +749,12 @@ test "command buffer overflow" {
 
     // Arg overflow
     {
-        var cb = try zcs.CommandBuffer.initSeparateCapacities(gpa, .{
+        var cb = try zcs.CommandBuffer.initSeparateCapacities(gpa, &es, .{
             .tags = 100,
             .args = 0,
             .comp_buf = 100,
             .destroy = 100,
+            .reserved = 100,
         });
         defer cb.deinit(gpa);
 
@@ -779,11 +781,12 @@ test "command buffer overflow" {
 
     // Component data overflow
     {
-        var cb = try zcs.CommandBuffer.initSeparateCapacities(gpa, .{
+        var cb = try zcs.CommandBuffer.initSeparateCapacities(gpa, &es, .{
             .tags = 100,
             .args = 100,
             .comp_buf = @sizeOf(RigidBody) * 2 - 1,
             .destroy = 100,
+            .reserved = 100,
         });
         defer cb.deinit(gpa);
 
