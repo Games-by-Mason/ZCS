@@ -127,36 +127,37 @@ test "command buffer create empty" {
 
     try expectEqual(0, es.count());
 
-    cb.create(&es, .{});
-    cb.createFromComponents(&es, &.{});
+    const e0 = cb.create(&es, .{});
+    const e1 = cb.createFromComponents(&es, &.{});
     const rb = RigidBody.random(rand);
     const model = Model.random(rand);
-    cb.create(&es, .{rb});
+    const e2 = cb.create(&es, .{rb});
     cb.submit(&es);
     cb.clear();
 
     try expectEqual(3, es.count());
 
+    // Entities are currently used in reverse order from how they're reserved
     var iter = es.iterator(.{});
 
-    var e0 = iter.next().?;
-    try expectEqual(null, e0.getComponent(&es, RigidBody));
-    try expectEqual(null, e0.getComponent(&es, Model));
-    try expectEqual(null, e0.getComponent(&es, Tag));
-
-    var e1 = iter.next().?;
-    try expectEqual(null, e1.getComponent(&es, RigidBody));
-    try expectEqual(null, e1.getComponent(&es, Model));
-    try expectEqual(null, e1.getComponent(&es, Tag));
-
-    var e2 = iter.next().?;
+    try expect(e2.eql(iter.next().?));
     try expectEqual(rb, e2.getComponent(&es, RigidBody).?.*);
     try expectEqual(null, e2.getComponent(&es, Model));
     try expectEqual(null, e2.getComponent(&es, Tag));
 
+    try expect(e1.eql(iter.next().?));
+    try expectEqual(null, e1.getComponent(&es, RigidBody));
+    try expectEqual(null, e1.getComponent(&es, Model));
+    try expectEqual(null, e1.getComponent(&es, Tag));
+
+    try expect(iter.next().?.eql(e0));
+    try expectEqual(null, e0.getComponent(&es, RigidBody));
+    try expectEqual(null, e0.getComponent(&es, Model));
+    try expectEqual(null, e0.getComponent(&es, Tag));
+
     try expectEqual(null, iter.next());
 
-    // We don't check eql anywhere else, verify it compiles here. The details are tested more
+    // We don't check eql anywhere else, quickly check it here. The details are tested more
     // extensively on slot map.
     try expect(e1.eql(e1));
     try expect(!e1.eql(e2));
@@ -205,7 +206,7 @@ test "command buffer skip dups" {
 
     {
         defer cb.clear();
-        cb.createFromComponents(&es, &.{
+        _ = cb.createFromComponents(&es, &.{
             .init(&es, &model1),
             .init(&es, &RigidBody{}),
             .init(&es, &model2),
@@ -297,37 +298,37 @@ test "command buffer interning" {
     const e1: zcs.Entity = .{ .key = .{ .index = 1, .generation = @enumFromInt(2) } };
 
     // Create non optional
-    cb.create(&es, .{ rb_interned, model_value });
-    cb.create(&es, .{ rb_value, model_interned });
-    cb.createFromComponents(&es, &.{
+    _ = cb.create(&es, .{ rb_interned, model_value });
+    _ = cb.create(&es, .{ rb_value, model_interned });
+    _ = cb.createFromComponents(&es, &.{
         .initInterned(&es, &rb_interned),
         .init(&es, &model_value),
     });
-    cb.createFromComponents(&es, &.{
+    _ = cb.createFromComponents(&es, &.{
         .init(&es, &rb_value),
         .initInterned(&es, &model_interned),
     });
 
     // Create optional
-    cb.create(&es, .{ rb_interned_optional, model_value_optional });
-    cb.create(&es, .{ rb_value_optional, model_interned_optional });
-    cb.createFromComponents(&es, &.{
+    _ = cb.create(&es, .{ rb_interned_optional, model_value_optional });
+    _ = cb.create(&es, .{ rb_value_optional, model_interned_optional });
+    _ = cb.createFromComponents(&es, &.{
         .initInterned(&es, &rb_interned_optional),
         .init(&es, &model_value_optional),
     });
-    cb.createFromComponents(&es, &.{
+    _ = cb.createFromComponents(&es, &.{
         .init(&es, &rb_value_optional),
         .initInterned(&es, &model_interned_optional),
     });
 
     // Create null
-    cb.create(&es, .{ rb_interned_null, model_value_null });
-    cb.create(&es, .{ rb_value_null, model_interned_null });
-    cb.createFromComponents(&es, &.{
+    _ = cb.create(&es, .{ rb_interned_null, model_value_null });
+    _ = cb.create(&es, .{ rb_value_null, model_interned_null });
+    _ = cb.createFromComponents(&es, &.{
         .init(&es, &model_value_null),
         .initInterned(&es, &rb_interned_null),
     });
-    cb.createFromComponents(&es, &.{
+    _ = cb.createFromComponents(&es, &.{
         .initInterned(&es, &model_interned_null),
         .init(&es, &rb_value_null),
     });
@@ -718,7 +719,7 @@ test "command buffer overflow" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es = try zcs.Entities.init(gpa, 100, &.{ RigidBody, Model, Tag });
+    var es = try zcs.Entities.init(gpa, 200, &.{ RigidBody, Model, Tag });
     defer es.deinit(gpa);
 
     // Tag/destroy overflow
@@ -758,7 +759,7 @@ test "command buffer overflow" {
         });
         defer cb.deinit(gpa, &es);
 
-        cb.create(&es, .{});
+        _ = cb.create(&es, .{});
         try expectError(error.Overflow, cb.createChecked(&es, .{RigidBody.random(rand)}));
         try expectError(error.Overflow, cb.changeArchetypeChecked(
             &es,
@@ -793,7 +794,7 @@ test "command buffer overflow" {
         const e: zcs.Entity = .{ .key = .{ .index = 1, .generation = @enumFromInt(2) } };
         const rb = RigidBody.random(rand);
 
-        cb.create(&es, .{rb});
+        _ = cb.create(&es, .{rb});
         cb.destroy(e);
         try expectError(error.Overflow, cb.createChecked(&es, .{RigidBody.random(rand)}));
         try expectError(error.Overflow, cb.changeArchetypeChecked(
@@ -832,7 +833,7 @@ test "command buffer worst case capacity" {
     {
         // Non interned
         for (0..capacity) |_| {
-            try cb.createFromComponentsChecked(
+            _ = try cb.createFromComponentsChecked(
                 &es,
                 &.{
                     .init(&es, &@as(u0, 0)),
@@ -850,7 +851,7 @@ test "command buffer worst case capacity" {
 
         // Interned
         for (0..capacity) |_| {
-            try cb.createFromComponentsChecked(
+            _ = try cb.createFromComponentsChecked(
                 &es,
                 &.{
                     .initInterned(&es, &@as(u0, 0)),
@@ -871,7 +872,7 @@ test "command buffer worst case capacity" {
         for (0..dups.buffer.len) |i| {
             dups.appendAssumeCapacity(.init(&es, &@as(u128, i)));
         }
-        try cb.createFromComponentsChecked(
+        _ = try cb.createFromComponentsChecked(
             &es,
             dups.constSlice(),
         );
@@ -980,7 +981,7 @@ fn checkRandomCommandBuffer(
                             Tag.randomOrNull(rand),
                         };
                         _ = zcs.Entity.create(expected, comps);
-                        cb.create(actual, comps);
+                        _ = cb.create(actual, comps);
                     } else {
                         // Not optional
                         switch (rand.enumValue(enum {
@@ -997,7 +998,7 @@ fn checkRandomCommandBuffer(
                                     next_key.*,
                                 };
                                 _ = zcs.Entity.create(expected, comps);
-                                cb.create(actual, comps);
+                                _ = cb.create(actual, comps);
                             },
                             .rb => {
                                 const comps = .{
@@ -1005,7 +1006,7 @@ fn checkRandomCommandBuffer(
                                     RigidBody.random(rand),
                                 };
                                 _ = zcs.Entity.create(expected, comps);
-                                cb.create(actual, comps);
+                                _ = cb.create(actual, comps);
                             },
                             .model => {
                                 const comps = .{
@@ -1013,7 +1014,7 @@ fn checkRandomCommandBuffer(
                                     Model.random(rand),
                                 };
                                 _ = zcs.Entity.create(expected, comps);
-                                cb.create(actual, comps);
+                                _ = cb.create(actual, comps);
                             },
                             .tag => {
                                 const comps = .{
@@ -1021,7 +1022,7 @@ fn checkRandomCommandBuffer(
                                     Tag.random(rand),
                                 };
                                 _ = zcs.Entity.create(expected, comps);
-                                cb.create(actual, comps);
+                                _ = cb.create(actual, comps);
                             },
                             .rb_model => {
                                 const comps = .{
@@ -1030,7 +1031,7 @@ fn checkRandomCommandBuffer(
                                     Model.random(rand),
                                 };
                                 _ = zcs.Entity.create(expected, comps);
-                                cb.create(actual, comps);
+                                _ = cb.create(actual, comps);
                             },
                             .rb_tag => {
                                 const comps = .{
@@ -1039,7 +1040,7 @@ fn checkRandomCommandBuffer(
                                     Tag.random(rand),
                                 };
                                 _ = zcs.Entity.create(expected, comps);
-                                cb.create(actual, comps);
+                                _ = cb.create(actual, comps);
                             },
                             .rb_model_tag => {
                                 const comps = .{
@@ -1049,7 +1050,7 @@ fn checkRandomCommandBuffer(
                                     Tag.random(rand),
                                 };
                                 _ = zcs.Entity.create(expected, comps);
-                                cb.create(actual, comps);
+                                _ = cb.create(actual, comps);
                             },
                         }
                     }
@@ -1066,7 +1067,7 @@ fn checkRandomCommandBuffer(
                         .init(expected, &tag),
                     };
                     _ = zcs.Entity.createFromComponents(expected, &comps);
-                    cb.createFromComponents(actual, &comps);
+                    _ = cb.createFromComponents(actual, &comps);
                 }
                 next_key.n += 1;
             },

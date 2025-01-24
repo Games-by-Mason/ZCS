@@ -108,6 +108,7 @@ pub fn clear(self: *@This()) void {
     self.comp_buf.clearRetainingCapacity();
     self.args.clearRetainingCapacity();
     self.tags.clearRetainingCapacity();
+    self.reserved.items.len = self.reserved.capacity;
 }
 
 fn usage(list: anytype) f32 {
@@ -126,12 +127,13 @@ pub fn worstCaseUsage(self: @This()) f32 {
     );
 }
 
-/// Appends a `Entity.create` command.
+/// Appends a `Entity.create` command. Returns a reserved entity that will be committed when the
+/// command buffer is executed, see `Entity.reserve` for more information on reserved entities.
 ///
 /// See `Entity.create` for what types are allowed in `comps`. Comptime fields are passed by
 /// pointer if the underlying type is larger than a pointer.
-pub fn create(self: *@This(), es: *const Entities, comps: anytype) void {
-    self.createChecked(es, comps) catch |err|
+pub fn create(self: *@This(), es: *const Entities, comps: anytype) Entity {
+    return self.createChecked(es, comps) catch |err|
         @panic(@errorName(err));
 }
 
@@ -140,14 +142,21 @@ pub fn createChecked(
     self: *@This(),
     es: *const Entities,
     comps: anytype,
-) error{Overflow}!void {
+) error{Overflow}!Entity {
     // Check the types
     meta.checkComponents(@TypeOf(comps));
     const fields = @typeInfo(@TypeOf(comps)).@"struct".fields;
 
     // Restore the state on failure
+    const restore_reserved_len = self.reserved.items.len;
+    errdefer self.reserved.items.len = restore_reserved_len;
     const restore = self.*;
     errdefer self.* = restore;
+
+    // Get the next reserved entity
+    if (self.reserved.items.len == 0) return error.Overflow;
+    self.reserved.items.len -= 1;
+    const entity = self.reserved.items.ptr[self.reserved.items.len];
 
     // Sort for minimal padding.
     const sorted_fields = comptime meta.alignmentSort(@TypeOf(comps));
@@ -177,6 +186,9 @@ pub fn createChecked(
             }
         }
     }
+
+    // Return the reserved entity
+    return entity;
 }
 
 /// Similar to `create`, but doesn't require compile time types.
@@ -186,8 +198,8 @@ pub fn createFromComponents(
     self: *@This(),
     es: *const Entities,
     comps: []const Component.Optional,
-) void {
-    self.createFromComponentsChecked(es, comps) catch |err|
+) Entity {
+    return self.createFromComponentsChecked(es, comps) catch |err|
         @panic(@errorName(err));
 }
 
@@ -196,14 +208,24 @@ pub fn createFromComponentsChecked(
     self: *@This(),
     es: *const Entities,
     comps: []const Component.Optional,
-) error{Overflow}!void {
+) error{Overflow}!Entity {
+    // Restore the state on failure
+    const restore_reserved_len = self.reserved.items.len;
+    errdefer self.reserved.items.len = restore_reserved_len;
     const restore = self.*;
     errdefer self.* = restore;
+
+    // Get the next reserved entity
+    if (self.reserved.items.len == 0) return error.Overflow;
+    self.reserved.items.len -= 1;
+    const entity = self.reserved.items.ptr[self.reserved.items.len];
 
     // Add all the components in reverse order, skipping any types we've already added. This
     // preserves expected behavior while also conforming to our capacity guarantees.
     try self.subCmd(es, .bind_new_entity);
     try self.addComponents(es, comps);
+
+    return entity;
 }
 
 /// Appends an `Entity.changeArchetype` command.
@@ -328,11 +350,14 @@ pub fn submitChecked(self: *@This(), es: *Entities) error{Overflow}!void {
     while (iter.next()) |cmd| {
         switch (cmd) {
             .create => |args| {
-                const entity = try Entity.createUninitializedChecked(es, args.archetype);
+                try args.entity.changeArchetypeUnintializedChecked(es, .{
+                    .remove = .{},
+                    .add = args.archetype,
+                });
                 var comps = args.componentIterator();
                 while (comps.next()) |comp| {
                     const src = comp.bytes();
-                    const dest = entity.getComponentFromId(es, comp.id).?;
+                    const dest = args.entity.getComponentFromId(es, comp.id).?;
                     @memcpy(dest, src);
                 }
             },
@@ -451,6 +476,7 @@ pub fn iterator(self: *const @This(), es: *const Entities) Iterator {
 pub const Cmd = union(enum) {
     /// Create a new entity with the given archetype and components.
     create: struct {
+        entity: Entity,
         archetype: Component.Flags,
         decoder: SubCmd.Decoder,
 
@@ -591,6 +617,7 @@ const SubCmd = union(enum) {
 pub const Iterator = struct {
     destroy_index: usize = 0,
     decoder: SubCmd.Decoder,
+    committed: usize = 0,
 
     pub fn next(self: *@This()) ?Cmd {
         if (self.nextDestroy()) |entity| {
@@ -631,6 +658,9 @@ pub const Iterator = struct {
                     } };
                 },
                 .bind_new_entity => {
+                    self.committed += 1;
+                    const reserved_index = self.decoder.cb.reserved.capacity - self.committed;
+                    const entity = self.decoder.cb.reserved.items.ptr[reserved_index];
                     const comp_decoder = self.decoder;
                     var archetype: Component.Flags = .{};
                     while (self.decoder.peekTag()) |subcmd| {
@@ -651,6 +681,7 @@ pub const Iterator = struct {
                         }
                     }
                     return .{ .create = .{
+                        .entity = entity,
                         .archetype = archetype,
                         .decoder = comp_decoder,
                     } };

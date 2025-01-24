@@ -274,9 +274,9 @@ pub const Entity = packed struct {
     /// Options for the uninitialized variants of change archetype.
     pub const ChangeArchetypeUninitializedOptions = struct {
         /// Component types to remove.
-        remove: Component.Flags,
+        remove: Component.Flags = .{},
         /// Component types to add.
-        add: Component.Flags,
+        add: Component.Flags = .{},
     };
 
     /// Similar to `changeArchetype`, but does not initialize any added components.
@@ -319,7 +319,10 @@ pub const Entity = packed struct {
         }
         try self.changeArchetypeUnintializedChecked(
             es,
-            .{ .remove = remove, .add = add_flags },
+            .{
+                .remove = remove,
+                .add = add_flags,
+            },
         );
 
         var added: Component.Flags = .{};
