@@ -92,8 +92,35 @@ pub const Entity = packed struct {
     /// Similar to `createUninitialized`, but returns `error.Overflow` when out of space.
     pub fn createUninitializedChecked(es: *Entities, archetype: Component.Flags) error{Overflow}!Entity {
         invalidateIterators(es);
-        const key = try es.slots.put(archetype);
+        const entity = try reserveChecked(es);
+        const slot = es.slots.get(entity.key).?;
+        es.reserved_entities -= 1;
+        slot.* = .{
+            .archetype = archetype,
+            .committed = true,
+        };
+        return entity;
+    }
+
+    /// Reserves an entity key, but doesn't set up storage for it.
+    ///
+    /// Until committed, the entity will behave identically to an entity with no components, but
+    /// will not show up in iteration or factor into `count`.
+    ///
+    /// Does not invalidate iterators.
+    pub fn reserve(es: *Entities) Entity {
+        return reserveChecked(es) catch |err|
+            @panic(@errorName(err));
+    }
+
+    /// Similar to `reserve`, but returns `error.Overflow` when of space.
+    pub fn reserveChecked(es: *Entities) error{Overflow}!Entity {
+        const key = try es.slots.put(.{
+            .archetype = .{},
+            .committed = false,
+        });
         es.live.set(key.index);
+        es.reserved_entities += 1;
         return .{ .key = key };
     }
 
@@ -102,7 +129,8 @@ pub const Entity = packed struct {
     /// Has no effect if the entity has already been destroyed.
     pub fn destroy(self: @This(), es: *Entities) void {
         invalidateIterators(es);
-        if (self.exists(es)) {
+        if (es.slots.get(self.key)) |slot| {
+            if (!slot.committed) es.reserved_entities -= 1;
             es.live.unset(self.key.index);
             es.slots.remove(self.key);
         }
@@ -113,10 +141,17 @@ pub const Entity = packed struct {
         return es.slots.containsKey(self.key);
     }
 
+    /// Returns true if the entity exists and has been committed, otherwise returns false.
+    pub fn committed(self: @This(), es: *const Entities) bool {
+        const slot = es.slots.get(self.key) orelse return false;
+        return slot.committed;
+    }
+
     /// Returns the archetype of the entity. If it has been destroyed, the archetype will be empty.
     pub fn getArchetype(self: @This(), es: *const Entities) Component.Flags {
-        const archetype = es.slots.get(self.key) orelse return .{};
-        return archetype.*;
+        const slot = es.slots.get(self.key) orelse return .{};
+        if (!slot.committed) assert(slot.archetype.eql(.{}));
+        return slot.archetype;
     }
 
     /// Returns true if the entity has the given component type, false otherwise.
@@ -308,9 +343,13 @@ pub const Entity = packed struct {
         options: ChangeArchetypeUninitializedOptions,
     ) error{Overflow}!void {
         invalidateIterators(es);
-        const archetype = es.slots.get(self.key) orelse return;
-        archetype.* = archetype.differenceWith(options.remove);
-        archetype.* = archetype.unionWith(options.add);
+        const slot = es.slots.get(self.key) orelse return;
+        if (!slot.committed) {
+            es.reserved_entities -= 1;
+            slot.committed = true;
+        }
+        slot.archetype = slot.archetype.differenceWith(options.remove);
+        slot.archetype = slot.archetype.unionWith(options.add);
     }
 
     /// Default formatting for `Entity`.

@@ -127,10 +127,13 @@ test "saturate generations" {
     try es.checkViewIterator(rand, struct { entity: zcs.Entity }, 1.0);
     try expectEqual(0, es.count());
 
-    try es.fullCheck();
+    try es.fullCheck(rand);
 }
 
 test "overflow" {
+    var xoshiro_256: std.Random.Xoshiro256 = .init(0);
+    const rand = xoshiro_256.random();
+
     const capacity = 10;
     var es = try Entities.init(capacity);
     defer es.deinit();
@@ -151,7 +154,7 @@ test "overflow" {
     }
     try expectError(error.Overflow, Entity.create(&es, .{}));
 
-    try es.fullCheck();
+    try es.fullCheck(rand);
 }
 
 pub fn doRandomOperations(
@@ -169,6 +172,7 @@ pub fn doRandomOperations(
             iterate,
             full_check,
             access_destroyed,
+            reserve,
         })) {
             .create => {
                 if (rand.boolean()) {
@@ -469,7 +473,7 @@ pub fn doRandomOperations(
                 }
             },
             .full_check => {
-                try es.fullCheck();
+                try es.fullCheck(rand);
             },
             .access_destroyed => {
                 if (Entity.randomDestroyed(es, rand)) |entity| {
@@ -494,10 +498,17 @@ pub fn doRandomOperations(
                     try entity.destroy(es);
                 }
             },
+            .reserve => {
+                const count = try es.count();
+                const reserved = try es.reserved();
+                _ = try Entity.reserve(es);
+                try expectEqual(count, try es.count());
+                try expectEqual(reserved + 1, try es.reserved());
+            },
         }
     }
 
-    try es.fullCheck();
+    try es.fullCheck(rand);
 }
 
 const RandomComponents = struct {

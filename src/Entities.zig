@@ -52,12 +52,18 @@ const ComponentInfo = struct {
     alignment: u8,
 };
 
+const Slot = struct {
+    archetype: Component.Flags,
+    committed: bool,
+};
+
 comp_types: std.AutoArrayHashMapUnmanaged(TypeId, void),
 comp_info: []ComponentInfo,
-slots: SlotMap(Component.Flags, .{}),
+slots: SlotMap(Slot, .{}),
 comps: *[Component.Id.max][]align(max_align) u8,
 live: std.DynamicBitSetUnmanaged,
 iterator_generation: IteratorGeneration = 0,
+reserved_entities: usize = 0,
 
 /// Initializes the entity storage with the given capacity, and registers the given component types.
 pub fn init(
@@ -105,7 +111,7 @@ pub fn init(
         };
     }
 
-    var slots = try SlotMap(Component.Flags, .{}).init(gpa, capacity);
+    var slots = try SlotMap(Slot, .{}).init(gpa, capacity);
     errdefer slots.deinit(gpa);
 
     const comps = try gpa.create([Component.Id.max][]align(max_align) u8);
@@ -152,6 +158,7 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
 /// be detected by `Entity.exists`.
 pub fn reset(self: *@This()) void {
     self.slots.reset();
+    self.reserved_entities = 0;
 }
 
 /// Returns the component ID for the given component type. Panics if the given type was not
@@ -180,7 +187,12 @@ pub fn findComponentId(self: @This(), T: type) ?Component.Id {
 
 /// Returns the current number of entities.
 pub fn count(self: @This()) usize {
-    return self.slots.count();
+    return self.slots.count() - self.reserved_entities;
+}
+
+/// Returns the number of reserved but not committed entities that currently exist.
+pub fn reserved(self: @This()) usize {
+    return self.reserved_entities;
 }
 
 /// If `T` is a pointer to a component, returns the component type. Otherwise returns null.
@@ -232,8 +244,8 @@ pub const Iterator = struct {
             const index = self.index;
             self.index += 1;
             if (self.es.live.isSet(index)) {
-                const archetype = self.es.slots.values[index];
-                if (self.required_comps.subsetOf(archetype)) {
+                const slot = self.es.slots.values[index];
+                if (slot.committed and self.required_comps.subsetOf(slot.archetype)) {
                     return .{ .key = .{
                         .index = index,
                         .generation = self.es.slots.generations[index],
@@ -316,7 +328,9 @@ pub fn ViewIterator(View: type) type {
                         const T = ComponentFromPointer(field.type) orelse {
                             unreachable; // Checked in init
                         };
-                        const archetype = self.es.slots.values[entity.key.index];
+                        const slot = self.es.slots.values[entity.key.index];
+                        assert(slot.committed);
+                        const archetype = slot.archetype;
                         if (@typeInfo(field.type) != .optional or
                             archetype.contains(self.comp_ids[i]))
                         {

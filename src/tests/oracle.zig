@@ -72,7 +72,7 @@ pub fn Oracle(Components: []const type) type {
                 es.checked = false;
 
                 // If the ground truth overflows, make sure the real ECS does too.
-                if (try es.count() == es.capacity) {
+                if (try es.count() + try es.reserved() == es.capacity) {
                     const result = zcs.Entity.createChecked(&es.actual, comps);
                     try std.testing.expectError(error.Overflow, result);
                     return error.Overflow;
@@ -96,6 +96,29 @@ pub fn Oracle(Components: []const type) type {
                 }
                 const entity: Entity = .{ .actual = actual };
                 try es.expected_live.put(gpa, entity, storage);
+
+                // Return the wrapper to the caller.
+                return entity;
+            }
+
+            /// Reserves an entity without committing it in both the ground truth and the ECS.
+            pub fn reserve(es: *Entities) !Entity {
+                es.checked = false;
+
+                // If the ground truth overflows, make sure the real ECS does too.
+                if (try es.count() + try es.reserved() == es.capacity) {
+                    const result = zcs.Entity.reserveChecked(&es.actual);
+                    try std.testing.expectError(error.Overflow, result);
+                    return error.Overflow;
+                }
+
+                // Create the actual entity. This should always succeed if the ground truth
+                // succeeded since no space for components was allocated.
+                const actual = zcs.Entity.reserve(&es.actual);
+
+                // Create the ground truth entity.
+                const entity: Entity = .{ .actual = actual };
+                try es.expected_reserved.put(gpa, entity, {});
 
                 // Return the wrapper to the caller.
                 return entity;
@@ -156,6 +179,7 @@ pub fn Oracle(Components: []const type) type {
                 es.checked = false;
 
                 _ = es.expected_live.swapRemove(self);
+                _ = es.expected_reserved.swapRemove(self);
                 try es.expected_destroyed.put(gpa, self, {});
                 self.actual.destroy(&es.actual);
                 try std.testing.expect(!try self.exists(es));
@@ -164,18 +188,47 @@ pub fn Oracle(Components: []const type) type {
             /// Checks if the entity exists. Tests that the result is the same in ground truth and
             /// actual.
             pub fn exists(self: @This(), es: *const Entities) !bool {
-                const expected = es.expected_live.contains(self);
+                const expected = es.expected_live.contains(self) or es.expected_reserved.contains(self);
                 const actual = self.actual.exists(&es.actual);
                 try std.testing.expectEqual(expected, actual);
                 return actual;
             }
 
-            /// Returns a random valid entity, or null if there are none.
+            /// Checks if the entity has been committed. Tests that the result is the same in ground
+            /// truth and actual.
+            pub fn committed(self: @This(), es: *const Entities) !bool {
+                const expected = try self.exists(es) and !es.expected_reserved.contains(self);
+                const actual = self.actual.committed(&es.actual);
+                try std.testing.expectEqual(expected, actual);
+                return actual;
+            }
+
+            /// Returns a random valid entity, or null if there are none. May return a reserved or
+            /// committed entity.
             pub fn random(es: *const Entities, rand: std.Random) ?Entity {
+                if (rand.boolean()) {
+                    if (randomCommitted(es, rand)) |e| return e;
+                    return randomReserved(es, rand);
+                } else {
+                    if (randomReserved(es, rand)) |e| return e;
+                    return randomCommitted(es, rand);
+                }
+            }
+
+            /// Returns a random committed entity, or null if there are none.
+            pub fn randomCommitted(es: *const Entities, rand: std.Random) ?Entity {
                 const count = es.expected_live.count();
                 if (count == 0) return null;
                 const index = rand.uintLessThan(usize, count);
                 return es.expected_live.keys()[index];
+            }
+
+            /// Returns a random reserved but not committed entity, or null if there are none.
+            pub fn randomReserved(es: *const Entities, rand: std.Random) ?Entity {
+                const count = es.expected_reserved.count();
+                if (count == 0) return null;
+                const index = rand.uintLessThan(usize, count);
+                return es.expected_reserved.keys()[index];
             }
 
             /// Returns a random destroyed entity, or null if there are none.
@@ -246,6 +299,9 @@ pub fn Oracle(Components: []const type) type {
 
                 // Change the archetype of the expected entity
                 if (try self.exists(es)) {
+                    if (es.expected_reserved.swapRemove(self)) {
+                        try es.expected_live.put(gpa, self, .{});
+                    }
                     const storage = es.expected_live.getPtr(self).?;
 
                     inline for (@typeInfo(ComponentFlags).@"struct".fields) |field| {
@@ -298,6 +354,9 @@ pub fn Oracle(Components: []const type) type {
 
                 // Change the archetype of the expected entity
                 if (try self.exists(es)) {
+                    if (es.expected_reserved.swapRemove(self)) {
+                        try es.expected_live.put(gpa, self, .{});
+                    }
                     const storage = es.expected_live.getPtr(self).?;
 
                     inline for (@typeInfo(ComponentFlags).@"struct".fields) |field| {
@@ -337,6 +396,9 @@ pub fn Oracle(Components: []const type) type {
             /// The set of destroyed entities.
             expected_destroyed: std.AutoArrayHashMapUnmanaged(Entity, void),
 
+            /// The set of reserved but not committed entities.
+            expected_reserved: std.AutoArrayHashMapUnmanaged(Entity, void),
+
             /// Store the actual freed count and capacity.
             capacity: usize,
 
@@ -356,10 +418,15 @@ pub fn Oracle(Components: []const type) type {
                 errdefer expected_destroyed.deinit(gpa);
                 try expected_destroyed.ensureTotalCapacity(gpa, capacity);
 
+                var expected_reserved: std.AutoArrayHashMapUnmanaged(Entity, void) = .{};
+                errdefer expected_reserved.deinit(gpa);
+                try expected_reserved.ensureTotalCapacity(gpa, capacity);
+
                 return .{
                     .actual = actual,
                     .expected_live = expected_live,
                     .expected_destroyed = expected_destroyed,
+                    .expected_reserved = expected_reserved,
                     .capacity = capacity,
                 };
             }
@@ -370,6 +437,7 @@ pub fn Oracle(Components: []const type) type {
                 self.actual.deinit(gpa);
                 self.expected_live.deinit(gpa);
                 self.expected_destroyed.deinit(gpa);
+                self.expected_reserved.deinit(gpa);
                 self.* = undefined;
             }
 
@@ -380,6 +448,7 @@ pub fn Oracle(Components: []const type) type {
                 self.actual.reset();
                 self.expected_live.clearRetainingCapacity();
                 self.expected_destroyed.clearRetainingCapacity();
+                self.expected_reserved.clearRetainingCapacity();
                 try std.testing.expectEqual(0, try self.count());
             }
 
@@ -392,14 +461,46 @@ pub fn Oracle(Components: []const type) type {
                 return expected;
             }
 
+            /// Test that the reserved count of the expected and actual entities is the same, and
+            /// then return it.
+            pub fn reserved(self: @This()) !usize {
+                const expected = self.expected_reserved.count();
+                const actual = self.actual.reserved();
+                try std.testing.expectEqual(expected, actual);
+                return expected;
+            }
+
             /// Check that all entities in expected and actual are equal.
-            pub fn fullCheck(self: *@This()) !void {
+            pub fn fullCheck(self: *@This(), rand: std.Random) !void {
                 _ = try self.count();
+                _ = try self.reserved();
 
                 for (self.expected_live.keys()) |entity| {
+                    try std.testing.expect(try entity.exists(self));
+                    try std.testing.expect(try entity.committed(self));
                     inline for (Components) |T| {
                         _ = try entity.getComponent(self, T);
                     }
+                }
+
+                for (self.expected_reserved.keys()) |entity| {
+                    try std.testing.expect(try entity.exists(self));
+                    try std.testing.expect(!try entity.committed(self));
+                    inline for (Components) |T| {
+                        try std.testing.expectEqual(null, try entity.getComponent(self, T));
+                    }
+                }
+
+                // Checking all of these would be very slow as time goes on, so we check a random
+                // sampling of them instead
+                for (0..@min(100, self.expected_destroyed.count())) |_| {
+                    if (Entity.randomDestroyed(self, rand)) |entity| {
+                        try std.testing.expect(!try entity.exists(self));
+                        try std.testing.expect(!try entity.committed(self));
+                        inline for (Components) |T| {
+                            try std.testing.expectEqual(null, try entity.getComponent(self, T));
+                        }
+                    } else break;
                 }
 
                 self.checked = true;
@@ -447,6 +548,8 @@ pub fn Oracle(Components: []const type) type {
                             }
                         }
                         expected.appendAssumeCapacity(entity);
+                        try std.testing.expect(try entity.exists(self));
+                        try std.testing.expect(try entity.committed(self));
                         if (destroy > 0 and (destroy == 1 or rand.float(f32) < destroy)) {
                             // We don't call remove directly, as we only want to remove it from the
                             // expected data. We're testing that the real iterator successfully removes
@@ -466,8 +569,9 @@ pub fn Oracle(Components: []const type) type {
                 defer actual.deinit(gpa);
                 var iter = self.actual.viewIterator(View);
                 while (iter.next()) |view| {
+                    const entity: Entity = .{ .actual = view.entity };
                     try actual.putNoClobber(gpa, view.entity, view);
-                    if (destroyed.contains(.{ .actual = view.entity })) {
+                    if (destroyed.contains(entity)) {
                         iter.destroyCurrent(&self.actual);
                     }
                 }
