@@ -194,9 +194,9 @@ fn ComponentFromPointer(T: type) ?type {
         else => return null,
     };
 
-    if (pointer.size != .One) return null;
+    if (pointer.size != .one) return null;
     if (pointer.alignment != @alignOf(pointer.child)) return null;
-    if (pointer.sentinel != null) return null;
+    if (pointer.sentinel() != null) return null;
     if (@typeInfo(pointer.child) == .optional) return null;
 
     return pointer.child;

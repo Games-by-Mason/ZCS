@@ -42,8 +42,8 @@ pub const Optional = struct {
 
     fn initMaybeInterned(es: *const Entities, ptr: anytype, interned: bool) @This() {
         const pointer = @typeInfo(@TypeOf(ptr)).pointer;
-        comptime assert(pointer.size == .One);
-        comptime assert(pointer.sentinel == null);
+        comptime assert(pointer.size == .one);
+        comptime assert(pointer.sentinel_ptr == null);
 
         switch (@typeInfo(pointer.child)) {
             .optional => |opt| {

@@ -20,7 +20,7 @@ pub fn Oracle(Components: []const type) type {
                 field.* = .{
                     .name = T.name,
                     .type = ?T,
-                    .default_value = &@as(?T, null),
+                    .default_value_ptr = &@as(?T, null),
                     .is_comptime = false,
                     .alignment = @alignOf(?T),
                 };
@@ -39,7 +39,7 @@ pub fn Oracle(Components: []const type) type {
                 field.* = .{
                     .name = T.name,
                     .type = bool,
-                    .default_value = &false,
+                    .default_value_ptr = &false,
                     .is_comptime = false,
                     .alignment = @alignOf(bool),
                 };
