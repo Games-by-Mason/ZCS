@@ -8,8 +8,8 @@
 //! processing, for example to maintain transform hierarchies when entities are scheduled for
 //! deletion.
 //!
-//! Command buffers make a single allocation at init time, and never again. They should be cleared
-//! and reused when possible.
+//! Command buffers allocate at init time, and then never again. They should be reused when possible
+//! rather than destroyed and recreated.
 //!
 //! # Example
 //! ```zig
@@ -102,7 +102,7 @@ pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
     self.* = undefined;
 }
 
-/// Clears the command buffer, allowing for reuse.
+/// Clears the command buffer for reuse without executing it.
 pub fn clear(self: *@This()) void {
     self.destroy_queue.clearRetainingCapacity();
     self.comp_buf.clearRetainingCapacity();
@@ -314,15 +314,16 @@ pub fn destroyChecked(self: *@This(), entity: Entity) error{Overflow}!void {
     self.destroy_queue.appendAssumeCapacity(entity);
 }
 
-/// Executes the command buffer.
-pub fn submit(self: *const @This(), es: *Entities) void {
+/// Executes the command buffer, and then clears it for reuse.
+pub fn submit(self: *@This(), es: *Entities) void {
     self.submitChecked(es) catch |err|
         @panic(@errorName(err));
 }
 
 /// Similar to `submit`, but returns `error.Overflow` when out of space. On failure, partial changes
 /// to entities are *not* reverted. As such, some component data may be uninitialized.
-pub fn submitChecked(self: *const @This(), es: *Entities) error{Overflow}!void {
+pub fn submitChecked(self: *@This(), es: *Entities) error{Overflow}!void {
+    // Submit the commands
     var iter = self.iterator(es);
     while (iter.next()) |cmd| {
         switch (cmd) {
@@ -352,6 +353,16 @@ pub fn submitChecked(self: *const @This(), es: *Entities) error{Overflow}!void {
             },
         }
     }
+
+    // Refill the reserved entity buffer
+    while (self.reserved.items.len < self.reserved.capacity) {
+        self.reserved.appendAssumeCapacity(try Entity.reserveChecked(es));
+    }
+
+    // Clear the command buffer for reuse. This is required--resubmitting a command buffer would get
+    // inconsistent results since it may internally refer to the entities that were previously
+    // reserved.
+    self.clear();
 }
 
 /// Issue subcommands to add the listed components. Issued in reverse order, duplicates are skipped.
