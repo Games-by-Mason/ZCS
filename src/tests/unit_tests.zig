@@ -123,7 +123,7 @@ test "command buffer create empty" {
     try expectEqual(comp, comp_optional_interned.unwrap().?);
 
     var cb = try zcs.CommandBuffer.init(gpa, &es, 4);
-    defer cb.deinit(gpa);
+    defer cb.deinit(gpa, &es);
 
     try expectEqual(0, es.count());
 
@@ -190,7 +190,7 @@ test "command buffer skip dups" {
     defer es.deinit(gpa);
 
     var cb = try zcs.CommandBuffer.init(gpa, &es, 24);
-    defer cb.deinit(gpa);
+    defer cb.deinit(gpa, &es);
 
     const model1: Model = .{
         .vertex_start = 1,
@@ -269,7 +269,7 @@ test "command buffer interning" {
     defer es.deinit(gpa);
 
     var cb = try zcs.CommandBuffer.init(gpa, &es, 24);
-    defer cb.deinit(gpa);
+    defer cb.deinit(gpa, &es);
 
     const rb_interned: RigidBody = .{
         .position = .{ 0.5, 1.5 },
@@ -718,7 +718,7 @@ test "command buffer overflow" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es = try zcs.Entities.init(gpa, 1, &.{ RigidBody, Model, Tag });
+    var es = try zcs.Entities.init(gpa, 100, &.{ RigidBody, Model, Tag });
     defer es.deinit(gpa);
 
     // Tag/destroy overflow
@@ -730,7 +730,7 @@ test "command buffer overflow" {
             .destroy = 0,
             .reserved = 100,
         });
-        defer cb.deinit(gpa);
+        defer cb.deinit(gpa, &es);
 
         try expectError(error.Overflow, cb.createChecked(&es, .{}));
         try expectError(error.Overflow, cb.changeArchetypeChecked(
@@ -756,7 +756,7 @@ test "command buffer overflow" {
             .destroy = 100,
             .reserved = 100,
         });
-        defer cb.deinit(gpa);
+        defer cb.deinit(gpa, &es);
 
         cb.create(&es, .{});
         try expectError(error.Overflow, cb.createChecked(&es, .{RigidBody.random(rand)}));
@@ -788,7 +788,7 @@ test "command buffer overflow" {
             .destroy = 100,
             .reserved = 100,
         });
-        defer cb.deinit(gpa);
+        defer cb.deinit(gpa, &es);
 
         const e: zcs.Entity = .{ .key = .{ .index = 1, .generation = @enumFromInt(2) } };
         const rb = RigidBody.random(rand);
@@ -826,7 +826,7 @@ test "command buffer worst case capacity" {
     defer es.deinit(gpa);
 
     var cb = try zcs.CommandBuffer.init(gpa, &es, capacity);
-    defer cb.deinit(gpa);
+    defer cb.deinit(gpa, &es);
 
     // Create
     {
@@ -965,7 +965,7 @@ fn checkRandomCommandBuffer(
     // commands are allowed to be reordered.
     const cb_capacity = 10000;
     var cb = try zcs.CommandBuffer.init(gpa, actual, cb_capacity);
-    defer cb.deinit(gpa);
+    defer cb.deinit(gpa, actual);
     for (0..cb_capacity) |_| {
         switch (rand.enumValue(@typeInfo(zcs.CommandBuffer.Cmd).@"union".tag_type.?)) {
             .create => {

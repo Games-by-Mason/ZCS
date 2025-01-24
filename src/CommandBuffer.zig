@@ -76,10 +76,9 @@ pub fn initSeparateCapacities(
 
     var reserved: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacities.reserved);
     errdefer reserved.deinit(gpa);
-    _ = es;
-    // for (0..reserved.capacity) |_| {
-    //     reserved.appendAssumeCapacity(try Entity.createChecked(es, .{}));
-    // }
+    for (0..reserved.capacity) |_| {
+        reserved.appendAssumeCapacity(try Entity.reserveChecked(es));
+    }
 
     return .{
         .tags = tags,
@@ -91,7 +90,10 @@ pub fn initSeparateCapacities(
 }
 
 /// Destroys the command buffer.
-pub fn deinit(self: *@This(), gpa: Allocator) void {
+pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
+    for (self.reserved.items) |entity| {
+        entity.destroy(es);
+    }
     self.reserved.deinit(gpa);
     self.destroy_queue.deinit(gpa);
     self.comp_buf.deinit(gpa);
