@@ -16,10 +16,9 @@
 //! var cb = try CommandBuffer.init(gpa, &es, 4);
 //! defer cb.deinit(gpa);
 //!
-//! cb.create(&es, .{RigidBody { .mass = 0.5 }, Mesh { .model = player });
-//! cb.destroy(entity1);
-//! cb.changeArchetype(&es, entity2, Component.flags(&es, &.{Fire}), .{ Hammer{} });
+//! cb.changeArchetype(&es, es.reserve(), Component.flags(&es, &.{Fire}), .{ Hammer{} });
 //! cb.submit(&es);
+//! cb.destroy(entity1);
 //! cb.clear();
 //! ```
 
@@ -39,26 +38,20 @@ const meta = @import("meta.zig");
 tags: std.ArrayListUnmanaged(SubCmd.Tag),
 args: std.ArrayListUnmanaged(u64),
 comp_buf: std.ArrayListAlignedUnmanaged(u8, Entities.max_align),
-/// Each create command pops an entity from reserved. It is allowable to peek at this array to
-/// gain access to entity IDs before the create command is issued.
-reserved: std.ArrayListUnmanaged(Entity),
-/// The number of reserved entities scheduled to be committed.
-committed: usize,
 /// All entities queued for destruction.
 destroy_queue: std.ArrayListUnmanaged(Entity),
 
 /// Initializes a command buffer with at least enough capacity for the given number of commands.
-pub fn init(gpa: Allocator, es: *Entities, capacity: usize) error{ OutOfMemory, Overflow }!@This() {
-    return initSeparateCapacities(gpa, es, .initFromCmds(es, capacity));
+pub fn init(gpa: Allocator, es: *Entities, capacity: usize) Allocator.Error!@This() {
+    return initSeparateCapacities(gpa, .initFromCmds(es, capacity));
 }
 
 /// Initializes the command buffer with separate capacities for each internal buffer. Generally, you
 /// should prefer `init`.
 pub fn initSeparateCapacities(
     gpa: Allocator,
-    es: *Entities,
     capacities: Capacities,
-) error{ OutOfMemory, Overflow }!@This() {
+) Allocator.Error!@This() {
     comptime assert(Component.Id.max < std.math.maxInt(u64));
 
     var tags: std.ArrayListUnmanaged(SubCmd.Tag) = try .initCapacity(gpa, capacities.tags);
@@ -76,28 +69,16 @@ pub fn initSeparateCapacities(
     var destroy_queue: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacities.destroy);
     errdefer destroy_queue.deinit(gpa);
 
-    var reserved: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacities.reserved);
-    errdefer reserved.deinit(gpa);
-    for (0..reserved.capacity) |_| {
-        reserved.appendAssumeCapacity(try Entity.reserveChecked(es));
-    }
-
     return .{
         .tags = tags,
         .args = args,
         .comp_buf = comp_buf,
         .destroy_queue = destroy_queue,
-        .reserved = reserved,
-        .committed = 0,
     };
 }
 
 /// Destroys the command buffer.
-pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
-    for (self.reserved.items) |entity| {
-        entity.destroy(es);
-    }
-    self.reserved.deinit(gpa);
+pub fn deinit(self: *@This(), gpa: Allocator) void {
     self.destroy_queue.deinit(gpa);
     self.comp_buf.deinit(gpa);
     self.args.deinit(gpa);
@@ -111,7 +92,6 @@ pub fn clear(self: *@This()) void {
     self.comp_buf.clearRetainingCapacity();
     self.args.clearRetainingCapacity();
     self.tags.clearRetainingCapacity();
-    self.committed = 0;
 }
 
 fn usage(list: anytype) f32 {
@@ -128,99 +108,6 @@ pub fn worstCaseUsage(self: @This()) f32 {
         usage(self.args),
         usage(self.tags),
     );
-}
-
-/// Appends a `Entity.create` command. Returns a reserved entity that will be committed when the
-/// command buffer is executed, see `Entity.reserve` for more information on reserved entities.
-///
-/// See `Entity.create` for what types are allowed in `comps`. Comptime fields are passed by
-/// pointer if the underlying type is larger than a pointer.
-pub fn create(self: *@This(), es: *const Entities, comps: anytype) Entity {
-    return self.createChecked(es, comps) catch |err|
-        @panic(@errorName(err));
-}
-
-/// Similar to `create`, but returns `error.Overflow` when out of space.
-pub fn createChecked(
-    self: *@This(),
-    es: *const Entities,
-    comps: anytype,
-) error{Overflow}!Entity {
-    // Check the types
-    meta.checkComponents(@TypeOf(comps));
-    const fields = @typeInfo(@TypeOf(comps)).@"struct".fields;
-
-    // Restore the state on failure
-    const restore = self.*;
-    errdefer self.* = restore;
-
-    // Get the next reserved entity
-    const entity = try self.commit();
-
-    // Sort for minimal padding.
-    const sorted_fields = comptime meta.alignmentSort(@TypeOf(comps));
-
-    // Issue the subcommands
-    try self.subCmd(es, .bind_new_entity);
-    inline for (0..fields.len) |i| {
-        const field = fields[sorted_fields[i]];
-        const optional: ?meta.Unwrapped(field.type) = @field(comps, field.name);
-        if (optional) |some| {
-            if (field.is_comptime and @sizeOf(@TypeOf(some)) > @sizeOf(usize)) {
-                try self.subCmd(es, .{
-                    .add_component_ptr = .{
-                        .id = es.getComponentId(@TypeOf(some)),
-                        .ptr = &struct {
-                            const interned = some;
-                        }.interned,
-                        .interned = true,
-                    },
-                });
-            } else {
-                try self.subCmd(es, .{ .add_component_val = .{
-                    .id = es.getComponentId(@TypeOf(some)),
-                    .ptr = @ptrCast(&some),
-                    .interned = false,
-                } });
-            }
-        }
-    }
-
-    // Return the reserved entity
-    return entity;
-}
-
-/// Similar to `create`, but doesn't require compile time types.
-///
-/// Components set to `.none` have no effect.
-pub fn createFromComponents(
-    self: *@This(),
-    es: *const Entities,
-    comps: []const Component.Optional,
-) Entity {
-    return self.createFromComponentsChecked(es, comps) catch |err|
-        @panic(@errorName(err));
-}
-
-/// Similar to `createFromComponents`, but returns `error.Overflow` when out of space.
-pub fn createFromComponentsChecked(
-    self: *@This(),
-    es: *const Entities,
-    comps: []const Component.Optional,
-) error{Overflow}!Entity {
-    // Restore the state on failure
-    const restore = self.*;
-    errdefer self.* = restore;
-
-    // Get the next reserved entity
-    const entity = try self.commit();
-
-    // Add all the components in reverse order, skipping any types we've already added. This
-    // preserves expected behavior while also conforming to our capacity guarantees.
-    try self.subCmd(es, .bind_new_entity);
-    try self.addComponents(es, comps);
-
-    return entity;
 }
 
 /// Appends an `Entity.changeArchetype` command.
@@ -314,7 +201,22 @@ pub fn changeArchetypeFromComponentsChecked(
         try self.subCmd(es, .{ .remove_components = remove });
     }
 
-    try self.addComponents(es, comps);
+    // Issue subcommands to add the listed components. Issued in reverse order, duplicates are
+    // skipped.
+    var added: Component.Flags = .{};
+    for (0..comps.len) |i| {
+        const comp = comps[comps.len - i - 1];
+        if (comp.unwrap()) |some| {
+            if (!added.contains(some.id)) {
+                added.insert(some.id);
+                if (some.interned) {
+                    try self.subCmd(es, .{ .add_component_ptr = some });
+                } else {
+                    try self.subCmd(es, .{ .add_component_val = some });
+                }
+            }
+        }
+    }
 }
 
 /// Appends an `Entity.destroy` command.
@@ -329,20 +231,6 @@ pub fn destroyChecked(self: *@This(), entity: Entity) error{Overflow}!void {
         return error.Overflow;
     }
     self.destroy_queue.appendAssumeCapacity(entity);
-}
-
-/// Returns the entity that will be returned `n` creates from now. Zero is the next create, negative
-/// values are past creates.
-pub fn peekCreate(self: *const @This(), n: isize) Entity {
-    return self.peekCreateChecked(n) catch |err|
-        @panic(@errorName(err));
-}
-
-/// Similar to `peekCreate`, but returns `error.Overflow` if `n` is positive and there are not at
-/// least `n` reserved entities left.
-pub fn peekCreateChecked(self: *const @This(), n: isize) error{Overflow}!Entity {
-    if (@as(isize, @intCast(self.committed)) + n >= self.reserved.items.len) return error.Overflow;
-    return self.reserved.items[@intCast(@as(isize, @intCast(self.reserved.items.len - self.committed)) - n - 1)];
 }
 
 /// Executes the command buffer.
@@ -367,28 +255,6 @@ fn submitOrOverflow(self: *@This(), es: *Entities) bool {
     var iter = self.iterator(es);
     while (iter.next()) |cmd| {
         switch (cmd) {
-            .create => |args| {
-                if (args.entity.eql(.none)) {
-                    overflow = true;
-                    continue;
-                }
-                args.entity.changeArchetypeUnintializedChecked(es, .{
-                    .remove = .{},
-                    .add = args.archetype,
-                }) catch |err| switch (err) {
-                    error.Overflow => {
-                        overflow = true;
-                        continue;
-                    },
-                };
-                var comps = args.componentIterator();
-                while (comps.next()) |comp| {
-                    const src = comp.bytes();
-                    const dest = args.entity.getComponentFromId(es, comp.id).?;
-                    @memcpy(dest, src);
-                }
-            },
-            .destroy => |entity| entity.destroy(es),
             .change_archetype => |args| {
                 if (args.entity.exists(es)) {
                     args.entity.changeArchetypeUnintializedChecked(es, .{
@@ -408,60 +274,12 @@ fn submitOrOverflow(self: *@This(), es: *Entities) bool {
                     }
                 }
             },
+            .destroy => |entity| entity.destroy(es),
         }
-    }
-
-    // Refill the reserved entity buffer up to the capacity if possible
-    self.reserved.items.len -= self.committed;
-    while (self.reserved.items.len < self.reserved.capacity) {
-        const entity = Entity.reserveChecked(es) catch |err| switch (err) {
-            error.Overflow => break,
-        };
-        self.reserved.appendAssumeCapacity(entity);
     }
 
     // Return whether or not we overflowed.
     return !overflow;
-}
-
-/// Issue subcommands to add the listed components. Issued in reverse order, duplicates are skipped.
-fn addComponents(
-    self: *@This(),
-    es: *const Entities,
-    comps: []const Component.Optional,
-) error{Overflow}!void {
-    var added: Component.Flags = .{};
-    for (0..comps.len) |i| {
-        const comp = comps[comps.len - i - 1];
-        if (comp.unwrap()) |some| {
-            if (!added.contains(some.id)) {
-                added.insert(some.id);
-                if (some.interned) {
-                    try self.subCmd(es, .{ .add_component_ptr = some });
-                } else {
-                    try self.subCmd(es, .{ .add_component_val = some });
-                }
-            }
-        }
-    }
-}
-
-/// Schedules the next reserved entity to be committed and returns it. Starts from the end of the
-/// list.
-fn commit(self: *@This()) error{Overflow}!Entity {
-    if (self.committed < self.reserved.items.len) {
-        // Get the next reserved entity and advance
-        self.committed += 1;
-        return self.reserved.items[self.reserved.items.len - self.committed];
-    } else if (self.committed >= self.reserved.capacity) {
-        // We're over the capacity promised by this command buffer, return an error
-        return error.Overflow;
-    } else {
-        // We're not over the promised capacity, but this command buffer wasn't able to reserve as
-        // many entities as were promised because entities wasn't big enough. In this case we don't
-        // error until submit, because the command buffer itself isn't actually being misused.
-        return .none;
-    }
 }
 
 /// If a new worst case command is introduced, also update the tests!
@@ -478,10 +296,6 @@ fn subCmd(self: *@This(), es: *const Entities, sub_cmd: SubCmd) error{Overflow}!
             if (self.args.items.len >= self.args.capacity) return error.Overflow;
             self.tags.appendAssumeCapacity(.bind_entity);
             self.args.appendAssumeCapacity(@bitCast(entity));
-        },
-        .bind_new_entity => {
-            if (self.tags.items.len >= self.tags.capacity) return error.Overflow;
-            self.tags.appendAssumeCapacity(.bind_new_entity);
         },
         .add_component_val => |comp| {
             const size = es.getComponentSize(comp.id);
@@ -526,19 +340,6 @@ pub fn iterator(self: *const @This(), es: *const Entities) Iterator {
 
 /// A command buffer command.
 pub const Cmd = union(enum) {
-    /// Create a new entity with the given archetype and components.
-    create: struct {
-        /// The entity being created, or `.none` if there were no more reserved entities.
-        entity: Entity,
-        archetype: Component.Flags,
-        decoder: SubCmd.Decoder,
-
-        pub fn componentIterator(self: @This()) ComponentIterator {
-            return .{ .decoder = self.decoder };
-        }
-    },
-    /// Destroy the given entity if it exists.
-    destroy: Entity,
     /// Change the archetype of the given entity if it exists.
     change_archetype: struct {
         entity: Entity,
@@ -550,6 +351,8 @@ pub const Cmd = union(enum) {
             return .{ .decoder = self.decoder };
         }
     },
+    /// Destroy the given entity if it exists.
+    destroy: Entity,
 };
 
 /// Commands are comprised of a sequence of one or more subcommands which are encoded in a compact
@@ -557,8 +360,6 @@ pub const Cmd = union(enum) {
 const SubCmd = union(enum) {
     /// Binds an existing entity.
     bind_entity: Entity,
-    /// Creates a new entity and binds it.
-    bind_new_entity,
     /// Schedules components to be added bye value. Always executes after `remove_components`
     /// commands on the current binding, regardless of submission order. ID is passed as an
     /// argument, component data is passed via component data.
@@ -590,7 +391,6 @@ const SubCmd = union(enum) {
                         const entity: Entity = @bitCast(self.nextArg().?);
                         return .{ .bind_entity = entity };
                     },
-                    .bind_new_entity => return .bind_new_entity,
                     .add_component_val => {
                         const id: Component.Id = @enumFromInt(self.nextArg().?);
                         const ptr = self.nextComponentData(id);
@@ -685,7 +485,7 @@ pub const Iterator = struct {
                     var add: Component.Flags = .{};
                     while (self.decoder.peekTag()) |subcmd| {
                         switch (subcmd) {
-                            .bind_entity, .bind_new_entity => break,
+                            .bind_entity => break,
                             .add_component_val => {
                                 const comp = self.decoder.next().?.add_component_val;
                                 add.insert(comp.id);
@@ -707,37 +507,6 @@ pub const Iterator = struct {
                         .remove = remove,
                         .add = add,
                         .entity = entity,
-                        .decoder = comp_decoder,
-                    } };
-                },
-                .bind_new_entity => {
-                    const entity: Entity = if (self.committed < self.decoder.cb.reserved.capacity) b: {
-                        self.committed += 1;
-                        const i = self.decoder.cb.reserved.capacity - self.committed;
-                        break :b self.decoder.cb.reserved.items[i];
-                    } else .none;
-                    const comp_decoder = self.decoder;
-                    var archetype: Component.Flags = .{};
-                    while (self.decoder.peekTag()) |subcmd| {
-                        switch (subcmd) {
-                            .bind_entity, .bind_new_entity => break,
-                            .add_component_val => {
-                                const comp = self.decoder.next().?.add_component_val;
-                                archetype.insert(comp.id);
-                            },
-                            .add_component_ptr => {
-                                const comp = self.decoder.next().?.add_component_ptr;
-                                archetype.insert(comp.id);
-                            },
-                            .remove_components => {
-                                const comps = self.decoder.next().?.remove_components;
-                                archetype = archetype.differenceWith(comps);
-                            },
-                        }
-                    }
-                    return .{ .create = .{
-                        .entity = entity,
-                        .archetype = archetype,
                         .decoder = comp_decoder,
                     } };
                 },
@@ -768,18 +537,10 @@ pub const ComponentIterator = struct {
     pub fn next(self: *@This()) ?Component {
         while (self.decoder.peekTag()) |tag| {
             switch (tag) {
-                .bind_entity, .bind_new_entity => {
-                    break;
-                },
-                .add_component_val => {
-                    return self.decoder.next().?.add_component_val;
-                },
-                .add_component_ptr => {
-                    return self.decoder.next().?.add_component_ptr;
-                },
-                .remove_components => {
-                    _ = self.decoder.next().?.remove_components;
-                },
+                .add_component_val => return self.decoder.next().?.add_component_val,
+                .add_component_ptr => return self.decoder.next().?.add_component_ptr,
+                .remove_components => _ = self.decoder.next().?.remove_components,
+                .bind_entity => break,
             }
         }
         return null;
@@ -788,7 +549,6 @@ pub const ComponentIterator = struct {
 
 /// Per buffer capacity.
 pub const Capacities = struct {
-    reserved: usize,
     tags: usize,
     args: usize,
     comp_buf: usize,
@@ -797,9 +557,6 @@ pub const Capacities = struct {
     /// Sets each buffer capacity to be at least enough for the given number of commands.
     pub fn initFromCmds(es: *const Entities, cmds: usize) Capacities {
         _ = rename_when_changing_encoding;
-
-        // We can at most create one entity per command.
-        const reserved_cap = cmds;
 
         // Worst case component data size. Technically we could make this slightly tighter since
         // alignment must be a power of two, but this calculation is much simpler.
@@ -828,7 +585,6 @@ pub const Capacities = struct {
         const destroy_cap = cmds;
 
         return .{
-            .reserved = reserved_cap,
             .tags = tags_cap,
             .args = args_cap,
             .comp_buf = comp_buf_cap,
