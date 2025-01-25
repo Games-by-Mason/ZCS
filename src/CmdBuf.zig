@@ -104,7 +104,7 @@ pub fn initSeparateCapacities(
 
 /// Destroys the command buffer.
 pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
-    for (self.reserved.items) |entity| entity.destroy(es);
+    for (self.reserved.items) |entity| entity.destroyImmediately(es);
     self.reserved.deinit(gpa);
     self.destroy_queue.deinit(gpa);
     self.comp_bytes.deinit(gpa);
@@ -113,7 +113,7 @@ pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
     self.* = undefined;
 }
 
-/// Clears the command buffer for reuse without executing it.
+/// Clears the command buffer for reuse.
 pub fn clear(self: *@This()) void {
     self.destroy_queue.clearRetainingCapacity();
     self.comp_bytes.clearRetainingCapacity();
@@ -313,7 +313,7 @@ fn submitOrOverflow(self: *@This(), es: *Entities) bool {
         switch (cmd) {
             .change_archetype => |args| {
                 if (args.entity.exists(es)) {
-                    args.entity.changeArchetypeUnintializedChecked(es, .{
+                    args.entity.changeArchetypeUnintializedImmediatelyChecked(es, .{
                         .remove = args.remove,
                         .add = args.add,
                     }) catch |err| switch (err) {
@@ -330,7 +330,7 @@ fn submitOrOverflow(self: *@This(), es: *Entities) bool {
                     }
                 }
             },
-            .destroy => |entity| entity.destroy(es),
+            .destroy => |entity| entity.destroyImmediately(es),
         }
     }
 

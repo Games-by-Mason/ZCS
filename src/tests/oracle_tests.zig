@@ -108,7 +108,7 @@ test "saturate generations" {
         var i: usize = 0;
         while (i < es.expected_live.keys().len) : (i += 1) {
             const entity = es.expected_live.keys()[i];
-            try entity.destroy(&es);
+            try entity.destroyImmediately(&es);
             const Generation = @TypeOf(es.actual.slots.generations[entity.actual.key.index]);
             const GenerationTag = @typeInfo(Generation).@"enum".tag_type;
             es.actual.slots.generations[entity.actual.key.index] = @enumFromInt(std.math.maxInt(GenerationTag) - 1);
@@ -139,20 +139,20 @@ test "overflow" {
     defer es.deinit();
 
     for (0..capacity) |_| {
-        _ = try Entity.create(&es, .{});
+        _ = try Entity.createImmediately(&es, .{});
     }
 
-    try expectError(error.ZcsEntityOverflow, Entity.create(&es, .{}));
-    try expectError(error.ZcsEntityOverflow, Entity.create(&es, .{}));
-    try es.expected_live.keys()[0].destroy(&es);
-    _ = try Entity.create(&es, .{});
-    try expectError(error.ZcsEntityOverflow, Entity.create(&es, .{}));
-    try expectError(error.ZcsEntityOverflow, Entity.create(&es, .{}));
+    try expectError(error.ZcsEntityOverflow, Entity.createImmediately(&es, .{}));
+    try expectError(error.ZcsEntityOverflow, Entity.createImmediately(&es, .{}));
+    try es.expected_live.keys()[0].destroyImmediately(&es);
+    _ = try Entity.createImmediately(&es, .{});
+    try expectError(error.ZcsEntityOverflow, Entity.createImmediately(&es, .{}));
+    try expectError(error.ZcsEntityOverflow, Entity.createImmediately(&es, .{}));
     try es.reset();
     for (0..capacity) |_| {
-        _ = try Entity.create(&es, .{});
+        _ = try Entity.createImmediately(&es, .{});
     }
-    try expectError(error.ZcsEntityOverflow, Entity.create(&es, .{}));
+    try expectError(error.ZcsEntityOverflow, Entity.createImmediately(&es, .{}));
 
     try es.fullCheck(rand);
 }
@@ -194,13 +194,13 @@ pub fn doRandomOperations(
                                 rb_tag,
                                 model_rb_tag,
                             })) {
-                                .model => try Entity.create(es, .{Model{}}),
-                                .rb => try Entity.create(es, .{RigidBody{}}),
-                                .tag => try Entity.create(es, .{Tag{}}),
-                                .model_rb => try Entity.create(es, .{ Model{}, RigidBody{} }),
-                                .model_tag => try Entity.create(es, .{ Model{}, Tag{} }),
-                                .rb_tag => try Entity.create(es, .{ RigidBody{}, Tag{} }),
-                                .model_rb_tag => try Entity.create(es, .{ RigidBody{}, Model{}, Tag{} }),
+                                .model => try Entity.createImmediately(es, .{Model{}}),
+                                .rb => try Entity.createImmediately(es, .{RigidBody{}}),
+                                .tag => try Entity.createImmediately(es, .{Tag{}}),
+                                .model_rb => try Entity.createImmediately(es, .{ Model{}, RigidBody{} }),
+                                .model_tag => try Entity.createImmediately(es, .{ Model{}, Tag{} }),
+                                .rb_tag => try Entity.createImmediately(es, .{ RigidBody{}, Tag{} }),
+                                .model_rb_tag => try Entity.createImmediately(es, .{ RigidBody{}, Model{}, Tag{} }),
                             };
                         } else {
                             // Non interned
@@ -214,14 +214,14 @@ pub fn doRandomOperations(
                                 rb_tag,
                                 model_rb_tag,
                             })) {
-                                .empty => try Entity.create(es, .{}),
-                                .model => try Entity.create(es, .{Model.random(rand)}),
-                                .rb => try Entity.create(es, .{RigidBody.random(rand)}),
-                                .tag => try Entity.create(es, .{Tag.random(rand)}),
-                                .model_rb => try Entity.create(es, .{ Model.random(rand), RigidBody.random(rand) }),
-                                .model_tag => try Entity.create(es, .{ Model.random(rand), Tag.random(rand) }),
-                                .rb_tag => try Entity.create(es, .{ RigidBody.random(rand), Tag.random(rand) }),
-                                .model_rb_tag => try Entity.create(es, .{ RigidBody.random(rand), Model.random(rand), Tag.random(rand) }),
+                                .empty => try Entity.createImmediately(es, .{}),
+                                .model => try Entity.createImmediately(es, .{Model.random(rand)}),
+                                .rb => try Entity.createImmediately(es, .{RigidBody.random(rand)}),
+                                .tag => try Entity.createImmediately(es, .{Tag.random(rand)}),
+                                .model_rb => try Entity.createImmediately(es, .{ Model.random(rand), RigidBody.random(rand) }),
+                                .model_tag => try Entity.createImmediately(es, .{ Model.random(rand), Tag.random(rand) }),
+                                .rb_tag => try Entity.createImmediately(es, .{ RigidBody.random(rand), Tag.random(rand) }),
+                                .model_rb_tag => try Entity.createImmediately(es, .{ RigidBody.random(rand), Model.random(rand), Tag.random(rand) }),
                             };
                         }
                     } else {
@@ -237,13 +237,13 @@ pub fn doRandomOperations(
                                 rb_tag,
                                 model_rb_tag,
                             })) {
-                                .model => try Entity.create(es, .{@as(?Model, .{})}),
-                                .rb => try Entity.create(es, .{@as(?RigidBody, .{})}),
-                                .tag => try Entity.create(es, .{@as(?Tag, Tag{})}),
-                                .model_rb => try Entity.create(es, .{ @as(?Model, null), @as(?RigidBody, .{}) }),
-                                .model_tag => try Entity.create(es, .{ @as(?Model, .{}), @as(?Tag, null) }),
-                                .rb_tag => try Entity.create(es, .{ @as(?RigidBody, .{}), @as(?Tag, .{}) }),
-                                .model_rb_tag => try Entity.create(es, .{ @as(?RigidBody, null), @as(?Model, .{}), @as(?Tag, null) }),
+                                .model => try Entity.createImmediately(es, .{@as(?Model, .{})}),
+                                .rb => try Entity.createImmediately(es, .{@as(?RigidBody, .{})}),
+                                .tag => try Entity.createImmediately(es, .{@as(?Tag, Tag{})}),
+                                .model_rb => try Entity.createImmediately(es, .{ @as(?Model, null), @as(?RigidBody, .{}) }),
+                                .model_tag => try Entity.createImmediately(es, .{ @as(?Model, .{}), @as(?Tag, null) }),
+                                .rb_tag => try Entity.createImmediately(es, .{ @as(?RigidBody, .{}), @as(?Tag, .{}) }),
+                                .model_rb_tag => try Entity.createImmediately(es, .{ @as(?RigidBody, null), @as(?Model, .{}), @as(?Tag, null) }),
                             };
                         } else {
                             // Non interned
@@ -257,14 +257,14 @@ pub fn doRandomOperations(
                                 rb_tag,
                                 model_rb_tag,
                             })) {
-                                .empty => try Entity.create(es, .{}),
-                                .model => try Entity.create(es, .{Model.randomOrNull(rand)}),
-                                .rb => try Entity.create(es, .{RigidBody.randomOrNull(rand)}),
-                                .tag => try Entity.create(es, .{Tag.randomOrNull(rand)}),
-                                .model_rb => try Entity.create(es, .{ Model.randomOrNull(rand), RigidBody.randomOrNull(rand) }),
-                                .model_tag => try Entity.create(es, .{ Model.randomOrNull(rand), Tag.randomOrNull(rand) }),
-                                .rb_tag => try Entity.create(es, .{ RigidBody.randomOrNull(rand), Tag.randomOrNull(rand) }),
-                                .model_rb_tag => try Entity.create(es, .{ RigidBody.randomOrNull(rand), Model.randomOrNull(rand), Tag.randomOrNull(rand) }),
+                                .empty => try Entity.createImmediately(es, .{}),
+                                .model => try Entity.createImmediately(es, .{Model.randomOrNull(rand)}),
+                                .rb => try Entity.createImmediately(es, .{RigidBody.randomOrNull(rand)}),
+                                .tag => try Entity.createImmediately(es, .{Tag.randomOrNull(rand)}),
+                                .model_rb => try Entity.createImmediately(es, .{ Model.randomOrNull(rand), RigidBody.randomOrNull(rand) }),
+                                .model_tag => try Entity.createImmediately(es, .{ Model.randomOrNull(rand), Tag.randomOrNull(rand) }),
+                                .rb_tag => try Entity.createImmediately(es, .{ RigidBody.randomOrNull(rand), Tag.randomOrNull(rand) }),
+                                .model_rb_tag => try Entity.createImmediately(es, .{ RigidBody.randomOrNull(rand), Model.randomOrNull(rand), Tag.randomOrNull(rand) }),
                             };
                         }
                     }
@@ -279,7 +279,7 @@ pub fn doRandomOperations(
 
                 // Destroy a random entity
                 if (Entity.random(es, rand)) |entity| {
-                    try entity.destroy(es);
+                    try entity.destroyImmediately(es);
                 }
             },
             .modify => {
@@ -495,7 +495,7 @@ pub fn doRandomOperations(
                     try entity.changeArchetype(es, remove, .{ RigidBody.randomOrNull(rand), Tag.randomOrNull(rand) });
                     try entity.changeArchetype(es, remove, .{ RigidBody.randomOrNull(rand), Model.randomOrNull(rand) });
 
-                    try entity.destroy(es);
+                    try entity.destroyImmediately(es);
                 }
             },
             .reserve => {

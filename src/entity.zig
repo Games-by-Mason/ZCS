@@ -29,7 +29,7 @@ pub const Entity = packed struct {
     ///
     /// # Example
     /// ```zig
-    /// try Entity.create(&es, .{
+    /// try Entity.createImmediately(&es, .{
     ///     RigidBody {
     ///         .mass = 10,
     ///     },
@@ -40,16 +40,16 @@ pub const Entity = packed struct {
     ///     if (condition) model else null,
     /// });
     /// ```
-    pub fn create(es: *Entities, comps: anytype) Entity {
-        return createChecked(es, comps) catch |err|
+    pub fn createImmediately(es: *Entities, comps: anytype) Entity {
+        return createImmediatelyChecked(es, comps) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `create`, but returns `error.ZcsEntityOverflow` on failure instead of panicking.
-    pub fn createChecked(es: *Entities, comps: anytype) error{ZcsEntityOverflow}!Entity {
+    pub fn createImmediatelyChecked(es: *Entities, comps: anytype) error{ZcsEntityOverflow}!Entity {
         meta.checkComponents(@TypeOf(comps));
-        const entity = try createUninitializedChecked(es, .{});
-        entity.changeArchetypeChecked(es, .{}, comps) catch {
+        const entity = try createUninitializedImmediatelyChecked(es, .{});
+        entity.changeArchetypeImmediatelyChecked(es, .{}, comps) catch {
             // The archetype hasn't been changed, we're just using this to initialize it, so this
             // isn't actually fallible.
             unreachable;
@@ -58,14 +58,17 @@ pub const Entity = packed struct {
     }
 
     /// Similar to `create`, but does not require compile time types.
-    pub fn createFromComponents(es: *Entities, comps: []const Component.Optional) Entity {
-        return createFromComponentsChecked(es, comps) catch |err|
+    pub fn createFromComponentsImmediately(
+        es: *Entities,
+        comps: []const Component.Optional,
+    ) Entity {
+        return createFromComponentsImmediatelyChecked(es, comps) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `createFromComponentsChecked`, but returns `error.ZcsEntityOverflow` on failure
-    /// instead of panicking.
-    pub fn createFromComponentsChecked(
+    /// Similar to `createFromComponentsImmediatelyChecked`, but returns `error.ZcsEntityOverflow`
+    /// on failure instead of panicking.
+    pub fn createFromComponentsImmediatelyChecked(
         es: *Entities,
         comps: []const Component.Optional,
     ) error{ZcsEntityOverflow}!Entity {
@@ -75,7 +78,7 @@ pub const Entity = packed struct {
                 archetype.insert(some.id);
             }
         }
-        const entity = try createUninitializedChecked(es, archetype);
+        const entity = try createUninitializedImmediatelyChecked(es, archetype);
         entity.changeArchetypeFromComponentsChecked(es, .{}, comps) catch {
             // The archetype hasn't been changed, we're just using this to initialize it, so this
             // isn't actually fallible.
@@ -85,14 +88,14 @@ pub const Entity = packed struct {
     }
 
     /// Similar to `create`, but does not initialize the components.
-    pub fn createUninitialized(es: *Entities, archetype: Component.Flags) Entity {
-        return createUninitializedChecked(es, archetype) catch |err|
+    pub fn createUninitializedImmediately(es: *Entities, archetype: Component.Flags) Entity {
+        return createUninitializedImmediatelyChecked(es, archetype) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `createUninitialized`, but returns `error.ZcsEntityOverflow` on failure instead
-    /// of panicking.
-    pub fn createUninitializedChecked(
+    /// Similar to `createUninitializedImmediately`, but returns `error.ZcsEntityOverflow` on
+    /// failure instead of panicking.
+    pub fn createUninitializedImmediatelyChecked(
         es: *Entities,
         archetype: Component.Flags,
     ) error{ZcsEntityOverflow}!Entity {
@@ -134,7 +137,7 @@ pub const Entity = packed struct {
     /// Destroys the entity. May invalidate iterators.
     ///
     /// Has no effect if the entity has already been destroyed.
-    pub fn destroy(self: @This(), es: *Entities) void {
+    pub fn destroyImmediately(self: @This(), es: *Entities) void {
         invalidateIterators(es);
         if (es.slots.get(self.key)) |slot| {
             if (!slot.committed) es.reserved_entities -= 1;
@@ -214,7 +217,7 @@ pub const Entity = packed struct {
     ///
     /// # Example
     /// ```zig
-    /// try entity.changeArchetype(&es, Component.flags(&.{Fire}), .{
+    /// try entity.changeArchetypeImmediately(&es, Component.flags(&.{Fire}), .{
     ///     RigidBody {
     ///         .mass = 10,
     ///     },
@@ -225,19 +228,19 @@ pub const Entity = packed struct {
     ///     if (condition) mesh else null,
     /// });
     /// ```
-    pub fn changeArchetype(
+    pub fn changeArchetypeImmediately(
         self: @This(),
         es: *Entities,
         remove: Component.Flags,
         add: anytype,
     ) void {
-        return self.changeArchetypeChecked(es, remove, add) catch |err|
+        return self.changeArchetypeImmediatelyChecked(es, remove, add) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `changeArchetype`, but returns `error.ZcsEntityOverflow` on failure instead of
+    /// Similar to `changeArchetypeImmediately`, but returns `error.ZcsEntityOverflow` on failure instead of
     /// panicking.
-    pub fn changeArchetypeChecked(
+    pub fn changeArchetypeImmediatelyChecked(
         self: @This(),
         es: *Entities,
         remove: Component.Flags,
@@ -261,7 +264,7 @@ pub const Entity = packed struct {
             }
         }
 
-        try self.changeArchetypeUnintializedChecked(es, .{
+        try self.changeArchetypeUnintializedImmediatelyChecked(es, .{
             .remove = remove,
             .add = comp_flags,
         });
@@ -287,19 +290,19 @@ pub const Entity = packed struct {
         add: Component.Flags = .{},
     };
 
-    /// Similar to `changeArchetype`, but does not initialize any added components.
+    /// Similar to `changeArchetypeImmediately`, but does not initialize any added components.
     ///
     /// May invalidate removed components even if they are also present in `add`.
-    pub fn changeArchetypeUnintialized(
+    pub fn changeArchetypeUnintializedImmediately(
         self: @This(),
         es: *Entities,
         options: ChangeArchetypeUninitializedOptions,
     ) void {
-        self.changeArchetypeUnintializedChecked(es, options) catch |err|
+        self.changeArchetypeUnintializedImmediatelyChecked(es, options) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `changeArchetype`, but does not require compile time types.
+    /// Similar to `changeArchetypeImmediately`, but does not require compile time types.
     pub fn changeArchetypeFromComponents(
         self: @This(),
         es: *Entities,
@@ -326,7 +329,7 @@ pub const Entity = packed struct {
                 add_flags.insert(some.id);
             }
         }
-        try self.changeArchetypeUnintializedChecked(
+        try self.changeArchetypeUnintializedImmediatelyChecked(
             es,
             .{
                 .remove = remove,
@@ -348,9 +351,9 @@ pub const Entity = packed struct {
         }
     }
 
-    /// Similar to `changeArchetypeUnintialized`, but returns `error.ZcsEntityOverflow` on failure
+    /// Similar to `changeArchetypeUnintializedImmediately`, but returns `error.ZcsEntityOverflow` on failure
     /// instead of panicking.
-    pub fn changeArchetypeUnintializedChecked(
+    pub fn changeArchetypeUnintializedImmediatelyChecked(
         self: @This(),
         es: *Entities,
         options: ChangeArchetypeUninitializedOptions,

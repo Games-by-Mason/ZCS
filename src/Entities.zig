@@ -259,14 +259,14 @@ pub const Iterator = struct {
 
     /// Destroys the current entity without invalidating this iterator. May invalidate other
     /// iterators.
-    pub fn destroyCurrent(self: *@This(), es: *Entities) void {
+    pub fn destroyCurrentImmediately(self: *@This(), es: *Entities) void {
         assert(self.index > 0);
         const index = self.index - 1;
         const entity: Entity = .{ .key = .{
             .index = index,
             .generation = es.slots.generations[index],
         } };
-        entity.destroy(es);
+        entity.destroyImmediately(es);
         self.generation +%= 1;
     }
 };
@@ -350,8 +350,8 @@ pub fn ViewIterator(View: type) type {
 
         /// Destroys the current entity without invalidating this iterator. May invalidate other
         /// iterators.
-        pub fn destroyCurrent(self: *@This(), es: *Entities) void {
-            self.entity_iterator.destroyCurrent(es);
+        pub fn destroyCurrentImmediately(self: *@This(), es: *Entities) void {
+            self.entity_iterator.destroyCurrentImmediately(es);
         }
     };
 }

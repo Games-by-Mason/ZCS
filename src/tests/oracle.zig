@@ -68,12 +68,12 @@ pub fn Oracle(Components: []const type) type {
             actual: zcs.Entity,
 
             /// Creates a new entity in both the ground truth data and the real ECS.
-            pub fn create(es: *Entities, comps: anytype) !Entity {
+            pub fn createImmediately(es: *Entities, comps: anytype) !Entity {
                 es.checked = false;
 
                 // If the ground truth overflows, make sure the real ECS does too.
                 if (try es.count() + try es.reserved() == es.capacity) {
-                    const result = zcs.Entity.createChecked(&es.actual, comps);
+                    const result = zcs.Entity.createImmediatelyChecked(&es.actual, comps);
                     try std.testing.expectError(error.ZcsEntityOverflow, result);
                     return error.ZcsEntityOverflow;
                 }
@@ -81,7 +81,7 @@ pub fn Oracle(Components: []const type) type {
                 // Create the actual entity. This may overflow due to fragmentation even if the
                 // ground truth didn't, that's okay. Exact allocation patterns are implementation
                 // defined.
-                const actual = try zcs.Entity.createChecked(&es.actual, comps);
+                const actual = try zcs.Entity.createImmediatelyChecked(&es.actual, comps);
 
                 // Create the ground truth entity.
                 var storage: EntityStorage = .{};
@@ -137,7 +137,7 @@ pub fn Oracle(Components: []const type) type {
 
                 // If the ground truth overflows, make sure the real ECS does too.
                 if (try es.count() == es.capacity) {
-                    const result = zcs.Entity.createFromComponentsChecked(
+                    const result = zcs.Entity.createFromComponentsImmediatelyChecked(
                         &es.actual,
                         actual_comps.constSlice(),
                     );
@@ -148,7 +148,7 @@ pub fn Oracle(Components: []const type) type {
                 // Create the actual entity. This may overflow due to fragmentation even if the
                 // ground truth didn't, that's okay. Exact allocation patterns are implementation
                 // defined.
-                const actual = try zcs.Entity.createFromComponentsChecked(
+                const actual = try zcs.Entity.createFromComponentsImmediatelyChecked(
                     &es.actual,
                     actual_comps.constSlice(),
                 );
@@ -175,13 +175,13 @@ pub fn Oracle(Components: []const type) type {
 
             /// Destroy the entity both in the ground truth and in the ECS. Tests that it was
             /// successfully destroyed.
-            pub fn destroy(self: @This(), es: *Entities) !void {
+            pub fn destroyImmediately(self: @This(), es: *Entities) !void {
                 es.checked = false;
 
                 _ = es.expected_live.swapRemove(self);
                 _ = es.expected_reserved.swapRemove(self);
                 try es.expected_destroyed.put(gpa, self, {});
-                self.actual.destroy(&es.actual);
+                self.actual.destroyImmediately(&es.actual);
                 try std.testing.expect(!try self.exists(es));
             }
 
@@ -295,7 +295,7 @@ pub fn Oracle(Components: []const type) type {
                         actual_remove.insert(es.actual.getComponentId(Components[i]));
                     }
                 }
-                try self.actual.changeArchetypeChecked(&es.actual, actual_remove, comps);
+                try self.actual.changeArchetypeImmediatelyChecked(&es.actual, actual_remove, comps);
 
                 // Change the archetype of the expected entity
                 if (try self.exists(es)) {
@@ -572,7 +572,7 @@ pub fn Oracle(Components: []const type) type {
                     const entity: Entity = .{ .actual = view.entity };
                     try actual.putNoClobber(gpa, view.entity, view);
                     if (destroyed.contains(entity)) {
-                        iter.destroyCurrent(&self.actual);
+                        iter.destroyCurrentImmediately(&self.actual);
                     }
                 }
 
