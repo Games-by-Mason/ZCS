@@ -28,15 +28,15 @@ pub const Entity = packed struct {
     key: SlotMap(Component.Flags, .{}).Key,
 
     /// Pops a reserved entity from the reserved buffer.
-    pub fn nextReserved(cb: *CmdBuf) Entity {
-        return cb.nextReservedChecked() catch |err|
+    pub fn nextReserved(cmds: *CmdBuf) Entity {
+        return nextReservedChecked(cmds) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `nextReserved`, but returns `error.ZcsReservedEntityUnderflow` if there are no more
     /// reserved entities instead of panicking.
-    pub fn nextReservedChecked(cb: *CmdBuf) error{ZcsReservedEntityUnderflow}.Entity {
-        return cb.reserved.popOrNull() orelse error.ZcsReservedEntityUnderflow;
+    pub fn nextReservedChecked(cmds: *CmdBuf) error{ZcsReservedEntityUnderflow}!Entity {
+        return cmds.reserved.popOrNull() orelse error.ZcsReservedEntityUnderflow;
     }
 
     /// Reserves an entity key, but doesn't set up storage for it.
@@ -64,17 +64,17 @@ pub const Entity = packed struct {
     }
 
     /// Appends an `Entity.destroy` command.
-    pub fn destroyCmd(self: @This(), cb: *CmdBuf) void {
-        self.destroyCmdChecked(cb) catch |err|
+    pub fn destroyCmd(self: @This(), cmds: *CmdBuf) void {
+        self.destroyCmdChecked(cmds) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `destroy`, but returns `error.ZcsCmdBufOverflow` on failure instead of panicking.
-    pub fn destroyCmdChecked(self: @This(), cb: *CmdBuf) error{ZcsCmdBufOverflow}!void {
-        if (cb.destroy_queue.items.len >= cb.destroy_queue.capacity) {
+    pub fn destroyCmdChecked(self: @This(), cmds: *CmdBuf) error{ZcsCmdBufOverflow}!void {
+        if (cmds.destroy_queue.items.len >= cmds.destroy_queue.capacity) {
             return error.ZcsCmdBufOverflow;
         }
-        cb.destroy_queue.appendAssumeCapacity(self);
+        cmds.destroy_queue.appendAssumeCapacity(self);
     }
 
     /// Destroys the entity. May invalidate iterators.
@@ -163,11 +163,10 @@ pub const Entity = packed struct {
     pub fn changeArchetypeCmd(
         self: @This(),
         es: *const Entities,
-        cb: *CmdBuf,
-        remove: Component.Flags,
-        comps: anytype,
+        cmds: *CmdBuf,
+        change: anytype,
     ) void {
-        self.changeArchetypeCmdChecked(es, cb, remove, comps) catch |err|
+        self.changeArchetypeCmdChecked(es, cmds, change) catch |err|
             @panic(@errorName(err));
     }
 
@@ -176,31 +175,31 @@ pub const Entity = packed struct {
     pub fn changeArchetypeCmdChecked(
         self: @This(),
         es: *const Entities,
-        cb: *CmdBuf,
-        remove: Component.Flags,
-        add: anytype,
+        cmds: *CmdBuf,
+        changes: anytype,
     ) error{ZcsCmdBufOverflow}!void {
         // Check the types
-        meta.checkComponents(@TypeOf(add));
-        const fields = @typeInfo(@TypeOf(add)).@"struct".fields;
+        const Changes = meta.ArchetypeChanges(@TypeOf(changes));
+        const add = Changes.getAdd(changes);
+        const remove = Changes.getRemove(changes);
 
         // Restore the state on failure
-        const restore = cb.*;
-        errdefer cb.* = restore;
+        const restore = cmds.*;
+        errdefer cmds.* = restore;
 
         // Sort for minimal padding
         const sorted_fields = comptime meta.alignmentSort(@TypeOf(add));
 
         // Issue the subcommands
-        try SubCmd.encode(es, cb, .{ .bind_entity = self });
-        try SubCmd.encode(es, cb, .{ .remove_components = remove });
-        inline for (0..fields.len) |i| {
-            const field = fields[sorted_fields[i]];
+        try SubCmd.encode(es, cmds, .{ .bind_entity = self });
+        try SubCmd.encode(es, cmds, .{ .remove_components = remove });
+        inline for (0..add.len) |i| {
+            const field = @typeInfo(@TypeOf(add)).@"struct".fields[sorted_fields[i]];
 
             const optional: ?meta.Unwrapped(field.type) = @field(add, field.name);
             if (optional) |some| {
                 if (field.is_comptime and @sizeOf(@TypeOf(some)) > @sizeOf(usize)) {
-                    try SubCmd.encode(es, cb, .{ .add_component_ptr = .{
+                    try SubCmd.encode(es, cmds, .{ .add_component_ptr = .{
                         .id = es.getComponentId(@TypeOf(some)),
                         .ptr = &struct {
                             const interned = some;
@@ -208,7 +207,7 @@ pub const Entity = packed struct {
                         .interned = true,
                     } });
                 } else {
-                    try SubCmd.encode(es, cb, .{ .add_component_val = .{
+                    try SubCmd.encode(es, cmds, .{ .add_component_val = .{
                         .id = es.getComponentId(@TypeOf(some)),
                         .ptr = @ptrCast(&some),
                         .interned = false,
@@ -218,17 +217,21 @@ pub const Entity = packed struct {
         }
     }
 
+    pub const ChangeArchetypeFromComponentsOptions = struct {
+        add: []const Component.Optional = &.{},
+        remove: Component.Flags = .{},
+    };
+
     /// Similar to `changeArchetype` but does not require compile time types.
     ///
     /// Components set to `.none` have no effect.
     pub fn changeArchetypeCmdFromComponents(
         self: @This(),
         es: *const Entities,
-        cb: *CmdBuf,
-        remove: Component.Flags,
-        comps: []const Component.Optional,
+        cmds: *CmdBuf,
+        changes: ChangeArchetypeFromComponentsOptions,
     ) void {
-        self.changeArchetypeCmdFromComponentsChecked(es, cb, remove, comps) catch |err|
+        self.changeArchetypeCmdFromComponentsChecked(es, cmds, changes) catch |err|
             @panic(@errorName(err));
     }
 
@@ -237,30 +240,29 @@ pub const Entity = packed struct {
     pub fn changeArchetypeCmdFromComponentsChecked(
         self: @This(),
         es: *const Entities,
-        cb: *CmdBuf,
-        remove: Component.Flags,
-        comps: []const Component.Optional,
+        cmds: *CmdBuf,
+        changes: ChangeArchetypeFromComponentsOptions,
     ) error{ZcsCmdBufOverflow}!void {
-        const restore = cb.*;
-        errdefer cb.* = restore;
+        const restore = cmds.*;
+        errdefer cmds.* = restore;
 
-        try SubCmd.encode(es, cb, .{ .bind_entity = self });
-        if (!remove.eql(.{})) {
-            try SubCmd.encode(es, cb, .{ .remove_components = remove });
+        try SubCmd.encode(es, cmds, .{ .bind_entity = self });
+        if (!changes.remove.eql(.{})) {
+            try SubCmd.encode(es, cmds, .{ .remove_components = changes.remove });
         }
 
         // Issue subcommands to add the listed components. Issued in reverse order, duplicates are
         // skipped.
         var added: Component.Flags = .{};
-        for (0..comps.len) |i| {
-            const comp = comps[comps.len - i - 1];
+        for (0..changes.add.len) |i| {
+            const comp = changes.add[changes.add.len - i - 1];
             if (comp.unwrap()) |some| {
                 if (!added.contains(some.id)) {
                     added.insert(some.id);
                     if (some.interned) {
-                        try SubCmd.encode(es, cb, .{ .add_component_ptr = some });
+                        try SubCmd.encode(es, cmds, .{ .add_component_ptr = some });
                     } else {
-                        try SubCmd.encode(es, cb, .{ .add_component_val = some });
+                        try SubCmd.encode(es, cmds, .{ .add_component_val = some });
                     }
                 }
             }
@@ -293,10 +295,9 @@ pub const Entity = packed struct {
     pub fn changeArchetypeImmediately(
         self: @This(),
         es: *Entities,
-        remove: Component.Flags,
-        add: anytype,
+        changes: anytype,
     ) void {
-        return self.changeArchetypeImmediatelyChecked(es, remove, add) catch |err|
+        return self.changeArchetypeImmediatelyChecked(es, changes) catch |err|
             @panic(@errorName(err));
     }
 
@@ -305,10 +306,11 @@ pub const Entity = packed struct {
     pub fn changeArchetypeImmediatelyChecked(
         self: @This(),
         es: *Entities,
-        remove: Component.Flags,
-        add: anytype,
+        changes: anytype,
     ) error{ZcsEntityOverflow}!void {
-        meta.checkComponents(@TypeOf(add));
+        const Changes = meta.ArchetypeChanges(@TypeOf(changes));
+        const add = Changes.getAdd(changes);
+        const remove = Changes.getRemove(changes);
 
         // Early out if the entity does not exist
         if (!self.exists(es)) return;
@@ -368,10 +370,9 @@ pub const Entity = packed struct {
     pub fn changeArchetypeFromComponentsImmediately(
         self: @This(),
         es: *Entities,
-        remove: Component.Flags,
-        add: []const Component.Optional,
+        changes: ChangeArchetypeFromComponentsOptions,
     ) void {
-        self.changeArchetypeFromComponentsImmediatelyChecked(es, remove, add) catch |err|
+        self.changeArchetypeFromComponentsImmediatelyChecked(es, changes) catch |err|
             @panic(@errorName(err));
     }
 
@@ -380,13 +381,12 @@ pub const Entity = packed struct {
     pub fn changeArchetypeFromComponentsImmediatelyChecked(
         self: @This(),
         es: *Entities,
-        remove: Component.Flags,
-        add: []const Component.Optional,
+        changes: ChangeArchetypeFromComponentsOptions,
     ) error{ZcsEntityOverflow}!void {
         if (!self.exists(es)) return;
 
         var add_flags: Component.Flags = .{};
-        for (add) |comp| {
+        for (changes.add) |comp| {
             if (comp.unwrap()) |some| {
                 add_flags.insert(some.id);
             }
@@ -394,14 +394,14 @@ pub const Entity = packed struct {
         try self.changeArchetypeUninitializedImmediatelyChecked(
             es,
             .{
-                .remove = remove,
+                .remove = changes.remove,
                 .add = add_flags,
             },
         );
 
         var added: Component.Flags = .{};
-        for (0..add.len) |i| {
-            const comp = add[add.len - i - 1];
+        for (0..changes.add.len) |i| {
+            const comp = changes.add[changes.add.len - i - 1];
             if (comp.unwrap()) |some| {
                 if (!added.contains(some.id)) {
                     added.insert(some.id);

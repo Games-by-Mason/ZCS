@@ -13,13 +13,13 @@
 //!
 //! # Example
 //! ```zig
-//! var cb = try CmdBuf.init(gpa, &es, 4);
-//! defer cb.deinit(gpa);
+//! var cmds = try CmdBuf.init(gpa, &es, 4);
+//! defer cmds.deinit(gpa);
 //!
-//! cb.changeArchetype(&es, es.reserve(), Component.flags(&es, &.{Fire}), .{ Hammer{} });
-//! cb.execute(&es);
-//! cb.destroy(entity1);
-//! cb.clear();
+//! cmds.changeArchetype(&es, es.reserve(), Component.flags(&es, &.{Fire}), .{ Hammer{} });
+//! cmds.execute(&es);
+//! cmds.destroy(entity1);
+//! cmds.clear();
 //! ```
 
 const std = @import("std");
@@ -35,8 +35,6 @@ const SubCmd = @import("CmdBuf/sub_cmd.zig").SubCmd;
 
 const CmdBuf = @This();
 
-const meta = @import("meta.zig");
-
 tags: std.ArrayListUnmanaged(SubCmd.Tag),
 args: std.ArrayListUnmanaged(u64),
 comp_bytes: std.ArrayListAlignedUnmanaged(u8, Entities.max_align),
@@ -50,7 +48,7 @@ pub fn init(
     es: *Entities,
     capacity: usize,
 ) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
-    return initSeparateCapacities(gpa, .initFromCmds(es, capacity));
+    return initSeparateCapacities(gpa, es, .initFromCmds(es, capacity));
 }
 
 /// Initializes a command buffer with at least enough capacity for the given number of commands.
@@ -143,7 +141,7 @@ pub fn refillReservedEntities(self: *@This(), es: *Entities) void {
 /// panicking.
 pub fn refillReservedEntitiesChecked(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
     while (self.reserved.items.len < self.reserved.capacity) {
-        self.reserved.appendAssumeCapacity(try Entity.reserve(es));
+        self.reserved.appendAssumeCapacity(try Entity.reserveImmediatelyChecked(es));
     }
 }
 
@@ -217,7 +215,7 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
 /// defined but guaranteed to provide the same result as the order the commands were issued.
 pub fn iterator(self: *const @This(), es: *const Entities) Iterator {
     return .{ .decoder = .{
-        .cb = self,
+        .cmds = self,
         .es = es,
     } };
 }
@@ -293,8 +291,8 @@ pub const Iterator = struct {
     }
 
     inline fn nextDestroy(self: *@This()) ?Entity {
-        if (self.destroy_index < self.decoder.cb.destroy_queue.items.len) {
-            const entity = self.decoder.cb.destroy_queue.items[self.destroy_index];
+        if (self.destroy_index < self.decoder.cmds.destroy_queue.items.len) {
+            const entity = self.decoder.cmds.destroy_queue.items[self.destroy_index];
             self.destroy_index += 1;
             return entity;
         } else {

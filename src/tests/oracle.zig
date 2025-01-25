@@ -212,7 +212,10 @@ pub fn Oracle(Components: []const type) type {
                         actual_remove.insert(es.actual.getComponentId(Components[i]));
                     }
                 }
-                try self.actual.changeArchetypeImmediatelyChecked(&es.actual, actual_remove, comps);
+                try self.actual.changeArchetypeImmediatelyChecked(&es.actual, .{
+                    .remove = actual_remove,
+                    .add = comps,
+                });
 
                 // Change the archetype of the expected entity
                 if (try self.exists(es)) {
@@ -263,11 +266,10 @@ pub fn Oracle(Components: []const type) type {
                 }
                 var actual_comps: std.BoundedArray(zcs.Component.Optional, 32) = .{};
                 for (comps) |comp| try actual_comps.append(comp.actual);
-                try self.actual.changeArchetypeFromComponentsImmediatelyChecked(
-                    &es.actual,
-                    actual_remove,
-                    actual_comps.constSlice(),
-                );
+                try self.actual.changeArchetypeFromComponentsImmediatelyChecked(&es.actual, .{
+                    .remove = actual_remove,
+                    .add = actual_comps.constSlice(),
+                });
 
                 // Change the archetype of the expected entity
                 if (try self.exists(es)) {

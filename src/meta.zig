@@ -1,6 +1,8 @@
 //! Metaprogramming helpers.
 
 const std = @import("std");
+const zcs = @import("root.zig");
+const Component = zcs.Component;
 
 /// Returns the field indices for `Comps` sorted in descending alignment.
 pub fn alignmentSort(Comps: type) [@typeInfo(Comps).@"struct".fields.len]u8 {
@@ -11,6 +13,13 @@ pub fn alignmentSort(Comps: type) [@typeInfo(Comps).@"struct".fields.len]u8 {
     // simple.
     comptime std.sort.pdq(u8, &sorted, Comps, compareComponentAlignment);
     return sorted;
+}
+
+fn compareComponentAlignment(Comps: type, lhs: u8, rhs: u8) bool {
+    const fields = @typeInfo(Comps).@"struct".fields;
+    const Lhs = Unwrapped(fields[lhs].type);
+    const Rhs = Unwrapped(fields[rhs].type);
+    return @alignOf(Lhs) > @alignOf(Rhs);
 }
 
 test "alignmentSort" {
@@ -53,19 +62,39 @@ test "Unwrapped" {
     try std.testing.expectEqual(u32, Unwrapped(?u32));
 }
 
-/// Checks that components don't contain any duplicates. ?Component is considered equivalent to
-/// Component.
-pub fn checkComponents(Components: type) void {
-    if (DuplicateComponentType(Components)) |Component| {
-        @compileError("component type listed twice: " ++ @typeName(Component));
+pub fn ArchetypeChanges(T: type) type {
+    for (@typeInfo(T).@"struct".fields) |field| {
+        if (std.mem.eql(u8, "add", field.name)) continue;
+        if (std.mem.eql(u8, "remove", field.name)) continue;
+        @compileError(std.fmt.comptimePrint(
+            "unexpected field {}",
+            .{std.zig.fmtId(field.name)},
+        ));
     }
-}
 
-test "checkComponents" {
-    try std.testing.expectEqual(i32, DuplicateComponentType(struct { i32, f32, i32 }));
-    try std.testing.expectEqual(i32, DuplicateComponentType(struct { i32, f32, ?i32 }));
-    try std.testing.expectEqual(null, DuplicateComponentType(struct { i32, f32, u32 }));
-    try std.testing.expectEqual(null, DuplicateComponentType(struct { i32, f32, ?u32 }));
+    if (@hasField(T, "add")) {
+        if (DuplicateComponentType(@FieldType(T, "add"))) |C| {
+            @compileError("component type listed twice: " ++ @typeName(C));
+        }
+    }
+
+    return struct {
+        const Add = if (@hasField(T, "add")) @FieldType(T, "add") else @TypeOf(.{});
+
+        pub inline fn getAdd(from: T) Add {
+            if (@hasField(T, "add")) {
+                return from.add;
+            }
+            return .{};
+        }
+
+        pub inline fn getRemove(from: T) Component.Flags {
+            if (@hasField(T, "remove")) {
+                return from.remove;
+            }
+            return .{};
+        }
+    };
 }
 
 fn DuplicateComponentType(T: type) ?type {
@@ -83,9 +112,9 @@ fn DuplicateComponentType(T: type) ?type {
     return null;
 }
 
-fn compareComponentAlignment(Comps: type, lhs: u8, rhs: u8) bool {
-    const fields = @typeInfo(Comps).@"struct".fields;
-    const Lhs = Unwrapped(fields[lhs].type);
-    const Rhs = Unwrapped(fields[rhs].type);
-    return @alignOf(Lhs) > @alignOf(Rhs);
+test "ArchetypeChanges" {
+    try std.testing.expectEqual(i32, DuplicateComponentType(struct { i32, f32, i32 }));
+    try std.testing.expectEqual(i32, DuplicateComponentType(struct { i32, f32, ?i32 }));
+    try std.testing.expectEqual(null, DuplicateComponentType(struct { i32, f32, u32 }));
+    try std.testing.expectEqual(null, DuplicateComponentType(struct { i32, f32, ?u32 }));
 }
