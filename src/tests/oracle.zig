@@ -73,14 +73,14 @@ pub fn Oracle(Components: []const type) type {
 
                 // If the ground truth overflows, make sure the real ECS does too.
                 if (try es.count() + try es.reserved() == es.capacity) {
-                    const result = zcs.Entity.reserveChecked(&es.actual);
+                    const result = zcs.Entity.reserveImmediatelyChecked(&es.actual);
                     try std.testing.expectError(error.ZcsEntityOverflow, result);
                     return error.ZcsEntityOverflow;
                 }
 
                 // Create the actual entity. This should always succeed if the ground truth
                 // succeeded since no space for components was allocated.
-                const actual = zcs.Entity.reserve(&es.actual);
+                const actual = zcs.Entity.reserveImmediately(&es.actual);
 
                 // Create the ground truth entity.
                 const entity: Entity = .{ .actual = actual };
