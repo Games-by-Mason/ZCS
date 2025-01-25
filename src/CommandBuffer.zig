@@ -228,6 +228,19 @@ pub fn createFromComponentsChecked(
     return entity;
 }
 
+/// Returns the entity that will be returned `n` creates from now.
+pub fn peekCreate(self: *const @This(), n: usize) Entity {
+    return self.peekCreateChecked(n) catch |err|
+        @panic(@errorName(err));
+}
+
+/// Similar to `peekCreate`, but returns `error.Overflow` if there are not at least `n` reserved
+/// entities left.
+pub fn peekCreateChecked(self: *const @This(), n: usize) error{Overflow}!Entity {
+    if (self.reserved.items.len <= n) return error.Overflow;
+    return self.reserved.items[self.reserved.items.len - 1 - n];
+}
+
 /// Appends an `Entity.changeArchetype` command.
 ///
 /// See `Entity.changeArchetype` for documentation on what's types are allowed in `comps`.

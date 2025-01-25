@@ -127,11 +127,19 @@ test "command buffer create empty" {
 
     try expectEqual(0, es.count());
 
+    const e0_expected = cb.peekCreate(0);
     const e0 = cb.create(&es, .{});
+    const e1_expected = cb.peekCreate(0);
+    const e2_expected = cb.peekCreate(1);
     const e1 = cb.createFromComponents(&es, &.{});
     const rb = RigidBody.random(rand);
     const model = Model.random(rand);
     const e2 = cb.create(&es, .{rb});
+    try expect(e0_expected.eql(e0));
+    try expect(e1_expected.eql(e1));
+    try expect(e2_expected.eql(e2));
+    _ = try cb.peekCreateChecked(0);
+    try expectError(error.Overflow, cb.peekCreateChecked(1));
     cb.submit(&es);
     cb.clear();
 
