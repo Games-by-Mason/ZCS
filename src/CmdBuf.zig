@@ -313,7 +313,7 @@ fn submitOrOverflow(self: *@This(), es: *Entities) bool {
         switch (cmd) {
             .change_archetype => |args| {
                 if (args.entity.exists(es)) {
-                    args.entity.changeArchetypeUnintializedImmediatelyChecked(es, .{
+                    args.entity.changeArchetypeUninitializedImmediatelyChecked(es, .{
                         .remove = args.remove,
                         .add = args.add,
                     }) catch |err| switch (err) {

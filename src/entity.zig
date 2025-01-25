@@ -20,96 +20,6 @@ pub const Entity = packed struct {
 
     key: SlotMap(Component.Flags, .{}).Key,
 
-    /// Creates a new entity. May invalidate iterators.
-    ///
-    /// `comps` must be a tuple where each field is a registered component type. Duplicates are not
-    /// allowed.
-    ///
-    /// Fields may be optional to allow deciding whether or not to include a component at runtime.
-    ///
-    /// # Example
-    /// ```zig
-    /// try Entity.createImmediately(&es, .{
-    ///     RigidBody {
-    ///         .mass = 10,
-    ///     },
-    ///     Transform {
-    ///         position = .{ .x = 10, .y = 10 },
-    ///         velocity = .{ .x = 0, .y = 0 },
-    ///     },
-    ///     if (condition) model else null,
-    /// });
-    /// ```
-    pub fn createImmediately(es: *Entities, comps: anytype) Entity {
-        return createImmediatelyChecked(es, comps) catch |err|
-            @panic(@errorName(err));
-    }
-
-    /// Similar to `create`, but returns `error.ZcsEntityOverflow` on failure instead of panicking.
-    pub fn createImmediatelyChecked(es: *Entities, comps: anytype) error{ZcsEntityOverflow}!Entity {
-        meta.checkComponents(@TypeOf(comps));
-        const entity = try createUninitializedImmediatelyChecked(es, .{});
-        entity.changeArchetypeImmediatelyChecked(es, .{}, comps) catch {
-            // The archetype hasn't been changed, we're just using this to initialize it, so this
-            // isn't actually fallible.
-            unreachable;
-        };
-        return entity;
-    }
-
-    /// Similar to `create`, but does not require compile time types.
-    pub fn createFromComponentsImmediately(
-        es: *Entities,
-        comps: []const Component.Optional,
-    ) Entity {
-        return createFromComponentsImmediatelyChecked(es, comps) catch |err|
-            @panic(@errorName(err));
-    }
-
-    /// Similar to `createFromComponentsImmediatelyChecked`, but returns `error.ZcsEntityOverflow`
-    /// on failure instead of panicking.
-    pub fn createFromComponentsImmediatelyChecked(
-        es: *Entities,
-        comps: []const Component.Optional,
-    ) error{ZcsEntityOverflow}!Entity {
-        var archetype: Component.Flags = .{};
-        for (comps) |comp| {
-            if (comp.unwrap()) |some| {
-                archetype.insert(some.id);
-            }
-        }
-        const entity = try createUninitializedImmediatelyChecked(es, archetype);
-        entity.changeArchetypeFromComponentsChecked(es, .{}, comps) catch {
-            // The archetype hasn't been changed, we're just using this to initialize it, so this
-            // isn't actually fallible.
-            unreachable;
-        };
-        return entity;
-    }
-
-    /// Similar to `create`, but does not initialize the components.
-    pub fn createUninitializedImmediately(es: *Entities, archetype: Component.Flags) Entity {
-        return createUninitializedImmediatelyChecked(es, archetype) catch |err|
-            @panic(@errorName(err));
-    }
-
-    /// Similar to `createUninitializedImmediately`, but returns `error.ZcsEntityOverflow` on
-    /// failure instead of panicking.
-    pub fn createUninitializedImmediatelyChecked(
-        es: *Entities,
-        archetype: Component.Flags,
-    ) error{ZcsEntityOverflow}!Entity {
-        invalidateIterators(es);
-        const entity = try reserveChecked(es);
-        const slot = es.slots.get(entity.key).?;
-        es.reserved_entities -= 1;
-        slot.* = .{
-            .archetype = archetype,
-            .committed = true,
-        };
-        return entity;
-    }
-
     /// Reserves an entity key, but doesn't set up storage for it.
     ///
     /// Until committed, the entity will behave identically to an entity with no components, but
@@ -211,7 +121,10 @@ pub const Entity = packed struct {
     /// Removes the components in `remove`, and then adds `components`.  May invalidate component
     /// pointers and iterators.
     ///
-    /// See `create` for what types are allowed in `add`.
+    /// `comps` must be a tuple where each field is a registered component type. Duplicates are not
+    /// allowed.
+    ///
+    /// Fields may be optional to allow deciding whether or not to include a component at runtime.
     ///
     /// Has no effect if the entity has been destroyed.
     ///
@@ -264,7 +177,7 @@ pub const Entity = packed struct {
             }
         }
 
-        try self.changeArchetypeUnintializedImmediatelyChecked(es, .{
+        try self.changeArchetypeUninitializedImmediatelyChecked(es, .{
             .remove = remove,
             .add = comp_flags,
         });
@@ -283,7 +196,7 @@ pub const Entity = packed struct {
     }
 
     /// Options for the uninitialized variants of change archetype.
-    pub const ChangeArchetypeUninitializedOptions = struct {
+    pub const ChangeArchetypeUninitializedImmediatelyOptions = struct {
         /// Component types to remove.
         remove: Component.Flags = .{},
         /// Component types to add.
@@ -296,9 +209,9 @@ pub const Entity = packed struct {
     pub fn changeArchetypeUnintializedImmediately(
         self: @This(),
         es: *Entities,
-        options: ChangeArchetypeUninitializedOptions,
+        options: ChangeArchetypeUninitializedImmediatelyOptions,
     ) void {
-        self.changeArchetypeUnintializedImmediatelyChecked(es, options) catch |err|
+        self.changeArchetypeUninitializedImmediatelyChecked(es, options) catch |err|
             @panic(@errorName(err));
     }
 
@@ -309,13 +222,13 @@ pub const Entity = packed struct {
         remove: Component.Flags,
         add: []const Component.Optional,
     ) void {
-        self.changeArchetypeFromComponentsChecked(es, remove, add) catch |err|
+        self.changeArchetypeFromComponentsImmediatelyChecked(es, remove, add) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `changeArchetypeFromComponents`, but returns `error.ZcsEntityOverflow` on failure
     /// instead of panicking.
-    pub fn changeArchetypeFromComponentsChecked(
+    pub fn changeArchetypeFromComponentsImmediatelyChecked(
         self: @This(),
         es: *Entities,
         remove: Component.Flags,
@@ -329,7 +242,7 @@ pub const Entity = packed struct {
                 add_flags.insert(some.id);
             }
         }
-        try self.changeArchetypeUnintializedImmediatelyChecked(
+        try self.changeArchetypeUninitializedImmediatelyChecked(
             es,
             .{
                 .remove = remove,
@@ -353,10 +266,10 @@ pub const Entity = packed struct {
 
     /// Similar to `changeArchetypeUnintializedImmediately`, but returns `error.ZcsEntityOverflow` on failure
     /// instead of panicking.
-    pub fn changeArchetypeUnintializedImmediatelyChecked(
+    pub fn changeArchetypeUninitializedImmediatelyChecked(
         self: @This(),
         es: *Entities,
-        options: ChangeArchetypeUninitializedOptions,
+        options: ChangeArchetypeUninitializedImmediatelyOptions,
     ) error{ZcsEntityOverflow}!void {
         invalidateIterators(es);
         const slot = es.slots.get(self.key) orelse return;

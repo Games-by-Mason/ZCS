@@ -138,21 +138,22 @@ test "overflow" {
     var es = try Entities.init(capacity);
     defer es.deinit();
 
-    for (0..capacity) |_| {
-        _ = try Entity.createImmediately(&es, .{});
+    for (0..capacity) |i| {
+        const e = try Entity.reserve(&es);
+        if (i % 2 == 0) try e.changeArchetypeImmediately(&es, .{}, .{});
     }
 
-    try expectError(error.ZcsEntityOverflow, Entity.createImmediately(&es, .{}));
-    try expectError(error.ZcsEntityOverflow, Entity.createImmediately(&es, .{}));
+    try expectError(error.ZcsEntityOverflow, Entity.reserve(&es));
+    try expectError(error.ZcsEntityOverflow, Entity.reserve(&es));
     try es.expected_live.keys()[0].destroyImmediately(&es);
-    _ = try Entity.createImmediately(&es, .{});
-    try expectError(error.ZcsEntityOverflow, Entity.createImmediately(&es, .{}));
-    try expectError(error.ZcsEntityOverflow, Entity.createImmediately(&es, .{}));
+    _ = try Entity.reserve(&es);
+    try expectError(error.ZcsEntityOverflow, Entity.reserve(&es));
+    try expectError(error.ZcsEntityOverflow, Entity.reserve(&es));
     try es.reset();
     for (0..capacity) |_| {
-        _ = try Entity.createImmediately(&es, .{});
+        _ = try Entity.reserve(&es);
     }
-    try expectError(error.ZcsEntityOverflow, Entity.createImmediately(&es, .{}));
+    try expectError(error.ZcsEntityOverflow, Entity.reserve(&es));
 
     try es.fullCheck(rand);
 }
@@ -165,7 +166,6 @@ pub fn doRandomOperations(
 ) !void {
     for (0..iterations) |_| {
         switch (rand.enumValue(enum {
-            create,
             destroy,
             modify,
             change_archetype,
@@ -174,102 +174,6 @@ pub fn doRandomOperations(
             access_destroyed,
             reserve,
         })) {
-            .create => {
-                if (rand.boolean()) {
-                    var comps: RandomComponents = .{};
-                    comps.randomize(es, rand);
-                    _ = try Entity.createFromComponents(es, comps.buf.constSlice());
-                } else {
-                    // Typed
-                    if (rand.boolean()) {
-                        // Without null components
-                        if (rand.float(f32) < 0.1) {
-                            // Interned
-                            _ = switch (rand.enumValue(enum {
-                                model,
-                                rb,
-                                tag,
-                                model_rb,
-                                model_tag,
-                                rb_tag,
-                                model_rb_tag,
-                            })) {
-                                .model => try Entity.createImmediately(es, .{Model{}}),
-                                .rb => try Entity.createImmediately(es, .{RigidBody{}}),
-                                .tag => try Entity.createImmediately(es, .{Tag{}}),
-                                .model_rb => try Entity.createImmediately(es, .{ Model{}, RigidBody{} }),
-                                .model_tag => try Entity.createImmediately(es, .{ Model{}, Tag{} }),
-                                .rb_tag => try Entity.createImmediately(es, .{ RigidBody{}, Tag{} }),
-                                .model_rb_tag => try Entity.createImmediately(es, .{ RigidBody{}, Model{}, Tag{} }),
-                            };
-                        } else {
-                            // Non interned
-                            _ = switch (rand.enumValue(enum {
-                                empty,
-                                model,
-                                rb,
-                                tag,
-                                model_rb,
-                                model_tag,
-                                rb_tag,
-                                model_rb_tag,
-                            })) {
-                                .empty => try Entity.createImmediately(es, .{}),
-                                .model => try Entity.createImmediately(es, .{Model.random(rand)}),
-                                .rb => try Entity.createImmediately(es, .{RigidBody.random(rand)}),
-                                .tag => try Entity.createImmediately(es, .{Tag.random(rand)}),
-                                .model_rb => try Entity.createImmediately(es, .{ Model.random(rand), RigidBody.random(rand) }),
-                                .model_tag => try Entity.createImmediately(es, .{ Model.random(rand), Tag.random(rand) }),
-                                .rb_tag => try Entity.createImmediately(es, .{ RigidBody.random(rand), Tag.random(rand) }),
-                                .model_rb_tag => try Entity.createImmediately(es, .{ RigidBody.random(rand), Model.random(rand), Tag.random(rand) }),
-                            };
-                        }
-                    } else {
-                        // With null components
-                        if (rand.float(f32) < 0.1) {
-                            // Interned
-                            _ = switch (rand.enumValue(enum {
-                                model,
-                                rb,
-                                tag,
-                                model_rb,
-                                model_tag,
-                                rb_tag,
-                                model_rb_tag,
-                            })) {
-                                .model => try Entity.createImmediately(es, .{@as(?Model, .{})}),
-                                .rb => try Entity.createImmediately(es, .{@as(?RigidBody, .{})}),
-                                .tag => try Entity.createImmediately(es, .{@as(?Tag, Tag{})}),
-                                .model_rb => try Entity.createImmediately(es, .{ @as(?Model, null), @as(?RigidBody, .{}) }),
-                                .model_tag => try Entity.createImmediately(es, .{ @as(?Model, .{}), @as(?Tag, null) }),
-                                .rb_tag => try Entity.createImmediately(es, .{ @as(?RigidBody, .{}), @as(?Tag, .{}) }),
-                                .model_rb_tag => try Entity.createImmediately(es, .{ @as(?RigidBody, null), @as(?Model, .{}), @as(?Tag, null) }),
-                            };
-                        } else {
-                            // Non interned
-                            _ = switch (rand.enumValue(enum {
-                                empty,
-                                model,
-                                rb,
-                                tag,
-                                model_rb,
-                                model_tag,
-                                rb_tag,
-                                model_rb_tag,
-                            })) {
-                                .empty => try Entity.createImmediately(es, .{}),
-                                .model => try Entity.createImmediately(es, .{Model.randomOrNull(rand)}),
-                                .rb => try Entity.createImmediately(es, .{RigidBody.randomOrNull(rand)}),
-                                .tag => try Entity.createImmediately(es, .{Tag.randomOrNull(rand)}),
-                                .model_rb => try Entity.createImmediately(es, .{ Model.randomOrNull(rand), RigidBody.randomOrNull(rand) }),
-                                .model_tag => try Entity.createImmediately(es, .{ Model.randomOrNull(rand), Tag.randomOrNull(rand) }),
-                                .rb_tag => try Entity.createImmediately(es, .{ RigidBody.randomOrNull(rand), Tag.randomOrNull(rand) }),
-                                .model_rb_tag => try Entity.createImmediately(es, .{ RigidBody.randomOrNull(rand), Model.randomOrNull(rand), Tag.randomOrNull(rand) }),
-                            };
-                        }
-                    }
-                }
-            },
             .destroy => {
                 // If we're at less than half capacity, give a slight bias against destroying
                 // entities so that we don't just hover near zero entities for the whole test
@@ -307,7 +211,11 @@ pub fn doRandomOperations(
                         }
                         var comps: RandomComponents = .{};
                         comps.randomize(es, rand);
-                        try entity.changeArchetypeFromComponents(es, remove, comps.buf.constSlice());
+                        try entity.changeArchetypeFromComponentsImmediately(
+                            es,
+                            remove,
+                            comps.buf.constSlice(),
+                        );
                     } else {
                         // From types
                         var remove: ComponentFlags = .{};
@@ -327,13 +235,13 @@ pub fn doRandomOperations(
                                     rb_tag,
                                     model_rb_tag,
                                 })) {
-                                    .model => try entity.changeArchetype(es, remove, .{Model{}}),
-                                    .rb => try entity.changeArchetype(es, remove, .{RigidBody{}}),
-                                    .tag => try entity.changeArchetype(es, remove, .{Tag{}}),
-                                    .model_rb => try entity.changeArchetype(es, remove, .{ Model{}, RigidBody{} }),
-                                    .model_tag => try entity.changeArchetype(es, remove, .{ Model{}, Tag{} }),
-                                    .rb_tag => try entity.changeArchetype(es, remove, .{ RigidBody{}, Tag{} }),
-                                    .model_rb_tag => try entity.changeArchetype(es, remove, .{ RigidBody{}, Model{}, Tag{} }),
+                                    .model => try entity.changeArchetypeImmediately(es, remove, .{Model{}}),
+                                    .rb => try entity.changeArchetypeImmediately(es, remove, .{RigidBody{}}),
+                                    .tag => try entity.changeArchetypeImmediately(es, remove, .{Tag{}}),
+                                    .model_rb => try entity.changeArchetypeImmediately(es, remove, .{ Model{}, RigidBody{} }),
+                                    .model_tag => try entity.changeArchetypeImmediately(es, remove, .{ Model{}, Tag{} }),
+                                    .rb_tag => try entity.changeArchetypeImmediately(es, remove, .{ RigidBody{}, Tag{} }),
+                                    .model_rb_tag => try entity.changeArchetypeImmediately(es, remove, .{ RigidBody{}, Model{}, Tag{} }),
                                 };
                             } else {
                                 _ = switch (rand.enumValue(enum {
@@ -346,14 +254,14 @@ pub fn doRandomOperations(
                                     rb_tag,
                                     model_rb_tag,
                                 })) {
-                                    .empty => try entity.changeArchetype(es, remove, .{}),
-                                    .model => try entity.changeArchetype(es, remove, .{Model.random(rand)}),
-                                    .rb => try entity.changeArchetype(es, remove, .{RigidBody.random(rand)}),
-                                    .tag => try entity.changeArchetype(es, remove, .{Tag.random(rand)}),
-                                    .model_rb => try entity.changeArchetype(es, remove, .{ Model.random(rand), RigidBody.random(rand) }),
-                                    .model_tag => try entity.changeArchetype(es, remove, .{ Model.random(rand), Tag.random(rand) }),
-                                    .rb_tag => try entity.changeArchetype(es, remove, .{ RigidBody.random(rand), Tag.random(rand) }),
-                                    .model_rb_tag => try entity.changeArchetype(es, remove, .{ RigidBody.random(rand), Model.random(rand), Tag.random(rand) }),
+                                    .empty => try entity.changeArchetypeImmediately(es, remove, .{}),
+                                    .model => try entity.changeArchetypeImmediately(es, remove, .{Model.random(rand)}),
+                                    .rb => try entity.changeArchetypeImmediately(es, remove, .{RigidBody.random(rand)}),
+                                    .tag => try entity.changeArchetypeImmediately(es, remove, .{Tag.random(rand)}),
+                                    .model_rb => try entity.changeArchetypeImmediately(es, remove, .{ Model.random(rand), RigidBody.random(rand) }),
+                                    .model_tag => try entity.changeArchetypeImmediately(es, remove, .{ Model.random(rand), Tag.random(rand) }),
+                                    .rb_tag => try entity.changeArchetypeImmediately(es, remove, .{ RigidBody.random(rand), Tag.random(rand) }),
+                                    .model_rb_tag => try entity.changeArchetypeImmediately(es, remove, .{ RigidBody.random(rand), Model.random(rand), Tag.random(rand) }),
                                 };
                             }
                         } else {
@@ -368,13 +276,13 @@ pub fn doRandomOperations(
                                     rb_tag,
                                     model_rb_tag,
                                 })) {
-                                    .model => try entity.changeArchetype(es, remove, .{@as(?Model, .{})}),
-                                    .rb => try entity.changeArchetype(es, remove, .{@as(?RigidBody, null)}),
-                                    .tag => try entity.changeArchetype(es, remove, .{@as(?Tag, .{})}),
-                                    .model_rb => try entity.changeArchetype(es, remove, .{ @as(?Model, null), @as(?RigidBody, .{}) }),
-                                    .model_tag => try entity.changeArchetype(es, remove, .{ @as(?Model, .{}), @as(?Tag, null) }),
-                                    .rb_tag => try entity.changeArchetype(es, remove, .{ @as(?RigidBody, .{}), @as(?Tag, .{}) }),
-                                    .model_rb_tag => try entity.changeArchetype(es, remove, .{ @as(?RigidBody, .{}), @as(?Model, null), @as(?Tag, .{}) }),
+                                    .model => try entity.changeArchetypeImmediately(es, remove, .{@as(?Model, .{})}),
+                                    .rb => try entity.changeArchetypeImmediately(es, remove, .{@as(?RigidBody, null)}),
+                                    .tag => try entity.changeArchetypeImmediately(es, remove, .{@as(?Tag, .{})}),
+                                    .model_rb => try entity.changeArchetypeImmediately(es, remove, .{ @as(?Model, null), @as(?RigidBody, .{}) }),
+                                    .model_tag => try entity.changeArchetypeImmediately(es, remove, .{ @as(?Model, .{}), @as(?Tag, null) }),
+                                    .rb_tag => try entity.changeArchetypeImmediately(es, remove, .{ @as(?RigidBody, .{}), @as(?Tag, .{}) }),
+                                    .model_rb_tag => try entity.changeArchetypeImmediately(es, remove, .{ @as(?RigidBody, .{}), @as(?Model, null), @as(?Tag, .{}) }),
                                 };
                             } else {
                                 // With null components
@@ -388,14 +296,14 @@ pub fn doRandomOperations(
                                     rb_tag,
                                     model_rb_tag,
                                 })) {
-                                    .empty => try entity.changeArchetype(es, remove, .{}),
-                                    .model => try entity.changeArchetype(es, remove, .{Model.randomOrNull(rand)}),
-                                    .rb => try entity.changeArchetype(es, remove, .{RigidBody.randomOrNull(rand)}),
-                                    .tag => try entity.changeArchetype(es, remove, .{Tag.randomOrNull(rand)}),
-                                    .model_rb => try entity.changeArchetype(es, remove, .{ Model.randomOrNull(rand), RigidBody.randomOrNull(rand) }),
-                                    .model_tag => try entity.changeArchetype(es, remove, .{ Model.randomOrNull(rand), Tag.randomOrNull(rand) }),
-                                    .rb_tag => try entity.changeArchetype(es, remove, .{ RigidBody.randomOrNull(rand), Tag.randomOrNull(rand) }),
-                                    .model_rb_tag => try entity.changeArchetype(es, remove, .{ RigidBody.randomOrNull(rand), Model.randomOrNull(rand), Tag.randomOrNull(rand) }),
+                                    .empty => try entity.changeArchetypeImmediately(es, remove, .{}),
+                                    .model => try entity.changeArchetypeImmediately(es, remove, .{Model.randomOrNull(rand)}),
+                                    .rb => try entity.changeArchetypeImmediately(es, remove, .{RigidBody.randomOrNull(rand)}),
+                                    .tag => try entity.changeArchetypeImmediately(es, remove, .{Tag.randomOrNull(rand)}),
+                                    .model_rb => try entity.changeArchetypeImmediately(es, remove, .{ Model.randomOrNull(rand), RigidBody.randomOrNull(rand) }),
+                                    .model_tag => try entity.changeArchetypeImmediately(es, remove, .{ Model.randomOrNull(rand), Tag.randomOrNull(rand) }),
+                                    .rb_tag => try entity.changeArchetypeImmediately(es, remove, .{ RigidBody.randomOrNull(rand), Tag.randomOrNull(rand) }),
+                                    .model_rb_tag => try entity.changeArchetypeImmediately(es, remove, .{ RigidBody.randomOrNull(rand), Model.randomOrNull(rand), Tag.randomOrNull(rand) }),
                                 };
                             }
                         }
@@ -491,9 +399,9 @@ pub fn doRandomOperations(
                     inline for (@typeInfo(ComponentFlags).@"struct".fields) |field| {
                         @field(remove, field.name) = rand.boolean();
                     }
-                    try entity.changeArchetype(es, remove, .{ RigidBody.randomOrNull(rand), Model.randomOrNull(rand), Tag.randomOrNull(rand) });
-                    try entity.changeArchetype(es, remove, .{ RigidBody.randomOrNull(rand), Tag.randomOrNull(rand) });
-                    try entity.changeArchetype(es, remove, .{ RigidBody.randomOrNull(rand), Model.randomOrNull(rand) });
+                    try entity.changeArchetypeImmediately(es, remove, .{ RigidBody.randomOrNull(rand), Model.randomOrNull(rand), Tag.randomOrNull(rand) });
+                    try entity.changeArchetypeImmediately(es, remove, .{ RigidBody.randomOrNull(rand), Tag.randomOrNull(rand) });
+                    try entity.changeArchetypeImmediately(es, remove, .{ RigidBody.randomOrNull(rand), Model.randomOrNull(rand) });
 
                     try entity.destroyImmediately(es);
                 }

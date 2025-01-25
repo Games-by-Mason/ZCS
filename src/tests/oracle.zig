@@ -67,40 +67,6 @@ pub fn Oracle(Components: []const type) type {
         pub const Entity = struct {
             actual: zcs.Entity,
 
-            /// Creates a new entity in both the ground truth data and the real ECS.
-            pub fn createImmediately(es: *Entities, comps: anytype) !Entity {
-                es.checked = false;
-
-                // If the ground truth overflows, make sure the real ECS does too.
-                if (try es.count() + try es.reserved() == es.capacity) {
-                    const result = zcs.Entity.createImmediatelyChecked(&es.actual, comps);
-                    try std.testing.expectError(error.ZcsEntityOverflow, result);
-                    return error.ZcsEntityOverflow;
-                }
-
-                // Create the actual entity. This may overflow due to fragmentation even if the
-                // ground truth didn't, that's okay. Exact allocation patterns are implementation
-                // defined.
-                const actual = try zcs.Entity.createImmediatelyChecked(&es.actual, comps);
-
-                // Create the ground truth entity.
-                var storage: EntityStorage = .{};
-                inline for (comps) |comp| {
-                    const T = switch (@typeInfo(@TypeOf(comp))) {
-                        .optional => |opt| opt.child,
-                        else => @TypeOf(comp),
-                    };
-                    if (@typeInfo(@TypeOf(comp)) != .optional or comp != null) {
-                        @field(storage, T.name) = comp;
-                    }
-                }
-                const entity: Entity = .{ .actual = actual };
-                try es.expected_live.put(gpa, entity, storage);
-
-                // Return the wrapper to the caller.
-                return entity;
-            }
-
             /// Reserves an entity without committing it in both the ground truth and the ECS.
             pub fn reserve(es: *Entities) !Entity {
                 es.checked = false;
@@ -119,55 +85,6 @@ pub fn Oracle(Components: []const type) type {
                 // Create the ground truth entity.
                 const entity: Entity = .{ .actual = actual };
                 try es.expected_reserved.put(gpa, entity, {});
-
-                // Return the wrapper to the caller.
-                return entity;
-            }
-
-            /// Creates a new entity from IDs in both the ground truth data and the real ECS.
-            pub fn createFromComponents(
-                es: *Entities,
-                comps: []const OptionalComponent,
-            ) !Entity {
-                es.checked = false;
-
-                // Create the actual components buffer
-                var actual_comps: std.BoundedArray(zcs.Component.Optional, 32) = .{};
-                for (comps) |comp| try actual_comps.append(comp.actual);
-
-                // If the ground truth overflows, make sure the real ECS does too.
-                if (try es.count() == es.capacity) {
-                    const result = zcs.Entity.createFromComponentsImmediatelyChecked(
-                        &es.actual,
-                        actual_comps.constSlice(),
-                    );
-                    try std.testing.expectError(error.ZcsEntityOverflow, result);
-                    return error.ZcsEntityOverflow;
-                }
-
-                // Create the actual entity. This may overflow due to fragmentation even if the
-                // ground truth didn't, that's okay. Exact allocation patterns are implementation
-                // defined.
-                const actual = try zcs.Entity.createFromComponentsImmediatelyChecked(
-                    &es.actual,
-                    actual_comps.constSlice(),
-                );
-
-                // Create the ground truth entity.
-                var storage: EntityStorage = .{};
-                for (comps) |comp| {
-                    if (comp.actual.unwrap()) |some| {
-                        inline for (@typeInfo(EntityStorage).@"struct".fields, 0..) |field, i| {
-                            if (std.mem.eql(u8, field.name, comp.expected_name)) {
-                                const T = Components[i];
-                                @field(storage, field.name) = some.as(&es.actual, T).?.*;
-                                break;
-                            }
-                        }
-                    }
-                }
-                const entity: Entity = .{ .actual = actual };
-                try es.expected_live.put(gpa, entity, storage);
 
                 // Return the wrapper to the caller.
                 return entity;
@@ -280,7 +197,7 @@ pub fn Oracle(Components: []const type) type {
 
             /// Changes the archetype of both the ground truth and actual entity. Tests that both
             /// are identical after the transformation.
-            pub fn changeArchetype(
+            pub fn changeArchetypeImmediately(
                 self: @This(),
                 es: *Entities,
                 remove: ComponentFlags,
@@ -329,7 +246,7 @@ pub fn Oracle(Components: []const type) type {
 
             /// Changes the archetype of both the ground truth and actual entity using IDs instead
             /// of types. Tests that both are identical after the transformation.
-            pub fn changeArchetypeFromComponents(
+            pub fn changeArchetypeFromComponentsImmediately(
                 self: @This(),
                 es: *Entities,
                 remove: ComponentFlags,
@@ -346,7 +263,7 @@ pub fn Oracle(Components: []const type) type {
                 }
                 var actual_comps: std.BoundedArray(zcs.Component.Optional, 32) = .{};
                 for (comps) |comp| try actual_comps.append(comp.actual);
-                try self.actual.changeArchetypeFromComponentsChecked(
+                try self.actual.changeArchetypeFromComponentsImmediatelyChecked(
                     &es.actual,
                     actual_remove,
                     actual_comps.constSlice(),
