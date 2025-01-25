@@ -64,16 +64,22 @@ pub const Entity = packed struct {
     }
 
     /// Appends an `Entity.destroy` command.
-    pub fn destroyCmd(self: @This(), cmds: *CmdBuf) void {
-        self.destroyCmdChecked(cmds) catch |err|
+    pub fn destroyCmd(self: @This(), es: *const Entities, cmds: *CmdBuf) void {
+        self.destroyCmdChecked(es, cmds) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `destroy`, but returns `error.ZcsCmdBufOverflow` on failure instead of panicking.
-    pub fn destroyCmdChecked(self: @This(), cmds: *CmdBuf) error{ZcsCmdBufOverflow}!void {
+    pub fn destroyCmdChecked(self: @This(), es: *const Entities, cmds: *CmdBuf) error{ZcsCmdBufOverflow}!void {
+        // Early out if already destroyed, also checks some assertions
+        if (!self.exists(es)) return;
+
+        // Check capacity
         if (cmds.destroy_queue.items.len >= cmds.destroy_queue.capacity) {
             return error.ZcsCmdBufOverflow;
         }
+
+        // Queue the command
         cmds.destroy_queue.appendAssumeCapacity(self);
     }
 
@@ -183,6 +189,9 @@ pub const Entity = packed struct {
         const add = Changes.getAdd(changes);
         const remove = Changes.getRemove(changes);
 
+        // Early out if destroyed, also checks some assertions
+        if (!self.exists(es)) return;
+
         // Restore the state on failure
         const restore = cmds.*;
         errdefer cmds.* = restore;
@@ -243,6 +252,9 @@ pub const Entity = packed struct {
         cmds: *CmdBuf,
         changes: ChangeArchetypeFromComponentsOptions,
     ) error{ZcsCmdBufOverflow}!void {
+        // Early out if destroyed, also checks some assertions
+        if (!self.exists(es)) return;
+
         const restore = cmds.*;
         errdefer cmds.* = restore;
 
@@ -312,7 +324,7 @@ pub const Entity = packed struct {
         const add = Changes.getAdd(changes);
         const remove = Changes.getRemove(changes);
 
-        // Early out if the entity does not exist
+        // Early out if the entity does not exist, also checks some assertions
         if (!self.exists(es)) return;
 
         // Get the component type IDs and determine the archetype. We store the type ID list
@@ -383,6 +395,7 @@ pub const Entity = packed struct {
         es: *Entities,
         changes: ChangeArchetypeFromComponentsOptions,
     ) error{ZcsEntityOverflow}!void {
+        // Early out if the entity does not exist, also checks some assertions
         if (!self.exists(es)) return;
 
         var add_flags: Component.Flags = .{};

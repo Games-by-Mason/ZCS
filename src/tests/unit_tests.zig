@@ -201,7 +201,7 @@ test "command buffer skip dups" {
         .vertex_count = 4,
     };
 
-    const e0: zcs.Entity = .{ .key = .{ .index = 1, .generation = @enumFromInt(2) } };
+    const e0: zcs.Entity = zcs.Entity.reserveImmediately(&es);
 
     {
         defer cb.clearWithoutRefill();
@@ -268,8 +268,8 @@ test "command buffer interning" {
     const model_interned_null: ?Model = null;
     const model_value_null: ?Model = null;
 
-    const e0: zcs.Entity = .{ .key = .{ .index = 1, .generation = @enumFromInt(2) } };
-    const e1: zcs.Entity = .{ .key = .{ .index = 1, .generation = @enumFromInt(2) } };
+    const e0: zcs.Entity = .reserveImmediately(&es);
+    const e1: zcs.Entity = .reserveImmediately(&es);
 
     // Change archetype non optional
     e0.changeArchetypeCmd(
@@ -582,7 +582,7 @@ test "command buffer overflow" {
         defer cb.deinit(gpa, &es);
 
         try expectError(error.ZcsCmdBufOverflow, zcs.Entity.reserveImmediately(&es).changeArchetypeCmdChecked(&es, &cb, .{}));
-        try expectError(error.ZcsCmdBufOverflow, @as(zcs.Entity, undefined).destroyCmdChecked(&cb));
+        try expectError(error.ZcsCmdBufOverflow, zcs.Entity.reserveImmediately(&es).destroyCmdChecked(&es, &cb));
 
         try expectEqual(1.0, cb.worstCaseUsage());
 
@@ -601,13 +601,13 @@ test "command buffer overflow" {
         });
         defer cb.deinit(gpa, &es);
 
-        try expectError(error.ZcsCmdBufOverflow, @as(zcs.Entity, undefined).changeArchetypeCmdChecked(
+        try expectError(error.ZcsCmdBufOverflow, zcs.Entity.reserveImmediately(&es).changeArchetypeCmdChecked(
             &es,
             &cb,
             .{},
         ));
-        const e: zcs.Entity = .{ .key = .{ .index = 1, .generation = @enumFromInt(2) } };
-        e.destroyCmd(&cb);
+        const e = zcs.Entity.reserveImmediately(&es);
+        e.destroyCmd(&es, &cb);
 
         try expectEqual(1.0, cb.worstCaseUsage());
 
@@ -627,11 +627,11 @@ test "command buffer overflow" {
         });
         defer cb.deinit(gpa, &es);
 
-        const e: zcs.Entity = .{ .key = .{ .index = 1, .generation = @enumFromInt(2) } };
+        const e: zcs.Entity = zcs.Entity.reserveImmediately(&es);
         const rb = RigidBody.random(rand);
 
         _ = zcs.Entity.reserveImmediately(&es).changeArchetypeCmd(&es, &cb, .{ .add = .{rb} });
-        e.destroyCmd(&cb);
+        e.destroyCmd(&es, &cb);
         try expectError(error.ZcsCmdBufOverflow, e.changeArchetypeCmdChecked(
             &es,
             &cb,
@@ -723,7 +723,7 @@ test "command buffer worst case capacity" {
                 .index = @intCast(i),
                 .generation = @enumFromInt(0),
             } };
-            try e.destroyCmdChecked(&cb);
+            try e.destroyCmdChecked(&es, &cb);
         }
 
         try expect(cb.worstCaseUsage() == 1.0);
@@ -755,7 +755,7 @@ fn checkRandomCmdBuf(
                     const index = rand.uintLessThan(usize, count);
                     const entity = expected.keys()[index];
                     try expect(expected.swapRemove(entity));
-                    entity.destroyCmd(&cb);
+                    entity.destroyCmd(actual, &cb);
                 }
             },
             .change_archetype => {
