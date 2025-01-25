@@ -42,6 +42,8 @@ comp_buf: std.ArrayListAlignedUnmanaged(u8, Entities.max_align),
 /// Each create command pops an entity from reserved. It is allowable to peek at this array to
 /// gain access to entity IDs before the create command is issued.
 reserved: std.ArrayListUnmanaged(Entity),
+/// The number of reserved entities scheduled to be committed.
+committed: usize,
 /// All entities queued for destruction.
 destroy_queue: std.ArrayListUnmanaged(Entity),
 
@@ -86,6 +88,7 @@ pub fn initSeparateCapacities(
         .comp_buf = comp_buf,
         .destroy_queue = destroy_queue,
         .reserved = reserved,
+        .committed = 0,
     };
 }
 
@@ -108,7 +111,7 @@ pub fn clear(self: *@This()) void {
     self.comp_buf.clearRetainingCapacity();
     self.args.clearRetainingCapacity();
     self.tags.clearRetainingCapacity();
-    self.reserved.items.len = self.reserved.capacity;
+    self.committed = 0;
 }
 
 fn usage(list: anytype) f32 {
@@ -148,15 +151,11 @@ pub fn createChecked(
     const fields = @typeInfo(@TypeOf(comps)).@"struct".fields;
 
     // Restore the state on failure
-    const restore_reserved_len = self.reserved.items.len;
-    errdefer self.reserved.items.len = restore_reserved_len;
     const restore = self.*;
     errdefer self.* = restore;
 
     // Get the next reserved entity
-    if (self.reserved.items.len == 0) return error.Overflow;
-    self.reserved.items.len -= 1;
-    const entity = self.reserved.items.ptr[self.reserved.items.len];
+    const entity = try self.commit();
 
     // Sort for minimal padding.
     const sorted_fields = comptime meta.alignmentSort(@TypeOf(comps));
@@ -210,15 +209,11 @@ pub fn createFromComponentsChecked(
     comps: []const Component.Optional,
 ) error{Overflow}!Entity {
     // Restore the state on failure
-    const restore_reserved_len = self.reserved.items.len;
-    errdefer self.reserved.items.len = restore_reserved_len;
     const restore = self.*;
     errdefer self.* = restore;
 
     // Get the next reserved entity
-    if (self.reserved.items.len == 0) return error.Overflow;
-    self.reserved.items.len -= 1;
-    const entity = self.reserved.items.ptr[self.reserved.items.len];
+    const entity = try self.commit();
 
     // Add all the components in reverse order, skipping any types we've already added. This
     // preserves expected behavior while also conforming to our capacity guarantees.
@@ -226,19 +221,6 @@ pub fn createFromComponentsChecked(
     try self.addComponents(es, comps);
 
     return entity;
-}
-
-/// Returns the entity that will be returned `n` creates from now.
-pub fn peekCreate(self: *const @This(), n: usize) Entity {
-    return self.peekCreateChecked(n) catch |err|
-        @panic(@errorName(err));
-}
-
-/// Similar to `peekCreate`, but returns `error.Overflow` if there are not at least `n` reserved
-/// entities left.
-pub fn peekCreateChecked(self: *const @This(), n: usize) error{Overflow}!Entity {
-    if (self.reserved.items.len <= n) return error.Overflow;
-    return self.reserved.items[self.reserved.items.len - 1 - n];
 }
 
 /// Appends an `Entity.changeArchetype` command.
@@ -349,24 +331,56 @@ pub fn destroyChecked(self: *@This(), entity: Entity) error{Overflow}!void {
     self.destroy_queue.appendAssumeCapacity(entity);
 }
 
-/// Executes the command buffer, and then clears it for reuse.
+/// Returns the entity that will be returned `n` creates from now. Zero is the next create, negative
+/// values are past creates.
+pub fn peekCreate(self: *const @This(), n: isize) Entity {
+    return self.peekCreateChecked(n) catch |err|
+        @panic(@errorName(err));
+}
+
+/// Similar to `peekCreate`, but returns `error.Overflow` if `n` is positive and there are not at
+/// least `n` reserved entities left.
+pub fn peekCreateChecked(self: *const @This(), n: isize) error{Overflow}!Entity {
+    if (@as(isize, @intCast(self.committed)) + n >= self.reserved.items.len) return error.Overflow;
+    return self.reserved.items[@intCast(@as(isize, @intCast(self.reserved.items.len - self.committed)) - n - 1)];
+}
+
+/// Executes the command buffer.
 pub fn submit(self: *@This(), es: *Entities) void {
     self.submitChecked(es) catch |err|
         @panic(@errorName(err));
 }
 
-/// Similar to `submit`, but returns `error.Overflow` when out of space. On failure, partial changes
-/// to entities are *not* reverted. As such, some component data may be uninitialized.
+/// Similar to `submit`, but returns `error.Overflow` when out of space. On overflow, all work that
+/// doesn't trigger an overflow is still completed.
 pub fn submitChecked(self: *@This(), es: *Entities) error{Overflow}!void {
+    if (!self.submitOrOverflow(es)) return error.Overflow;
+}
+
+/// Submits the command buffer, returns true on success false on overflow. Pulled out into a
+/// separate function to avoid accidentally using `try` and returning before processing all
+/// commands.
+fn submitOrOverflow(self: *@This(), es: *Entities) bool {
+    var overflow = false;
+
     // Submit the commands
     var iter = self.iterator(es);
     while (iter.next()) |cmd| {
         switch (cmd) {
             .create => |args| {
-                try args.entity.changeArchetypeUnintializedChecked(es, .{
+                if (args.entity.eql(.none)) {
+                    overflow = true;
+                    continue;
+                }
+                args.entity.changeArchetypeUnintializedChecked(es, .{
                     .remove = .{},
                     .add = args.archetype,
-                });
+                }) catch |err| switch (err) {
+                    error.Overflow => {
+                        overflow = true;
+                        continue;
+                    },
+                };
                 var comps = args.componentIterator();
                 while (comps.next()) |comp| {
                     const src = comp.bytes();
@@ -377,10 +391,15 @@ pub fn submitChecked(self: *@This(), es: *Entities) error{Overflow}!void {
             .destroy => |entity| entity.destroy(es),
             .change_archetype => |args| {
                 if (args.entity.exists(es)) {
-                    try args.entity.changeArchetypeUnintializedChecked(es, .{
+                    args.entity.changeArchetypeUnintializedChecked(es, .{
                         .remove = args.remove,
                         .add = args.add,
-                    });
+                    }) catch |err| switch (err) {
+                        error.Overflow => {
+                            overflow = true;
+                            continue;
+                        },
+                    };
                     var comps = args.componentIterator();
                     while (comps.next()) |comp| {
                         const src = comp.bytes();
@@ -392,15 +411,17 @@ pub fn submitChecked(self: *@This(), es: *Entities) error{Overflow}!void {
         }
     }
 
-    // Refill the reserved entity buffer
+    // Refill the reserved entity buffer up to the capacity if possible
+    self.reserved.items.len -= self.committed;
     while (self.reserved.items.len < self.reserved.capacity) {
-        self.reserved.appendAssumeCapacity(try Entity.reserveChecked(es));
+        const entity = Entity.reserveChecked(es) catch |err| switch (err) {
+            error.Overflow => break,
+        };
+        self.reserved.appendAssumeCapacity(entity);
     }
 
-    // Clear the command buffer for reuse. This is required--resubmitting a command buffer would get
-    // inconsistent results since it may internally refer to the entities that were previously
-    // reserved.
-    self.clear();
+    // Return whether or not we overflowed.
+    return !overflow;
 }
 
 /// Issue subcommands to add the listed components. Issued in reverse order, duplicates are skipped.
@@ -422,6 +443,24 @@ fn addComponents(
                 }
             }
         }
+    }
+}
+
+/// Schedules the next reserved entity to be committed and returns it. Starts from the end of the
+/// list.
+fn commit(self: *@This()) error{Overflow}!Entity {
+    if (self.committed < self.reserved.items.len) {
+        // Get the next reserved entity and advance
+        self.committed += 1;
+        return self.reserved.items[self.reserved.items.len - self.committed];
+    } else if (self.committed >= self.reserved.capacity) {
+        // We're over the capacity promised by this command buffer, return an error
+        return error.Overflow;
+    } else {
+        // We're not over the promised capacity, but this command buffer wasn't able to reserve as
+        // many entities as were promised because entities wasn't big enough. In this case we don't
+        // error until submit, because the command buffer itself isn't actually being misused.
+        return .none;
     }
 }
 
@@ -489,6 +528,7 @@ pub fn iterator(self: *const @This(), es: *const Entities) Iterator {
 pub const Cmd = union(enum) {
     /// Create a new entity with the given archetype and components.
     create: struct {
+        /// The entity being created, or `.none` if there were no more reserved entities.
         entity: Entity,
         archetype: Component.Flags,
         decoder: SubCmd.Decoder,
@@ -671,9 +711,11 @@ pub const Iterator = struct {
                     } };
                 },
                 .bind_new_entity => {
-                    self.committed += 1;
-                    const reserved_index = self.decoder.cb.reserved.capacity - self.committed;
-                    const entity = self.decoder.cb.reserved.items.ptr[reserved_index];
+                    const entity: Entity = if (self.committed < self.decoder.cb.reserved.capacity) b: {
+                        self.committed += 1;
+                        const i = self.decoder.cb.reserved.capacity - self.committed;
+                        break :b self.decoder.cb.reserved.items[i];
+                    } else .none;
                     const comp_decoder = self.decoder;
                     var archetype: Component.Flags = .{};
                     while (self.decoder.peekTag()) |subcmd| {

@@ -129,6 +129,7 @@ test "command buffer create empty" {
 
     const e0_expected = cb.peekCreate(0);
     const e0 = cb.create(&es, .{});
+    try expect(cb.peekCreate(-1).eql(e0));
     const e1_expected = cb.peekCreate(0);
     const e2_expected = cb.peekCreate(1);
     const e1 = cb.createFromComponents(&es, &.{});
@@ -138,6 +139,9 @@ test "command buffer create empty" {
     try expect(e0_expected.eql(e0));
     try expect(e1_expected.eql(e1));
     try expect(e2_expected.eql(e2));
+    try expect(cb.peekCreate(-1).eql(e2));
+    try expect(cb.peekCreate(-2).eql(e1));
+    try expect(cb.peekCreate(-3).eql(e0));
     _ = try cb.peekCreateChecked(0);
     try expectError(error.Overflow, cb.peekCreateChecked(1));
     cb.submit(&es);
@@ -727,7 +731,7 @@ test "command buffer overflow" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es = try zcs.Entities.init(gpa, 200, &.{ RigidBody, Model, Tag });
+    var es = try zcs.Entities.init(gpa, 100, &.{ RigidBody, Model, Tag });
     defer es.deinit(gpa);
 
     // Tag/destroy overflow
