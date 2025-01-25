@@ -37,21 +37,39 @@ const meta = @import("meta.zig");
 
 tags: std.ArrayListUnmanaged(SubCmd.Tag),
 args: std.ArrayListUnmanaged(u64),
-comp_buf: std.ArrayListAlignedUnmanaged(u8, Entities.max_align),
+comp_bytes: std.ArrayListAlignedUnmanaged(u8, Entities.max_align),
 /// All entities queued for destruction.
 destroy_queue: std.ArrayListUnmanaged(Entity),
+reserved: std.ArrayListUnmanaged(Entity),
 
 /// Initializes a command buffer with at least enough capacity for the given number of commands.
+///
+/// The reserved entity buffer's capacity is set to zero.
 pub fn init(gpa: Allocator, es: *Entities, capacity: usize) Allocator.Error!@This() {
+    var capacities: Capacities = .initFromCmds(es, capacity);
+    capacities.reserved = 0;
+    return initSeparateCapacities(gpa, es, capacities) catch |err| switch (err) {
+        error.Overflow => unreachable, // We set reserve cap to 0, so it can't fail
+        error.OutOfMemory => error.OutOfMemory,
+    };
+}
+
+/// Similar to `init`, but also reserves enough entities to satisfy `capacity`.
+pub fn initAndReserveEntities(
+    gpa: Allocator,
+    es: *Entities,
+    capacity: usize,
+) error{ OutOfMemory, Overflow }!@This() {
     return initSeparateCapacities(gpa, .initFromCmds(es, capacity));
 }
 
-/// Initializes the command buffer with separate capacities for each internal buffer. Generally, you
-/// should prefer `init`.
+/// Similar to `init` and `initAndReserveEntities`, but allows you to specify each buffer size
+/// individually.
 pub fn initSeparateCapacities(
     gpa: Allocator,
+    es: *Entities,
     capacities: Capacities,
-) Allocator.Error!@This() {
+) error{ OutOfMemory, Overflow }!@This() {
     comptime assert(Component.Id.max < std.math.maxInt(u64));
 
     var tags: std.ArrayListUnmanaged(SubCmd.Tag) = try .initCapacity(gpa, capacities.tags);
@@ -60,27 +78,36 @@ pub fn initSeparateCapacities(
     var args: std.ArrayListUnmanaged(u64) = try .initCapacity(gpa, capacities.args);
     errdefer args.deinit(gpa);
 
-    var comp_buf: std.ArrayListAlignedUnmanaged(u8, Entities.max_align) = try .initCapacity(
+    var comp_bytes: std.ArrayListAlignedUnmanaged(u8, Entities.max_align) = try .initCapacity(
         gpa,
-        capacities.comp_buf,
+        capacities.comp_bytes,
     );
-    errdefer comp_buf.deinit(gpa);
+    errdefer comp_bytes.deinit(gpa);
 
     var destroy_queue: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacities.destroy);
     errdefer destroy_queue.deinit(gpa);
 
+    var reserved: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacities.reserved);
+    errdefer reserved.deinit(gpa);
+    for (0..reserved.capacity) |_| {
+        reserved.appendAssumeCapacity(try Entity.reserveChecked(es));
+    }
+
     return .{
         .tags = tags,
         .args = args,
-        .comp_buf = comp_buf,
+        .comp_bytes = comp_bytes,
         .destroy_queue = destroy_queue,
+        .reserved = reserved,
     };
 }
 
 /// Destroys the command buffer.
-pub fn deinit(self: *@This(), gpa: Allocator) void {
+pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
+    for (self.reserved.items) |entity| entity.destroy(es);
+    self.reserved.deinit(gpa);
     self.destroy_queue.deinit(gpa);
-    self.comp_buf.deinit(gpa);
+    self.comp_bytes.deinit(gpa);
     self.args.deinit(gpa);
     self.tags.deinit(gpa);
     self.* = undefined;
@@ -89,9 +116,23 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
 /// Clears the command buffer for reuse without executing it.
 pub fn clear(self: *@This()) void {
     self.destroy_queue.clearRetainingCapacity();
-    self.comp_buf.clearRetainingCapacity();
+    self.comp_bytes.clearRetainingCapacity();
     self.args.clearRetainingCapacity();
     self.tags.clearRetainingCapacity();
+}
+
+/// Refills the reserved entities buffer to full capacity.
+pub fn refillReservedEntities(self: *@This(), es: *Entities) error{Overflow}!void {
+    self.refillReservedEntitiesChecked(es) catch |err|
+        @panic(@errorName(err));
+}
+
+/// Similar to `refillReservedEntities`, but returns `error.Overflow` when it fails to fully refill
+/// the reserved entity buffer.
+pub fn refillReservedEntitiesChecked(self: *@This(), es: *Entities) error{Overflow}!void {
+    while (self.reserved.items.len < self.reserved.capacity) {
+        self.reserved.appendAssumeCapacity(try Entity.reserve(es));
+    }
 }
 
 fn usage(list: anytype) f32 {
@@ -104,10 +145,21 @@ fn usage(list: anytype) f32 {
 pub fn worstCaseUsage(self: @This()) f32 {
     return @max(
         usage(self.destroy_queue),
-        usage(self.comp_buf),
+        usage(self.comp_bytes),
         usage(self.args),
         usage(self.tags),
     );
+}
+
+/// Pops a reserved entity from the reserved buffer.
+pub fn popReserved(self: *@This()) Entity {
+    return self.popReservedChecked() catch |err|
+        @panic(@errorName(err));
+}
+
+/// Similar to `popReserved`, but returns `error.Overflow` if there are no more reserved entities.
+pub fn popReservedChecked(self: *@This()) error{Overflow}.Entity {
+    return self.reserved.popOrNull() orelse error.Overflow;
 }
 
 /// Appends an `Entity.changeArchetype` command.
@@ -300,17 +352,17 @@ fn subCmd(self: *@This(), es: *const Entities, sub_cmd: SubCmd) error{Overflow}!
         .add_component_val => |comp| {
             const size = es.getComponentSize(comp.id);
             const alignment = es.getComponentAlignment(comp.id);
-            const aligned = std.mem.alignForward(usize, self.comp_buf.items.len, alignment);
+            const aligned = std.mem.alignForward(usize, self.comp_bytes.items.len, alignment);
             if (self.tags.items.len >= self.tags.capacity) return error.Overflow;
             if (self.args.items.len + 1 > self.args.capacity) return error.Overflow;
-            if (aligned + size > self.comp_buf.capacity) {
+            if (aligned + size > self.comp_bytes.capacity) {
                 return error.Overflow;
             }
             self.tags.appendAssumeCapacity(.add_component_val);
             self.args.appendAssumeCapacity(@intFromEnum(comp.id));
             const bytes = comp.bytes();
-            self.comp_buf.items.len = aligned;
-            self.comp_buf.appendSliceAssumeCapacity(bytes[0..size]);
+            self.comp_bytes.items.len = aligned;
+            self.comp_bytes.appendSliceAssumeCapacity(bytes[0..size]);
         },
         .add_component_ptr => |comp| {
             assert(comp.interned);
@@ -423,7 +475,7 @@ const SubCmd = union(enum) {
             // Assert that we're fully empty, and return null
             assert(self.tag_index == self.cb.tags.items.len);
             assert(self.arg_index == self.cb.args.items.len);
-            assert(self.component_bytes_index == self.cb.comp_buf.items.len);
+            assert(self.component_bytes_index == self.cb.comp_bytes.items.len);
             return null;
         }
 
@@ -459,7 +511,7 @@ const SubCmd = union(enum) {
                 self.component_bytes_index,
                 alignment,
             );
-            const result = self.cb.comp_buf.items[self.component_bytes_index..].ptr;
+            const result = self.cb.comp_bytes.items[self.component_bytes_index..].ptr;
             self.component_bytes_index += size;
             return result;
         }
@@ -551,8 +603,9 @@ pub const ComponentIterator = struct {
 pub const Capacities = struct {
     tags: usize,
     args: usize,
-    comp_buf: usize,
+    comp_bytes: usize,
     destroy: usize,
+    reserved: usize,
 
     /// Sets each buffer capacity to be at least enough for the given number of commands.
     pub fn initFromCmds(es: *const Entities, cmds: usize) Capacities {
@@ -560,13 +613,13 @@ pub const Capacities = struct {
 
         // Worst case component data size. Technically we could make this slightly tighter since
         // alignment must be a power of two, but this calculation is much simpler.
-        var comp_buf_cap: usize = 0;
+        var comp_bytes_cap: usize = 0;
         for (0..es.comp_types.count()) |i| {
             const id: Component.Id = @enumFromInt(i);
-            comp_buf_cap += es.getComponentSize(id);
-            comp_buf_cap += es.getComponentAlignment(id) - 1;
+            comp_bytes_cap += es.getComponentSize(id);
+            comp_bytes_cap += es.getComponentAlignment(id) - 1;
         }
-        comp_buf_cap *= cmds;
+        comp_bytes_cap *= cmds;
 
         // The command with the most subcommands is change archetype
         var change_archetype_tags: usize = 0;
@@ -584,11 +637,15 @@ pub const Capacities = struct {
         // The most destroys we could do is the number of commands.
         const destroy_cap = cmds;
 
+        // The most creates we could do is the number of commands.
+        const reserved_cap = cmds;
+
         return .{
             .tags = tags_cap,
             .args = args_cap,
-            .comp_buf = comp_buf_cap,
+            .comp_bytes = comp_bytes_cap,
             .destroy = destroy_cap,
+            .reserved = reserved_cap,
         };
     }
 };

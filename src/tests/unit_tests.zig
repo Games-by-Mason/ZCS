@@ -115,7 +115,7 @@ test "command buffer create empty" {
     try expectEqual(comp, comp_optional_interned.unwrap().?);
 
     var cb = try zcs.CommandBuffer.init(gpa, &es, 4);
-    defer cb.deinit(gpa);
+    defer cb.deinit(gpa, &es);
 
     try expectEqual(0, es.count());
 
@@ -187,7 +187,7 @@ test "command buffer skip dups" {
     defer es.deinit(gpa);
 
     var cb = try zcs.CommandBuffer.init(gpa, &es, 24);
-    defer cb.deinit(gpa);
+    defer cb.deinit(gpa, &es);
 
     const model1: Model = .{
         .vertex_start = 1,
@@ -243,7 +243,7 @@ test "command buffer interning" {
     defer es.deinit(gpa);
 
     var cb = try zcs.CommandBuffer.init(gpa, &es, 24);
-    defer cb.deinit(gpa);
+    defer cb.deinit(gpa, &es);
 
     const rb_interned: RigidBody = .{
         .position = .{ 0.5, 1.5 },
@@ -541,13 +541,14 @@ test "command buffer overflow" {
 
     // Tag/destroy overflow
     {
-        var cb = try zcs.CommandBuffer.initSeparateCapacities(gpa, .{
+        var cb = try zcs.CommandBuffer.initSeparateCapacities(gpa, &es, .{
             .tags = 0,
             .args = 100,
-            .comp_buf = 100,
+            .comp_bytes = 100,
             .destroy = 0,
+            .reserved = 0,
         });
-        defer cb.deinit(gpa);
+        defer cb.deinit(gpa, &es);
 
         try expectError(error.Overflow, cb.changeArchetypeChecked(&es, zcs.Entity.reserve(&es), .{}, .{}));
         try expectError(error.Overflow, cb.destroyChecked(undefined));
@@ -560,13 +561,14 @@ test "command buffer overflow" {
 
     // Arg overflow
     {
-        var cb = try zcs.CommandBuffer.initSeparateCapacities(gpa, .{
+        var cb = try zcs.CommandBuffer.initSeparateCapacities(gpa, &es, .{
             .tags = 100,
             .args = 0,
-            .comp_buf = 100,
+            .comp_bytes = 100,
             .destroy = 100,
+            .reserved = 0,
         });
-        defer cb.deinit(gpa);
+        defer cb.deinit(gpa, &es);
 
         try expectError(error.Overflow, cb.changeArchetypeChecked(
             &es,
@@ -586,13 +588,14 @@ test "command buffer overflow" {
 
     // Component data overflow
     {
-        var cb = try zcs.CommandBuffer.initSeparateCapacities(gpa, .{
+        var cb = try zcs.CommandBuffer.initSeparateCapacities(gpa, &es, .{
             .tags = 100,
             .args = 100,
-            .comp_buf = @sizeOf(RigidBody) * 2 - 1,
+            .comp_bytes = @sizeOf(RigidBody) * 2 - 1,
             .destroy = 100,
+            .reserved = 0,
         });
-        defer cb.deinit(gpa);
+        defer cb.deinit(gpa, &es);
 
         const e: zcs.Entity = .{ .key = .{ .index = 1, .generation = @enumFromInt(2) } };
         const rb = RigidBody.random(rand);
@@ -629,7 +632,7 @@ test "command buffer worst case capacity" {
     defer es.deinit(gpa);
 
     var cb = try zcs.CommandBuffer.init(gpa, &es, cb_capacity);
-    defer cb.deinit(gpa);
+    defer cb.deinit(gpa, &es);
 
     // Change archetype
     {
@@ -711,7 +714,7 @@ fn checkRandomCommandBuffer(
     // at the end.
     const cb_capacity = 20000;
     var cb = try zcs.CommandBuffer.init(gpa, actual, cb_capacity);
-    defer cb.deinit(gpa);
+    defer cb.deinit(gpa, actual);
     for (0..cb_capacity) |_| {
         switch (rand.enumValue(@typeInfo(zcs.CommandBuffer.Cmd).@"union".tag_type.?)) {
             .destroy => {
