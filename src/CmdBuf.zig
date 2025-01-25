@@ -13,7 +13,7 @@
 //!
 //! # Example
 //! ```zig
-//! var cb = try CommandBuffer.init(gpa, &es, 4);
+//! var cb = try CmdBuf.init(gpa, &es, 4);
 //! defer cb.deinit(gpa);
 //!
 //! cb.changeArchetype(&es, es.reserve(), Component.flags(&es, &.{Fire}), .{ Hammer{} });
@@ -31,7 +31,7 @@ const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const Component = zcs.Component;
 
-const CommandBuffer = @This();
+const CmdBuf = @This();
 
 const meta = @import("meta.zig");
 
@@ -431,7 +431,7 @@ const SubCmd = union(enum) {
     const Tag = @typeInfo(@This()).@"union".tag_type.?;
 
     const Decoder = struct {
-        cb: *const CommandBuffer,
+        cb: *const CmdBuf,
         es: *const Entities,
         tag_index: usize = 0,
         arg_index: usize = 0,
@@ -522,7 +522,7 @@ const SubCmd = union(enum) {
     };
 };
 
-/// See `CommandBuffer.iterator`.
+/// See `CmdBuf.iterator`.
 pub const Iterator = struct {
     destroy_index: usize = 0,
     decoder: SubCmd.Decoder,

@@ -41,7 +41,7 @@ while (iter.next()) |entity| {
 
 // ...
 
-var cb = try CommandBuffer.init(gpa, &es, 4);
+var cb = try CmdBuf.init(gpa, &es, 4);
 defer cb.deinit(gpa);
 
 cb.create(&es, .{RigidBody { .mass = 0.5 }, Mesh { .model = player });

@@ -83,8 +83,8 @@ test "command buffers" {
     defer actual.deinit(gpa);
 
     // We do two passes, so that the second pass has a chance to read results from the first
-    try checkRandomCommandBuffer(rand, &expected, &actual);
-    try checkRandomCommandBuffer(rand, &expected, &actual);
+    try checkRandomCmdBuf(rand, &expected, &actual);
+    try checkRandomCmdBuf(rand, &expected, &actual);
     // Make sure we're not accidentally destroying so many entities that the test is not executing
     // many interesting paths
     try expect(actual.count() > 1000);
@@ -114,7 +114,7 @@ test "command buffer create empty" {
     try expectEqual(comp, comp_optional.unwrap().?);
     try expectEqual(comp, comp_optional_interned.unwrap().?);
 
-    var cb = try zcs.CommandBuffer.init(gpa, &es, 4);
+    var cb = try zcs.CmdBuf.init(gpa, &es, 4);
     defer cb.deinit(gpa, &es);
 
     try expectEqual(0, es.count());
@@ -186,7 +186,7 @@ test "command buffer skip dups" {
     var es = try zcs.Entities.init(gpa, 100, &.{ RigidBody, Model, Tag });
     defer es.deinit(gpa);
 
-    var cb = try zcs.CommandBuffer.init(gpa, &es, 24);
+    var cb = try zcs.CmdBuf.init(gpa, &es, 24);
     defer cb.deinit(gpa, &es);
 
     const model1: Model = .{
@@ -242,7 +242,7 @@ test "command buffer interning" {
     var es = try zcs.Entities.init(gpa, 100, &.{ RigidBody, Model, Tag });
     defer es.deinit(gpa);
 
-    var cb = try zcs.CommandBuffer.init(gpa, &es, 24);
+    var cb = try zcs.CmdBuf.init(gpa, &es, 24);
     defer cb.deinit(gpa, &es);
 
     const rb_interned: RigidBody = .{
@@ -541,7 +541,7 @@ test "command buffer overflow" {
 
     // Tag/destroy overflow
     {
-        var cb = try zcs.CommandBuffer.initSeparateCapacities(gpa, &es, .{
+        var cb = try zcs.CmdBuf.initSeparateCapacities(gpa, &es, .{
             .tags = 0,
             .args = 100,
             .comp_bytes = 100,
@@ -561,7 +561,7 @@ test "command buffer overflow" {
 
     // Arg overflow
     {
-        var cb = try zcs.CommandBuffer.initSeparateCapacities(gpa, &es, .{
+        var cb = try zcs.CmdBuf.initSeparateCapacities(gpa, &es, .{
             .tags = 100,
             .args = 0,
             .comp_bytes = 100,
@@ -582,13 +582,13 @@ test "command buffer overflow" {
         try expectEqual(1.0, cb.worstCaseUsage());
 
         var iter = cb.iterator(&es);
-        try expectEqual(zcs.CommandBuffer.Cmd{ .destroy = e }, iter.next());
+        try expectEqual(zcs.CmdBuf.Cmd{ .destroy = e }, iter.next());
         try expectEqual(null, iter.next());
     }
 
     // Component data overflow
     {
-        var cb = try zcs.CommandBuffer.initSeparateCapacities(gpa, &es, .{
+        var cb = try zcs.CmdBuf.initSeparateCapacities(gpa, &es, .{
             .tags = 100,
             .args = 100,
             .comp_bytes = @sizeOf(RigidBody) * 2 - 1,
@@ -612,7 +612,7 @@ test "command buffer overflow" {
         try expectEqual(@as(f32, @sizeOf(RigidBody)) / @as(f32, @sizeOf(RigidBody) * 2 - 1), cb.worstCaseUsage());
 
         var iter = cb.iterator(&es);
-        try expectEqual(zcs.CommandBuffer.Cmd{ .destroy = e }, iter.next());
+        try expectEqual(zcs.CmdBuf.Cmd{ .destroy = e }, iter.next());
         const change_archetype = iter.next().?.change_archetype;
         var add_comps = change_archetype.componentIterator();
         const create_rb = add_comps.next().?;
@@ -631,7 +631,7 @@ test "command buffer worst case capacity" {
     var es = try zcs.Entities.init(gpa, cb_capacity * 10, comps);
     defer es.deinit(gpa);
 
-    var cb = try zcs.CommandBuffer.init(gpa, &es, cb_capacity);
+    var cb = try zcs.CmdBuf.init(gpa, &es, cb_capacity);
     defer cb.deinit(gpa, &es);
 
     // Change archetype
@@ -705,7 +705,7 @@ test "command buffer worst case capacity" {
     }
 }
 
-fn checkRandomCommandBuffer(
+fn checkRandomCmdBuf(
     rand: std.Random,
     expected: *std.AutoArrayHashMapUnmanaged(zcs.Entity, Components),
     actual: *zcs.Entities,
@@ -713,10 +713,10 @@ fn checkRandomCommandBuffer(
     // Queue random commands, apply them directly to the expected data and submit the command buffer
     // at the end.
     const cb_capacity = 20000;
-    var cb = try zcs.CommandBuffer.init(gpa, actual, cb_capacity);
+    var cb = try zcs.CmdBuf.init(gpa, actual, cb_capacity);
     defer cb.deinit(gpa, actual);
     for (0..cb_capacity) |_| {
-        switch (rand.enumValue(@typeInfo(zcs.CommandBuffer.Cmd).@"union".tag_type.?)) {
+        switch (rand.enumValue(@typeInfo(zcs.CmdBuf.Cmd).@"union".tag_type.?)) {
             .destroy => {
                 // If we're at less than half capacity, give a slight bias against destroying
                 // entities so that we don't just hover near zero entities for the whole test
