@@ -74,8 +74,8 @@ pub fn Oracle(Components: []const type) type {
                 // If the ground truth overflows, make sure the real ECS does too.
                 if (try es.count() + try es.reserved() == es.capacity) {
                     const result = zcs.Entity.createChecked(&es.actual, comps);
-                    try std.testing.expectError(error.Overflow, result);
-                    return error.Overflow;
+                    try std.testing.expectError(error.ZcsEntityOverflow, result);
+                    return error.ZcsEntityOverflow;
                 }
 
                 // Create the actual entity. This may overflow due to fragmentation even if the
@@ -108,8 +108,8 @@ pub fn Oracle(Components: []const type) type {
                 // If the ground truth overflows, make sure the real ECS does too.
                 if (try es.count() + try es.reserved() == es.capacity) {
                     const result = zcs.Entity.reserveChecked(&es.actual);
-                    try std.testing.expectError(error.Overflow, result);
-                    return error.Overflow;
+                    try std.testing.expectError(error.ZcsEntityOverflow, result);
+                    return error.ZcsEntityOverflow;
                 }
 
                 // Create the actual entity. This should always succeed if the ground truth
@@ -141,8 +141,8 @@ pub fn Oracle(Components: []const type) type {
                         &es.actual,
                         actual_comps.constSlice(),
                     );
-                    try std.testing.expectError(error.Overflow, result);
-                    return error.Overflow;
+                    try std.testing.expectError(error.ZcsEntityOverflow, result);
+                    return error.ZcsEntityOverflow;
                 }
 
                 // Create the actual entity. This may overflow due to fragmentation even if the

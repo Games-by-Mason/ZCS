@@ -550,8 +550,8 @@ test "command buffer overflow" {
         });
         defer cb.deinit(gpa, &es);
 
-        try expectError(error.Overflow, cb.changeArchetypeChecked(&es, zcs.Entity.reserve(&es), .{}, .{}));
-        try expectError(error.Overflow, cb.destroyChecked(undefined));
+        try expectError(error.ZcsCmdBufOverflow, cb.changeArchetypeChecked(&es, zcs.Entity.reserve(&es), .{}, .{}));
+        try expectError(error.ZcsCmdBufOverflow, cb.destroyChecked(undefined));
 
         try expectEqual(1.0, cb.worstCaseUsage());
 
@@ -570,7 +570,7 @@ test "command buffer overflow" {
         });
         defer cb.deinit(gpa, &es);
 
-        try expectError(error.Overflow, cb.changeArchetypeChecked(
+        try expectError(error.ZcsCmdBufOverflow, cb.changeArchetypeChecked(
             &es,
             undefined,
             .{},
@@ -602,7 +602,7 @@ test "command buffer overflow" {
 
         _ = cb.changeArchetype(&es, zcs.Entity.reserve(&es), .{}, .{rb});
         cb.destroy(e);
-        try expectError(error.Overflow, cb.changeArchetypeChecked(
+        try expectError(error.ZcsCmdBufOverflow, cb.changeArchetypeChecked(
             &es,
             e,
             .{},

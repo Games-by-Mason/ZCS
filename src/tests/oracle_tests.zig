@@ -142,17 +142,17 @@ test "overflow" {
         _ = try Entity.create(&es, .{});
     }
 
-    try expectError(error.Overflow, Entity.create(&es, .{}));
-    try expectError(error.Overflow, Entity.create(&es, .{}));
+    try expectError(error.ZcsEntityOverflow, Entity.create(&es, .{}));
+    try expectError(error.ZcsEntityOverflow, Entity.create(&es, .{}));
     try es.expected_live.keys()[0].destroy(&es);
     _ = try Entity.create(&es, .{});
-    try expectError(error.Overflow, Entity.create(&es, .{}));
-    try expectError(error.Overflow, Entity.create(&es, .{}));
+    try expectError(error.ZcsEntityOverflow, Entity.create(&es, .{}));
+    try expectError(error.ZcsEntityOverflow, Entity.create(&es, .{}));
     try es.reset();
     for (0..capacity) |_| {
         _ = try Entity.create(&es, .{});
     }
-    try expectError(error.Overflow, Entity.create(&es, .{}));
+    try expectError(error.ZcsEntityOverflow, Entity.create(&es, .{}));
 
     try es.fullCheck(rand);
 }

@@ -45,8 +45,8 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `create`, but returns `error.Overflow` when out of space.
-    pub fn createChecked(es: *Entities, comps: anytype) error{Overflow}!Entity {
+    /// Similar to `create`, but returns `error.ZcsEntityOverflow` on failure instead of panicking.
+    pub fn createChecked(es: *Entities, comps: anytype) error{ZcsEntityOverflow}!Entity {
         meta.checkComponents(@TypeOf(comps));
         const entity = try createUninitializedChecked(es, .{});
         entity.changeArchetypeChecked(es, .{}, comps) catch {
@@ -63,11 +63,12 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `createFromComponentsChecked`, but returns `error.Overflow` when out of space.
+    /// Similar to `createFromComponentsChecked`, but returns `error.ZcsEntityOverflow` on failure
+    /// instead of panicking.
     pub fn createFromComponentsChecked(
         es: *Entities,
         comps: []const Component.Optional,
-    ) error{Overflow}!Entity {
+    ) error{ZcsEntityOverflow}!Entity {
         var archetype: Component.Flags = .{};
         for (comps) |comp| {
             if (comp.unwrap()) |some| {
@@ -89,8 +90,12 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `createUninitialized`, but returns `error.Overflow` when out of space.
-    pub fn createUninitializedChecked(es: *Entities, archetype: Component.Flags) error{Overflow}!Entity {
+    /// Similar to `createUninitialized`, but returns `error.ZcsEntityOverflow` on failure instead
+    /// of panicking.
+    pub fn createUninitializedChecked(
+        es: *Entities,
+        archetype: Component.Flags,
+    ) error{ZcsEntityOverflow}!Entity {
         invalidateIterators(es);
         const entity = try reserveChecked(es);
         const slot = es.slots.get(entity.key).?;
@@ -113,12 +118,14 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `reserve`, but returns `error.Overflow` when of space.
-    pub fn reserveChecked(es: *Entities) error{Overflow}!Entity {
-        const key = try es.slots.put(.{
+    /// Similar to `reserve`, but returns `error.ZcsEntityOverflow` on failure instead of panicking.
+    pub fn reserveChecked(es: *Entities) error{ZcsEntityOverflow}!Entity {
+        const key = es.slots.put(.{
             .archetype = .{},
             .committed = false,
-        });
+        }) catch |err| switch (err) {
+            error.Overflow => return error.ZcsEntityOverflow,
+        };
         es.live.set(key.index);
         es.reserved_entities += 1;
         return .{ .key = key };
@@ -228,13 +235,14 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `changeArchetype`, but returns `error.Overflow` when out of space.
+    /// Similar to `changeArchetype`, but returns `error.ZcsEntityOverflow` on failure instead of
+    /// panicking.
     pub fn changeArchetypeChecked(
         self: @This(),
         es: *Entities,
         remove: Component.Flags,
         add: anytype,
-    ) error{Overflow}!void {
+    ) error{ZcsEntityOverflow}!void {
         meta.checkComponents(@TypeOf(add));
 
         // Early out if the entity does not exist
@@ -302,13 +310,14 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `changeArchetypeFromComponents`, but returns `error.Overflow` when out of space.
+    /// Similar to `changeArchetypeFromComponents`, but returns `error.ZcsEntityOverflow` on failure
+    /// instead of panicking.
     pub fn changeArchetypeFromComponentsChecked(
         self: @This(),
         es: *Entities,
         remove: Component.Flags,
         add: []const Component.Optional,
-    ) error{Overflow}!void {
+    ) error{ZcsEntityOverflow}!void {
         if (!self.exists(es)) return;
 
         var add_flags: Component.Flags = .{};
@@ -339,12 +348,13 @@ pub const Entity = packed struct {
         }
     }
 
-    /// Similar to `changeArchetypeUnintialized`, but returns `error.Overflow` when out of space.
+    /// Similar to `changeArchetypeUnintialized`, but returns `error.ZcsEntityOverflow` on failure
+    /// instead of panicking.
     pub fn changeArchetypeUnintializedChecked(
         self: @This(),
         es: *Entities,
         options: ChangeArchetypeUninitializedOptions,
-    ) error{Overflow}!void {
+    ) error{ZcsEntityOverflow}!void {
         invalidateIterators(es);
         const slot = es.slots.get(self.key) orelse return;
         if (!slot.committed) {

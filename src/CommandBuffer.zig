@@ -49,7 +49,7 @@ pub fn init(gpa: Allocator, es: *Entities, capacity: usize) Allocator.Error!@Thi
     var capacities: Capacities = .initFromCmds(es, capacity);
     capacities.reserved = 0;
     return initSeparateCapacities(gpa, es, capacities) catch |err| switch (err) {
-        error.Overflow => unreachable, // We set reserve cap to 0, so it can't fail
+        error.ZcsEntityOverflow => unreachable, // We set reserve cap to 0, so it can't fail
         error.OutOfMemory => error.OutOfMemory,
     };
 }
@@ -59,7 +59,7 @@ pub fn initAndReserveEntities(
     gpa: Allocator,
     es: *Entities,
     capacity: usize,
-) error{ OutOfMemory, Overflow }!@This() {
+) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
     return initSeparateCapacities(gpa, .initFromCmds(es, capacity));
 }
 
@@ -69,7 +69,7 @@ pub fn initSeparateCapacities(
     gpa: Allocator,
     es: *Entities,
     capacities: Capacities,
-) error{ OutOfMemory, Overflow }!@This() {
+) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
     comptime assert(Component.Id.max < std.math.maxInt(u64));
 
     var tags: std.ArrayListUnmanaged(SubCmd.Tag) = try .initCapacity(gpa, capacities.tags);
@@ -122,14 +122,14 @@ pub fn clear(self: *@This()) void {
 }
 
 /// Refills the reserved entities buffer to full capacity.
-pub fn refillReservedEntities(self: *@This(), es: *Entities) error{Overflow}!void {
+pub fn refillReservedEntities(self: *@This(), es: *Entities) void {
     self.refillReservedEntitiesChecked(es) catch |err|
         @panic(@errorName(err));
 }
 
-/// Similar to `refillReservedEntities`, but returns `error.Overflow` when it fails to fully refill
-/// the reserved entity buffer.
-pub fn refillReservedEntitiesChecked(self: *@This(), es: *Entities) error{Overflow}!void {
+/// Similar to `refillReservedEntities`, but returns `error.ZcsEntityOverflow` on failure instead of
+/// panicking.
+pub fn refillReservedEntitiesChecked(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
     while (self.reserved.items.len < self.reserved.capacity) {
         self.reserved.appendAssumeCapacity(try Entity.reserve(es));
     }
@@ -157,9 +157,10 @@ pub fn popReserved(self: *@This()) Entity {
         @panic(@errorName(err));
 }
 
-/// Similar to `popReserved`, but returns `error.Overflow` if there are no more reserved entities.
-pub fn popReservedChecked(self: *@This()) error{Overflow}.Entity {
-    return self.reserved.popOrNull() orelse error.Overflow;
+/// Similar to `popReserved`, but returns `error.EntityReserveUnderflow` if there are no more
+/// reserved entities instead of panicking.
+pub fn popReservedChecked(self: *@This()) error{EntityReserveUnderflow}.Entity {
+    return self.reserved.popOrNull() orelse error.EntityReserveUnderflow;
 }
 
 /// Appends an `Entity.changeArchetype` command.
@@ -177,14 +178,15 @@ pub fn changeArchetype(
         @panic(@errorName(err));
 }
 
-/// Similar to `changeArchetype`, but returns `error.Overflow` when out of space.
+/// Similar to `changeArchetype`, but returns `error.ZcsCmdBufOverflow` on failure instead of
+/// panicking.
 pub fn changeArchetypeChecked(
     self: *@This(),
     es: *const Entities,
     entity: Entity,
     remove: Component.Flags,
     add: anytype,
-) error{Overflow}!void {
+) error{ZcsCmdBufOverflow}!void {
     // Check the types
     meta.checkComponents(@TypeOf(add));
     const fields = @typeInfo(@TypeOf(add)).@"struct".fields;
@@ -237,14 +239,15 @@ pub fn changeArchetypeFromComponents(
         @panic(@errorName(err));
 }
 
-/// Similar to `changeArchetypeFromComponents` but returns `error.Overflow` when out of space.
+/// Similar to `changeArchetypeFromComponents` but returns `error.ZcsCmdBufOverflow` on failure
+/// instead of panicking.
 pub fn changeArchetypeFromComponentsChecked(
     self: *@This(),
     es: *const Entities,
     entity: Entity,
     remove: Component.Flags,
     comps: []const Component.Optional,
-) error{Overflow}!void {
+) error{ZcsCmdBufOverflow}!void {
     const restore = self.*;
     errdefer self.* = restore;
 
@@ -277,10 +280,10 @@ pub fn destroy(self: *@This(), entity: Entity) void {
         @panic(@errorName(err));
 }
 
-/// Similar to `destroy`, but returns `error.Overflow` when out of space.
-pub fn destroyChecked(self: *@This(), entity: Entity) error{Overflow}!void {
+/// Similar to `destroy`, but returns `error.ZcsCmdBufOverflow` on failure instead of panicking.
+pub fn destroyChecked(self: *@This(), entity: Entity) error{ZcsCmdBufOverflow}!void {
     if (self.destroy_queue.items.len >= self.destroy_queue.capacity) {
-        return error.Overflow;
+        return error.ZcsCmdBufOverflow;
     }
     self.destroy_queue.appendAssumeCapacity(entity);
 }
@@ -291,10 +294,11 @@ pub fn submit(self: *@This(), es: *Entities) void {
         @panic(@errorName(err));
 }
 
-/// Similar to `submit`, but returns `error.Overflow` when out of space. On overflow, all work that
-/// doesn't trigger an overflow is still completed.
-pub fn submitChecked(self: *@This(), es: *Entities) error{Overflow}!void {
-    if (!self.submitOrOverflow(es)) return error.Overflow;
+/// Similar to `submit`, but returns `error.ZcsEntityOverflow` on failure instead of panicking. On
+/// overflow, all work that doesn't trigger an overflow is still completed regardless of order
+/// relative to the overflowing work.
+pub fn submitChecked(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
+    if (!self.submitOrOverflow(es)) return error.ZcsEntityOverflow;
 }
 
 /// Submits the command buffer, returns true on success false on overflow. Pulled out into a
@@ -313,7 +317,7 @@ fn submitOrOverflow(self: *@This(), es: *Entities) bool {
                         .remove = args.remove,
                         .add = args.add,
                     }) catch |err| switch (err) {
-                        error.Overflow => {
+                        error.ZcsEntityOverflow => {
                             overflow = true;
                             continue;
                         },
@@ -339,13 +343,13 @@ const rename_when_changing_encoding = {};
 
 /// Submits a subcommand. The public facing commands are all build up of one or more subcommands for
 /// encoding purposes. When modifying this encoding, keep `initFromCmds` in sync.
-fn subCmd(self: *@This(), es: *const Entities, sub_cmd: SubCmd) error{Overflow}!void {
+fn subCmd(self: *@This(), es: *const Entities, sub_cmd: SubCmd) error{ZcsCmdBufOverflow}!void {
     _ = rename_when_changing_encoding;
 
     switch (sub_cmd) {
         .bind_entity => |entity| {
-            if (self.tags.items.len >= self.tags.capacity) return error.Overflow;
-            if (self.args.items.len >= self.args.capacity) return error.Overflow;
+            if (self.tags.items.len >= self.tags.capacity) return error.ZcsCmdBufOverflow;
+            if (self.args.items.len >= self.args.capacity) return error.ZcsCmdBufOverflow;
             self.tags.appendAssumeCapacity(.bind_entity);
             self.args.appendAssumeCapacity(@bitCast(entity));
         },
@@ -353,10 +357,10 @@ fn subCmd(self: *@This(), es: *const Entities, sub_cmd: SubCmd) error{Overflow}!
             const size = es.getComponentSize(comp.id);
             const alignment = es.getComponentAlignment(comp.id);
             const aligned = std.mem.alignForward(usize, self.comp_bytes.items.len, alignment);
-            if (self.tags.items.len >= self.tags.capacity) return error.Overflow;
-            if (self.args.items.len + 1 > self.args.capacity) return error.Overflow;
+            if (self.tags.items.len >= self.tags.capacity) return error.ZcsCmdBufOverflow;
+            if (self.args.items.len + 1 > self.args.capacity) return error.ZcsCmdBufOverflow;
             if (aligned + size > self.comp_bytes.capacity) {
-                return error.Overflow;
+                return error.ZcsCmdBufOverflow;
             }
             self.tags.appendAssumeCapacity(.add_component_val);
             self.args.appendAssumeCapacity(@intFromEnum(comp.id));
@@ -366,15 +370,15 @@ fn subCmd(self: *@This(), es: *const Entities, sub_cmd: SubCmd) error{Overflow}!
         },
         .add_component_ptr => |comp| {
             assert(comp.interned);
-            if (self.tags.items.len >= self.tags.capacity) return error.Overflow;
-            if (self.args.items.len + 2 > self.args.capacity) return error.Overflow;
+            if (self.tags.items.len >= self.tags.capacity) return error.ZcsCmdBufOverflow;
+            if (self.args.items.len + 2 > self.args.capacity) return error.ZcsCmdBufOverflow;
             self.tags.appendAssumeCapacity(.add_component_ptr);
             self.args.appendAssumeCapacity(@intFromEnum(comp.id));
             self.args.appendAssumeCapacity(@intFromPtr(comp.ptr));
         },
         .remove_components => |comps| {
-            if (self.tags.items.len >= self.tags.capacity) return error.Overflow;
-            if (self.args.items.len >= self.args.capacity) return error.Overflow;
+            if (self.tags.items.len >= self.tags.capacity) return error.ZcsCmdBufOverflow;
+            if (self.args.items.len >= self.args.capacity) return error.ZcsCmdBufOverflow;
             self.tags.appendAssumeCapacity(.remove_components);
             self.args.appendAssumeCapacity(comps.bits.mask);
         },
