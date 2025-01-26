@@ -62,18 +62,7 @@ pub fn init(
     // Check the component types
     comptime assert(Components.len < Component.Id.max);
     inline for (Components) |T| {
-        if (@typeInfo(T) == .optional) {
-            // There's nothing technically wrong with this, but if we allowed it then the
-            // `create` and `changeArchetype` functions couldn't use optionals to allow deciding
-            // at runtime whether or not to create a component.
-            //
-            // Furthermore, it would be difficult to distinguish syntactically whether an
-            // optional component was missing or null.
-            //
-            // Instead, optional components should be represented by a struct with an optional
-            // field, or a tagged union.
-            @compileError("component types may not be optional: " ++ @typeName(T));
-        }
+        assertAllowedAsComponentType(T);
     }
 
     // Register the component types
@@ -169,6 +158,7 @@ pub fn getComponentAlignment(self: @This(), id: Component.Id) u8 {
 
 /// Similar to `componentId`, but returns null if the component type was not registered.
 pub fn findComponentId(self: @This(), T: type) ?Component.Id {
+    assertAllowedAsComponentType(T);
     const id = self.comp_types.getIndex(typeId(T)) orelse return null;
     return @enumFromInt(id);
 }
@@ -342,4 +332,20 @@ pub fn ViewIterator(View: type) type {
             self.entity_iterator.destroyCurrentImmediately(es);
         }
     };
+}
+
+/// Comptime asserts that the given type is allowed to be registered as a component.
+fn assertAllowedAsComponentType(T: type) void {
+    if (@typeInfo(T) == .optional) {
+        // There's nothing technically wrong with this, but if we allowed it then the change arch
+        // functions couldn't use optionals to allow deciding at runtime whether or not to create a
+        // component.
+        //
+        // Furthermore, it would be difficult to distinguish syntactically whether an
+        // optional component was missing or null.
+        //
+        // Instead, optional components should be represented by a struct with an optional
+        // field, or a tagged union.
+        @compileError("component types may not be optional: " ++ @typeName(T));
+    }
 }
