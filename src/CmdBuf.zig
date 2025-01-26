@@ -1,9 +1,10 @@
 //! Buffers ECS commands for later execution.
 //!
-//! This allows queuing destructive operations while iterating, or from multiple threads safely. All
-//! commands are noops if the entity in question is destroyed before the time of execution.
+//! This allows queuing destructive operations while iterating, or from multiple threads safely by
+//! assigning each thread its own command buffer. All commands are noops if the entity in question
+//! is destroyed before the time of execution.
 //!
-//! `CmdBuf` alloctes at init time, and then never again. It should be cleared and reused when
+//! `CmdBuf` allocates at init time, and then never again. It should be cleared and reused when
 //! possible.
 
 const std = @import("std");

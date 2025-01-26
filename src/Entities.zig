@@ -3,19 +3,7 @@
 //! See `SlotMap` for how handle safety works. Note that you may want to check
 //! `saturated_generations` every now and then and warn if it's nonzero.
 //!
-//! # Example
-//! ```zig
-//! var es: Entities = try .init(&gpa, 100, &.{RigidBody, Mesh, Fire});
-//! defer es.deinit(gpa);
-//!
-//! const e = Entity.create(.{RigidBody { .mass = 0.5 }, Mesh { .vertices = player });
-//! const mesh = e.getComponent(Mesh).?;
-//!
-//! var iter = es.viewIterator(struct {rb: RigidBody, mesh: Mesh});
-//! while (iter.next()) |entity| {
-//!     std.debug.print("mesh: {}\n", .{entity.mesh});
-//! }
-//! ```
+//! See `README.md` for more information.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -309,7 +297,7 @@ pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
     };
 }
 
-/// See `viewIterator`.
+/// See `Entities.viewIterator`.
 pub fn ViewIterator(View: type) type {
     return struct {
         es: *const Entities,

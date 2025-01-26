@@ -27,30 +27,34 @@ pub const Entity = packed struct {
 
     key: SlotMap(Component.Flags, .{}).Key,
 
-    /// Pops a reserved entity from the reserved buffer.
+    /// Pops a reserved entity.
+    ///
+    /// A reserved entity is given a persistent key, but no storage. As such, it will behave like
+    /// an empty entity, but not show up in iteration.
+    ///
+    /// To commit a reserved entity, use one of the `changeArchetype*` methods.
     pub fn nextReserved(cmds: *CmdBuf) Entity {
         return nextReservedChecked(cmds) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `nextReserved`, but returns `error.ZcsReservedEntityUnderflow` if there are no more
-    /// reserved entities instead of panicking.
+    /// Similar to `nextReserved`, but returns `error.ZcsReservedEntityUnderflow` if there are no
+    /// more reserved entities instead of panicking.
     pub fn nextReservedChecked(cmds: *CmdBuf) error{ZcsReservedEntityUnderflow}!Entity {
         return cmds.reserved.popOrNull() orelse error.ZcsReservedEntityUnderflow;
     }
 
-    /// Reserves an entity key, but doesn't set up storage for it.
+    /// Similar to `nextReserved`, but reserves a new entity instead of popping one from a command
+    /// buffers reserve. Prefer `nextReserved`.
     ///
-    /// Until committed, the entity will behave identically to an entity with no components, but
-    /// will not show up in iteration or factor into `count`.
-    ///
-    /// Does not invalidate iterators.
+    /// This does not invalidate iterators, but it's not thread safe.
     pub fn reserveImmediately(es: *Entities) Entity {
         return reserveImmediatelyChecked(es) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `reserve`, but returns `error.ZcsEntityOverflow` on failure instead of panicking.
+    /// Similar to `reserveImmediately`, but returns `error.ZcsEntityOverflow` on failure instead of
+    /// panicking.
     pub fn reserveImmediatelyChecked(es: *Entities) error{ZcsEntityOverflow}!Entity {
         const key = es.slots.put(.{
             .archetype = .{},
@@ -63,13 +67,16 @@ pub const Entity = packed struct {
         return .{ .key = key };
     }
 
-    /// Appends an `Entity.destroy` command.
+    /// Queues an entity for destruction.
+    ///
+    /// Destroying an entity that has already been destroyed has no effect.
     pub fn destroyCmd(self: @This(), es: *const Entities, cmds: *CmdBuf) void {
         self.destroyCmdChecked(es, cmds) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `destroy`, but returns `error.ZcsCmdBufOverflow` on failure instead of panicking.
+    /// Similar to `destroyCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
+    /// panicking.
     pub fn destroyCmdChecked(self: @This(), es: *const Entities, cmds: *CmdBuf) error{ZcsCmdBufOverflow}!void {
         // Early out if already destroyed, also checks some assertions
         if (!self.exists(es)) return;
@@ -83,9 +90,9 @@ pub const Entity = packed struct {
         cmds.destroy.appendAssumeCapacity(self);
     }
 
-    /// Destroys the entity. May invalidate iterators.
+    /// Similar to `destroyCmd`, but destroys the entity immediately. Prefer `destroyCmd`.
     ///
-    /// Has no effect if the entity has already been destroyed.
+    /// Invalidates iterators.
     pub fn destroyImmediately(self: @This(), es: *Entities) void {
         invalidateIterators(es);
         if (es.slots.get(self.key)) |slot| {
@@ -106,16 +113,16 @@ pub const Entity = packed struct {
         return slot.committed;
     }
 
-    /// Returns the archetype of the entity. If it has been destroyed, the archetype will be empty.
+    /// Returns the archetype of the entity. If it has been destroyed or is not yet committed, the
+    /// empty archetype will be returned.
     pub fn getArchetype(self: @This(), es: *const Entities) Component.Flags {
         const slot = es.slots.get(self.key) orelse return .{};
         if (!slot.committed) assert(slot.archetype.eql(.{}));
         return slot.archetype;
     }
 
-    /// Returns true if the entity has the given component type, false otherwise.
-    ///
-    /// Returns false if the entity has been destroyed.
+    /// Returns true if the entity has the given component type, false otherwise or if the entity
+    /// has been destroyed.
     ///
     /// `Component` must be a registered component type.
     pub fn hasComponent(self: @This(), es: *const Entities, T: type) bool {
@@ -157,15 +164,24 @@ pub const Entity = packed struct {
         return bytes[0..size];
     }
 
-    /// Returns true if the given entities are identical, false otherwise.
+    /// Returns true if the given entities are the same entity, false otherwise.
     pub fn eql(self: @This(), other: @This()) bool {
         return self.key.eql(other.key);
     }
 
-    /// Appends an `Entity.changeArchetype` command.
+    /// Queues an archetype change. If the entity has been reserved but not committed, when executed
+    /// the change will commit the entity.
     ///
-    /// See `Entity.changeArchetype` for documentation on what's types are allowed in `comps`.
-    /// Comptime fields are interned if they're larger than a pointer.
+    /// `change` is allowed to have up to two fields:
+    /// * `add` is a tuple of components to add
+    /// * `remove` is a `Component.Flags` instance specifying which components to remove
+    ///
+    /// `remove` is applied before `add`.
+    ///
+    /// Added components:
+    /// * Must be registered component types
+    /// * May be optional, if null they will be skipped
+    /// * Are interned if the field is comptime and the component type is larger than a pointer
     pub fn changeArchetypeCmd(
         self: @This(),
         es: *const Entities,
@@ -176,7 +192,7 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `changeArchetype`, but returns `error.ZcsCmdBufOverflow` on failure instead of
+    /// Similar to `changeArchetypeCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
     pub fn changeArchetypeCmdChecked(
         self: @This(),
@@ -231,7 +247,7 @@ pub const Entity = packed struct {
         remove: Component.Flags = .{},
     };
 
-    /// Similar to `changeArchetype` but does not require compile time types.
+    /// Similar to `changeArchetypeCmd` but does not require compile time types.
     ///
     /// Components set to `.none` have no effect.
     pub fn changeArchetypeCmdFromComponents(
@@ -244,8 +260,8 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `changeArchetypeFromComponentsImmediately` but returns `error.ZcsCmdBufOverflow` on failure
-    /// instead of panicking.
+    /// Similar to `changeArchetypeCmdFromComponents` but returns `error.ZcsCmdBufOverflow` on
+    /// failure instead of panicking.
     pub fn changeArchetypeCmdFromComponentsChecked(
         self: @This(),
         es: *const Entities,
@@ -281,29 +297,9 @@ pub const Entity = packed struct {
         }
     }
 
-    /// Removes the components in `remove`, and then adds `components`.  May invalidate component
-    /// pointers and iterators.
+    /// Similar to `changeArchetypeCmd`, but immediately executes. Prefer `changeArchetypeCmd`.
     ///
-    /// `comps` must be a tuple where each field is a registered component type. Duplicates are not
-    /// allowed.
-    ///
-    /// Fields may be optional to allow deciding whether or not to include a component at runtime.
-    ///
-    /// Has no effect if the entity has been destroyed.
-    ///
-    /// # Example
-    /// ```zig
-    /// try entity.changeArchetypeImmediately(&es, Component.flags(&.{Fire}), .{
-    ///     RigidBody {
-    ///         .mass = 10,
-    ///     },
-    ///     Transform {
-    ///         position = .{ .x = 10, .y = 10 },
-    ///         velocity = .{ .x = 0, .y = 0 },
-    ///     },
-    ///     if (condition) mesh else null,
-    /// });
-    /// ```
+    /// Invalidates iterators.
     pub fn changeArchetypeImmediately(
         self: @This(),
         es: *Entities,
@@ -313,8 +309,8 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `changeArchetypeImmediately`, but returns `error.ZcsEntityOverflow` on failure instead of
-    /// panicking.
+    /// Similar to `changeArchetypeImmediately`, but returns `error.ZcsEntityOverflow` on failure
+    /// instead of panicking.
     pub fn changeArchetypeImmediatelyChecked(
         self: @This(),
         es: *Entities,
@@ -388,8 +384,8 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `changeArchetypeFromComponentsImmediately`, but returns `error.ZcsEntityOverflow` on failure
-    /// instead of panicking.
+    /// Similar to `changeArchetypeFromComponentsImmediately`, but returns `error.ZcsEntityOverflow`
+    /// on failure instead of panicking.
     pub fn changeArchetypeFromComponentsImmediatelyChecked(
         self: @This(),
         es: *Entities,
@@ -426,8 +422,8 @@ pub const Entity = packed struct {
         }
     }
 
-    /// Similar to `changeArchetypeUnintializedImmediately`, but returns `error.ZcsEntityOverflow` on failure
-    /// instead of panicking.
+    /// Similar to `changeArchetypeUnintializedImmediately`, but returns `error.ZcsEntityOverflow`
+    /// on failure instead of panicking.
     pub fn changeArchetypeUninitializedImmediatelyChecked(
         self: @This(),
         es: *Entities,
