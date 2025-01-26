@@ -12,7 +12,7 @@ pub fn init(input: []const u8) @This() {
 }
 
 pub fn isEmpty(self: @This()) bool {
-    return self.index == self.input.len;
+    return self.empty;
 }
 
 pub fn next(self: *@This(), T: type) T {
@@ -20,7 +20,12 @@ pub fn next(self: *@This(), T: type) T {
         .void => return {},
         .bool => return (self.nextRaw(u8)) % 2 == 0,
         .int => return self.nextRaw(T),
-        .float => return self.nextRaw(T),
+        .float => {
+            // XXX: ...
+            const val = self.nextRaw(T);
+            if (std.math.isNan(val)) return 0.0;
+            return val;
+        },
         .array => |array| {
             var result: T = undefined;
             for (&result) |*item| {
@@ -75,8 +80,8 @@ pub fn nextLessThan(self: *@This(), T: type, less_than: T) T {
 
 fn nextRaw(self: *@This(), T: type) T {
     var bytes: [@sizeOf(T)]u8 = .{0} ** @sizeOf(T);
-    for (0..@min(self.input.len, bytes.len)) |i| {
-        bytes[i] = self.input[self.index];
+    for (0..bytes.len) |i| {
+        bytes[i] = if (self.input.len == 0) 0 else self.input[self.index];
         self.index += 1;
         if (self.index >= self.input.len) {
             self.empty = true;

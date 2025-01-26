@@ -3,6 +3,8 @@ const zcs = @import("../root.zig");
 
 const gpa = std.testing.allocator;
 const assert = std.debug.assert;
+const expectEqual = @import("expect_equal.zig").expectEqual;
+const expect = std.testing.expect;
 
 const FuzzParser = @import("FuzzParser.zig");
 
@@ -13,6 +15,21 @@ const Component = zcs.Component;
 
 test "fuzz cmdbuf" {
     try std.testing.fuzz(FuzzCmdBuf.run, .{ .corpus = &.{} });
+}
+
+// XXX: wow this fails and the fuzzer doesn't??
+// XXX: check that this actually does substantial work
+test "rand cmdbuf" {
+    // // XXX: finds a failure that fuzzer doesn't, make a corpus with more data?
+    // var xoshiro_256: std.Random.Xoshiro256 = .init(0);
+    // const rand = xoshiro_256.random();
+    // // XXX: Finds a failure, include in corpus?
+    // const input: []u8 = try gpa.alloc(u8, 1048576);
+    // defer gpa.free(input);
+    // rand.bytes(input);
+    // try FuzzCmdBuf.run(input);
+
+    try expectEqual(std.math.nan(f32), 2.0);
 }
 
 const RigidBody = struct {
@@ -117,8 +134,11 @@ const FuzzCmdBuf = struct {
         var self: @This() = try init(input);
         defer self.deinit();
 
+        var i = self.parser.index;
         while (!self.parser.isEmpty()) {
             for (0..self.parser.nextLessThan(u16, cmds_capacity)) |_| {
+                if (self.parser.isEmpty()) break; // XXX: needed?
+                i = self.parser.index;
                 switch (self.parser.next(enum {
                     reserve,
                     destroy,
@@ -140,16 +160,16 @@ const FuzzCmdBuf = struct {
 
     fn checkOracle(self: *@This()) !void {
         // Check the total number of entities
-        try std.testing.expectEqual(
+        try expectEqual(
             self.reserved.count() + self.cmds.reserved.items.len,
             self.es.reserved(),
         );
-        try std.testing.expectEqual(self.committed.count(), self.es.count());
+        try expectEqual(self.committed.count(), self.es.count());
 
         // Check the reserved entities
         for (self.reserved.keys()) |e| {
-            try std.testing.expect(e.exists(&self.es));
-            try std.testing.expect(!e.committed(&self.es));
+            try expect(e.exists(&self.es));
+            try expect(!e.committed(&self.es));
         }
 
         // Check the committed entities
@@ -157,22 +177,22 @@ const FuzzCmdBuf = struct {
         while (commited_iter.next()) |entry| {
             const entity = entry.key_ptr.*;
             const expected = entry.value_ptr;
-            try std.testing.expect(entity.exists(&self.es));
-            try std.testing.expect(entity.committed(&self.es));
-            try std.testing.expectEqual(expected.rb, if (entity.getComponent(&self.es, RigidBody)) |v| v.* else null);
-            try std.testing.expectEqual(expected.model, if (entity.getComponent(&self.es, Model)) |v| v.* else null);
-            try std.testing.expectEqual(expected.tag, if (entity.getComponent(&self.es, Tag)) |v| v.* else null);
+            try expect(entity.exists(&self.es));
+            try expect(entity.committed(&self.es));
+            try expectEqual(expected.rb, if (entity.getComponent(&self.es, RigidBody)) |v| v.* else null);
+            try expectEqual(expected.model, if (entity.getComponent(&self.es, Model)) |v| v.* else null);
+            try expectEqual(expected.tag, if (entity.getComponent(&self.es, Tag)) |v| v.* else null);
         }
 
         // Check the tracked deleted entities
         var destroyed_iter = self.destroyed.iterator();
         while (destroyed_iter.next()) |entry| {
             const entity = entry.key_ptr.*;
-            try std.testing.expect(!entity.exists(&self.es));
-            try std.testing.expect(!entity.committed(&self.es));
-            try std.testing.expectEqual(null, if (entity.getComponent(&self.es, RigidBody)) |v| v.* else null);
-            try std.testing.expectEqual(null, if (entity.getComponent(&self.es, Model)) |v| v.* else null);
-            try std.testing.expectEqual(null, if (entity.getComponent(&self.es, Tag)) |v| v.* else null);
+            try expect(!entity.exists(&self.es));
+            try expect(!entity.committed(&self.es));
+            try expectEqual(null, if (entity.getComponent(&self.es, RigidBody)) |v| v.* else null);
+            try expectEqual(null, if (entity.getComponent(&self.es, Model)) |v| v.* else null);
+            try expectEqual(null, if (entity.getComponent(&self.es, Tag)) |v| v.* else null);
         }
 
         // Check the iterators
@@ -190,7 +210,7 @@ const FuzzCmdBuf = struct {
             }
 
             // Compare them
-            try std.testing.expectEqual(self.committed.count(), count);
+            try expectEqual(self.committed.count(), count);
         }
 
         // All entities, with handle
@@ -203,7 +223,7 @@ const FuzzCmdBuf = struct {
             }
 
             // Compare them
-            try std.testing.expectEqual(self.committed.count(), self.found_buf.count());
+            try expectEqual(self.committed.count(), self.found_buf.count());
         }
 
         // Rigid bodies, without handle
@@ -216,7 +236,7 @@ const FuzzCmdBuf = struct {
             }
 
             // Compare them
-            try std.testing.expectEqual(
+            try expectEqual(
                 self.expectedOfArchetype(Component.flags(&self.es, &.{RigidBody})),
                 count,
             );
@@ -228,12 +248,12 @@ const FuzzCmdBuf = struct {
             defer self.found_buf.clearRetainingCapacity();
             var iter = self.es.viewIterator(struct { rb: *RigidBody, e: Entity });
             while (iter.next()) |vw| {
-                try std.testing.expectEqual(vw.rb, vw.e.getComponent(&self.es, RigidBody).?);
+                try expectEqual(vw.rb, vw.e.getComponent(&self.es, RigidBody).?);
                 try self.found_buf.putNoClobber(gpa, vw.e, {});
             }
 
             // Compare them
-            try std.testing.expectEqual(
+            try expectEqual(
                 self.expectedOfArchetype(Component.flags(&self.es, &.{RigidBody})),
                 self.found_buf.count(),
             );
@@ -245,12 +265,12 @@ const FuzzCmdBuf = struct {
             defer self.found_buf.clearRetainingCapacity();
             var iter = self.es.viewIterator(struct { model: *Model, e: Entity });
             while (iter.next()) |vw| {
-                try std.testing.expectEqual(vw.model, vw.e.getComponent(&self.es, Model).?);
+                try expectEqual(vw.model, vw.e.getComponent(&self.es, Model).?);
                 try self.found_buf.putNoClobber(gpa, vw.e, {});
             }
 
             // Compare to the expected count
-            try std.testing.expectEqual(
+            try expectEqual(
                 self.expectedOfArchetype(Component.flags(&self.es, &.{Model})),
                 self.found_buf.count(),
             );
@@ -262,12 +282,12 @@ const FuzzCmdBuf = struct {
             defer self.found_buf.clearRetainingCapacity();
             var iter = self.es.viewIterator(struct { tag: *const Tag, e: Entity });
             while (iter.next()) |vw| {
-                try std.testing.expectEqual(vw.tag, vw.e.getComponent(&self.es, Tag).?);
+                try expectEqual(vw.tag, vw.e.getComponent(&self.es, Tag).?);
                 try self.found_buf.putNoClobber(gpa, vw.e, {});
             }
 
             // Compare to the expected count
-            try std.testing.expectEqual(
+            try expectEqual(
                 self.expectedOfArchetype(Component.flags(&self.es, &.{Tag})),
                 self.found_buf.count(),
             );
@@ -284,15 +304,15 @@ const FuzzCmdBuf = struct {
                 e: Entity,
             });
             while (iter.next()) |vw| {
-                try std.testing.expectEqual(vw.rb, vw.e.getComponent(&self.es, RigidBody).?);
-                try std.testing.expectEqual(vw.model, vw.e.getComponent(&self.es, Model).?);
-                try std.testing.expectEqual(vw.tag, vw.e.getComponent(&self.es, Tag).?);
+                try expectEqual(vw.rb, vw.e.getComponent(&self.es, RigidBody).?);
+                try expectEqual(vw.model, vw.e.getComponent(&self.es, Model).?);
+                try expectEqual(vw.tag, vw.e.getComponent(&self.es, Tag).?);
                 try self.found_buf.putNoClobber(gpa, vw.e, {});
             }
 
             // Compare to the expected count
-            try std.testing.expectEqual(
-                self.expectedOfArchetype(Component.flags(&self.es, &.{Tag})),
+            try expectEqual(
+                self.expectedOfArchetype(Component.flags(&self.es, &.{ RigidBody, Model, Tag })),
                 self.found_buf.count(),
             );
         }
@@ -308,17 +328,14 @@ const FuzzCmdBuf = struct {
                 e: Entity,
             });
             while (iter.next()) |vw| {
-                try std.testing.expectEqual(vw.rb, vw.e.getComponent(&self.es, RigidBody));
-                try std.testing.expectEqual(vw.model, vw.e.getComponent(&self.es, Model));
-                try std.testing.expectEqual(vw.tag, vw.e.getComponent(&self.es, Tag));
+                try expectEqual(vw.rb, vw.e.getComponent(&self.es, RigidBody));
+                try expectEqual(vw.model, vw.e.getComponent(&self.es, Model));
+                try expectEqual(vw.tag, vw.e.getComponent(&self.es, Tag));
                 try self.found_buf.putNoClobber(gpa, vw.e, {});
             }
 
             // Compare to the expected count
-            try std.testing.expectEqual(
-                self.expectedOfArchetype(Component.flags(&self.es, &.{})),
-                self.found_buf.count(),
-            );
+            try expectEqual(self.committed.count(), self.found_buf.count());
         }
 
         // Some optional
@@ -332,14 +349,14 @@ const FuzzCmdBuf = struct {
                 e: Entity,
             });
             while (iter.next()) |vw| {
-                try std.testing.expectEqual(vw.rb, vw.e.getComponent(&self.es, RigidBody));
-                try std.testing.expectEqual(vw.model, vw.e.getComponent(&self.es, Model));
-                try std.testing.expectEqual(vw.tag, vw.e.getComponent(&self.es, Tag));
+                try expectEqual(vw.rb, vw.e.getComponent(&self.es, RigidBody));
+                try expectEqual(vw.model, vw.e.getComponent(&self.es, Model));
+                try expectEqual(vw.tag, vw.e.getComponent(&self.es, Tag));
                 try self.found_buf.putNoClobber(gpa, vw.e, {});
             }
 
             // Compare to the expected count
-            try std.testing.expectEqual(
+            try expectEqual(
                 self.expectedOfArchetype(Component.flags(&self.es, &.{ RigidBody, Tag })),
                 self.found_buf.count(),
             );
