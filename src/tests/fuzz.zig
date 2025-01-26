@@ -15,17 +15,31 @@ test "fuzz cmdbuf" {
 
 const OracleTests = struct {
     const RigidBody = struct {
+        const interned: [4]?@This() = .{
+            .{},
+            .{ .position = .{ 2.0, 3.0 }, .velocity = .{ 4.0, 5.0 }, .mass = 10.0 },
+            .{ .position = .{ 24.0, 32.0 }, .velocity = .{ 42.0, 55.0 }, .mass = 103.0 },
+            null,
+        };
         position: [2]f32 = .{ 1.0, 2.0 },
         velocity: [2]f32 = .{ 3.0, 4.0 },
         mass: f32 = 5.0,
     };
 
     const Model = struct {
+        const interned: [4]?@This() = .{
+            .{},
+            .{ .vertex_start = 1, .vertex_count = 2 },
+            .{ .vertex_start = 10, .vertex_count = 20 },
+            null,
+        };
         vertex_start: u16 = 6,
         vertex_count: u16 = 7,
     };
 
-    pub const Tag = struct {};
+    pub const Tag = struct {
+        const interned: [2]?@This() = .{ .{}, null };
+    };
 
     const ExpectedEntity = struct {
         model: ?Model = null,
@@ -153,27 +167,47 @@ const OracleTests = struct {
         }
     }
 
-    /// Appends a random instance of `?T` or `T` to `add`, and then returns it.
+    /// Appends a random or interned instance of `?T` or `T` to `add`, and then returns a pointer to
+    /// it. Accumulates random data in buf.
     fn addComponent(
         self: *@This(),
         T: type,
         buf: anytype,
         add: anytype,
-    ) *?T {
-        // Generate a random component
-        const comp = buf.addOneAssumeCapacity();
-        comp.* = self.bytes.next(?T);
+    ) *const ?T {
+        // Either get an interned component, or generate a random one
+        const i = self.bytes.next(u8);
+        const interned = i < 40;
+        const comp = if (interned) b: {
+            break :b &T.interned[i % T.interned.len];
+        } else b: {
+            const comp = buf.addOneAssumeCapacity();
+            comp.* = self.bytes.next(?T);
+            break :b comp;
+        };
 
         // Randomly add it to the command, as either an optional or
         // unwrapped
         if (comp.*) |*some| {
             if (self.bytes.next(bool)) {
-                add.appendAssumeCapacity(.init(&self.es, some));
+                if (interned) {
+                    add.appendAssumeCapacity(.initInterned(&self.es, some));
+                } else {
+                    add.appendAssumeCapacity(.init(&self.es, some));
+                }
+            } else {
+                if (interned) {
+                    add.appendAssumeCapacity(.initInterned(&self.es, comp));
+                } else {
+                    add.appendAssumeCapacity(.init(&self.es, comp));
+                }
+            }
+        } else {
+            if (interned) {
+                add.appendAssumeCapacity(.initInterned(&self.es, comp));
             } else {
                 add.appendAssumeCapacity(.init(&self.es, comp));
             }
-        } else {
-            add.appendAssumeCapacity(.init(&self.es, comp));
         }
 
         // Return the component
