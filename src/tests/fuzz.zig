@@ -65,6 +65,7 @@ const FuzzCmdBuf = struct {
     /// A sample of destroyed entities. Capped to avoid growing forever, when it reaches the cap
     /// random entities are removed from the set.
     destroyed: std.AutoArrayHashMapUnmanaged(Entity, void),
+    found_buf: std.AutoArrayHashMapUnmanaged(Entity, void),
 
     fn init(input: []const u8) !@This() {
         var es: Entities = try .init(gpa, capacity, &.{ RigidBody, Model, Tag });
@@ -85,6 +86,10 @@ const FuzzCmdBuf = struct {
         errdefer destroyed.deinit(gpa);
         try destroyed.ensureTotalCapacity(gpa, capacity);
 
+        var found_buf: std.AutoArrayHashMapUnmanaged(Entity, void) = .{};
+        errdefer found_buf.deinit(gpa);
+        try found_buf.ensureTotalCapacity(gpa, capacity);
+
         const parser: FuzzParser = .init(input);
 
         return .{
@@ -94,10 +99,12 @@ const FuzzCmdBuf = struct {
             .committed = committed,
             .destroyed = destroyed,
             .parser = parser,
+            .found_buf = found_buf,
         };
     }
 
     fn deinit(self: *@This()) void {
+        self.found_buf.deinit(gpa);
         self.destroyed.deinit(gpa);
         self.committed.deinit(gpa);
         self.reserved.deinit(gpa);
@@ -131,7 +138,7 @@ const FuzzCmdBuf = struct {
         }
     }
 
-    fn checkOracle(self: @This()) !void {
+    fn checkOracle(self: *@This()) !void {
         // Check the total number of entities
         try std.testing.expectEqual(
             self.reserved.count() + self.cmds.reserved.items.len,
@@ -167,6 +174,194 @@ const FuzzCmdBuf = struct {
             try std.testing.expectEqual(null, if (entity.getComponent(&self.es, Model)) |v| v.* else null);
             try std.testing.expectEqual(null, if (entity.getComponent(&self.es, Tag)) |v| v.* else null);
         }
+
+        // Check the iterators
+        try self.checkIterators();
+    }
+
+    fn checkIterators(self: *@This()) !void {
+        // All entities, no handle
+        {
+            // Get the actual count, checking the entities along the way
+            var count: usize = 0;
+            var iter = self.es.viewIterator(struct {});
+            while (iter.next()) |_| {
+                count += 1;
+            }
+
+            // Compare them
+            try std.testing.expectEqual(self.committed.count(), count);
+        }
+
+        // All entities, with handle
+        {
+            // Get the actual count, checking the entities along the way
+            defer self.found_buf.clearRetainingCapacity();
+            var iter = self.es.viewIterator(struct { e: Entity });
+            while (iter.next()) |vw| {
+                try self.found_buf.putNoClobber(gpa, vw.e, {});
+            }
+
+            // Compare them
+            try std.testing.expectEqual(self.committed.count(), self.found_buf.count());
+        }
+
+        // Rigid bodies, without handle
+        {
+            // Get the actual count, checking the entities along the way
+            var count: usize = 0;
+            var iter = self.es.viewIterator(struct { rb: *const RigidBody });
+            while (iter.next()) |_| {
+                count += 1;
+            }
+
+            // Compare them
+            try std.testing.expectEqual(
+                self.expectedOfArchetype(Component.flags(&self.es, &.{RigidBody})),
+                count,
+            );
+        }
+
+        // Rigid bodies, with handle
+        {
+            // Get the actual count, checking the entities along the way
+            defer self.found_buf.clearRetainingCapacity();
+            var iter = self.es.viewIterator(struct { rb: *RigidBody, e: Entity });
+            while (iter.next()) |vw| {
+                try std.testing.expectEqual(vw.rb, vw.e.getComponent(&self.es, RigidBody).?);
+                try self.found_buf.putNoClobber(gpa, vw.e, {});
+            }
+
+            // Compare them
+            try std.testing.expectEqual(
+                self.expectedOfArchetype(Component.flags(&self.es, &.{RigidBody})),
+                self.found_buf.count(),
+            );
+        }
+
+        // Models, with handle
+        {
+            // Get the actual count, checking the entities along the way
+            defer self.found_buf.clearRetainingCapacity();
+            var iter = self.es.viewIterator(struct { model: *Model, e: Entity });
+            while (iter.next()) |vw| {
+                try std.testing.expectEqual(vw.model, vw.e.getComponent(&self.es, Model).?);
+                try self.found_buf.putNoClobber(gpa, vw.e, {});
+            }
+
+            // Compare to the expected count
+            try std.testing.expectEqual(
+                self.expectedOfArchetype(Component.flags(&self.es, &.{Model})),
+                self.found_buf.count(),
+            );
+        }
+
+        // Tags, with handle
+        {
+            // Get the actual count, checking the entities along the way
+            defer self.found_buf.clearRetainingCapacity();
+            var iter = self.es.viewIterator(struct { tag: *const Tag, e: Entity });
+            while (iter.next()) |vw| {
+                try std.testing.expectEqual(vw.tag, vw.e.getComponent(&self.es, Tag).?);
+                try self.found_buf.putNoClobber(gpa, vw.e, {});
+            }
+
+            // Compare to the expected count
+            try std.testing.expectEqual(
+                self.expectedOfArchetype(Component.flags(&self.es, &.{Tag})),
+                self.found_buf.count(),
+            );
+        }
+
+        // All three, with handle
+        {
+            // Get the actual count, checking the entities along the way
+            defer self.found_buf.clearRetainingCapacity();
+            var iter = self.es.viewIterator(struct {
+                rb: *const RigidBody,
+                model: *const Model,
+                tag: *const Tag,
+                e: Entity,
+            });
+            while (iter.next()) |vw| {
+                try std.testing.expectEqual(vw.rb, vw.e.getComponent(&self.es, RigidBody).?);
+                try std.testing.expectEqual(vw.model, vw.e.getComponent(&self.es, Model).?);
+                try std.testing.expectEqual(vw.tag, vw.e.getComponent(&self.es, Tag).?);
+                try self.found_buf.putNoClobber(gpa, vw.e, {});
+            }
+
+            // Compare to the expected count
+            try std.testing.expectEqual(
+                self.expectedOfArchetype(Component.flags(&self.es, &.{Tag})),
+                self.found_buf.count(),
+            );
+        }
+
+        // All optional
+        {
+            // Get the actual count, checking the entities along the way
+            defer self.found_buf.clearRetainingCapacity();
+            var iter = self.es.viewIterator(struct {
+                rb: ?*const RigidBody,
+                model: ?*Model,
+                tag: ?*Tag,
+                e: Entity,
+            });
+            while (iter.next()) |vw| {
+                try std.testing.expectEqual(vw.rb, vw.e.getComponent(&self.es, RigidBody));
+                try std.testing.expectEqual(vw.model, vw.e.getComponent(&self.es, Model));
+                try std.testing.expectEqual(vw.tag, vw.e.getComponent(&self.es, Tag));
+                try self.found_buf.putNoClobber(gpa, vw.e, {});
+            }
+
+            // Compare to the expected count
+            try std.testing.expectEqual(
+                self.expectedOfArchetype(Component.flags(&self.es, &.{})),
+                self.found_buf.count(),
+            );
+        }
+
+        // Some optional
+        {
+            // Get the actual count, checking the entities along the way
+            defer self.found_buf.clearRetainingCapacity();
+            var iter = self.es.viewIterator(struct {
+                rb: *const RigidBody,
+                model: ?*Model,
+                tag: *Tag,
+                e: Entity,
+            });
+            while (iter.next()) |vw| {
+                try std.testing.expectEqual(vw.rb, vw.e.getComponent(&self.es, RigidBody));
+                try std.testing.expectEqual(vw.model, vw.e.getComponent(&self.es, Model));
+                try std.testing.expectEqual(vw.tag, vw.e.getComponent(&self.es, Tag));
+                try self.found_buf.putNoClobber(gpa, vw.e, {});
+            }
+
+            // Compare to the expected count
+            try std.testing.expectEqual(
+                self.expectedOfArchetype(Component.flags(&self.es, &.{ RigidBody, Tag })),
+                self.found_buf.count(),
+            );
+        }
+    }
+
+    fn expectedOfArchetype(self: *@This(), archetype: Component.Flags) usize {
+        var count: usize = 0;
+        var iter = self.committed.iterator();
+        while (iter.next()) |entry| {
+            if (archetype.contains(self.es.getComponentId(RigidBody))) {
+                if (entry.value_ptr.rb == null) continue;
+            }
+            if (archetype.contains(self.es.getComponentId(Model))) {
+                if (entry.value_ptr.model == null) continue;
+            }
+            if (archetype.contains(self.es.getComponentId(Tag))) {
+                if (entry.value_ptr.tag == null) continue;
+            }
+            count += 1;
+        }
+        return count;
     }
 
     fn reserve(self: *@This()) !void {
