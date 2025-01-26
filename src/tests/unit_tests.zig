@@ -114,25 +114,27 @@ test "command buffer create empty" {
     try expectEqual(comp, comp_optional.unwrap().?);
     try expectEqual(comp, comp_optional_interned.unwrap().?);
 
-    var cb = try zcs.CmdBuf.initNoReserve(gpa, &es, 4);
-    defer cb.deinit(gpa, &es);
+    var capacity: zcs.CmdBuf.Capacity = .init(&es, 4);
+    capacity.reserved = 0;
+    var cmds = try zcs.CmdBuf.initGranularCapacity(gpa, &es, capacity);
+    defer cmds.deinit(gpa, &es);
 
     try expectEqual(0, es.count());
 
     const e0 = zcs.Entity.reserveImmediately(&es);
     const e1 = zcs.Entity.reserveImmediately(&es);
     const e2 = zcs.Entity.reserveImmediately(&es);
-    e0.changeArchetypeCmd(&es, &cb, .{});
-    e1.changeArchetypeCmdFromComponents(&es, &cb, .{});
+    e0.changeArchetypeCmd(&es, &cmds, .{});
+    e1.changeArchetypeCmdFromComponents(&es, &cmds, .{});
     const rb = RigidBody.random(rand);
     const model = Model.random(rand);
-    e2.changeArchetypeCmd(&es, &cb, .{ .add = .{rb} });
+    e2.changeArchetypeCmd(&es, &cmds, .{ .add = .{rb} });
     try expectEqual(3, es.reserved());
     try expectEqual(0, es.count());
-    cb.execute(&es);
+    cmds.execute(&es);
     try expectEqual(0, es.reserved());
     try expectEqual(3, es.count());
-    cb.clearWithoutRefill();
+    cmds.clear(&es);
 
     var iter = es.iterator(.{});
 
@@ -159,14 +161,14 @@ test "command buffer create empty" {
     try expect(!e1.eql(e2));
     try expect(!e1.eql(.none));
 
-    e0.changeArchetypeCmd(&es, &cb, .{ .remove = zcs.Component.flags(&es, &.{RigidBody}) });
-    e1.changeArchetypeCmdFromComponents(&es, &cb, .{ .remove = zcs.Component.flags(&es, &.{RigidBody}) });
-    e2.changeArchetypeCmd(&es, &cb, .{
+    e0.changeArchetypeCmd(&es, &cmds, .{ .remove = zcs.Component.flags(&es, &.{RigidBody}) });
+    e1.changeArchetypeCmdFromComponents(&es, &cmds, .{ .remove = zcs.Component.flags(&es, &.{RigidBody}) });
+    e2.changeArchetypeCmd(&es, &cmds, .{
         .remove = zcs.Component.flags(&es, &.{RigidBody}),
         .add = .{model},
     });
-    cb.execute(&es);
-    cb.clearWithoutRefill();
+    cmds.execute(&es);
+    cmds.clear(&es);
 
     try expectEqual(3, es.count());
 
@@ -189,8 +191,8 @@ test "command buffer skip dups" {
     var es = try zcs.Entities.init(gpa, 100, &.{ RigidBody, Model, Tag });
     defer es.deinit(gpa);
 
-    var cb = try zcs.CmdBuf.initNoReserve(gpa, &es, 24);
-    defer cb.deinit(gpa, &es);
+    var cmds = try zcs.CmdBuf.init(gpa, &es, 24);
+    defer cmds.deinit(gpa, &es);
 
     const model1: Model = .{
         .vertex_start = 1,
@@ -204,8 +206,8 @@ test "command buffer skip dups" {
     const e0: zcs.Entity = zcs.Entity.reserveImmediately(&es);
 
     {
-        defer cb.clearWithoutRefill();
-        e0.changeArchetypeCmdFromComponents(&es, &cb, .{
+        defer cmds.clear(&es);
+        e0.changeArchetypeCmdFromComponents(&es, &cmds, .{
             .remove = zcs.Component.flags(&es, &.{}),
             .add = &.{
                 .init(&es, &model1),
@@ -214,8 +216,8 @@ test "command buffer skip dups" {
                 .none,
             },
         });
-        var iter = cb.iterator(&es);
-        const change_archetype = iter.next().?.change_archetype;
+        var iter = cmds.change_archetype.iterator(&es);
+        const change_archetype = iter.next().?;
         try expectEqual(
             zcs.Component.Flags{},
             change_archetype.remove,
@@ -232,7 +234,7 @@ test "command buffer skip dups" {
 
 // Verify that components are interned appropriately
 test "command buffer interning" {
-    // Assumed by this test (affects cb submission order.) If this fails, just adjust the types to
+    // Assumed by this test (affects cmds submission order.) If this fails, just adjust the types to
     // make it true and the rest of the test should pass.
     comptime assert(@alignOf(RigidBody) > @alignOf(Model));
     comptime assert(@alignOf(Model) > @alignOf(Tag));
@@ -243,8 +245,8 @@ test "command buffer interning" {
     var es = try zcs.Entities.init(gpa, 100, &.{ RigidBody, Model, Tag });
     defer es.deinit(gpa);
 
-    var cb = try zcs.CmdBuf.initNoReserve(gpa, &es, 24);
-    defer cb.deinit(gpa, &es);
+    var cmds = try zcs.CmdBuf.init(gpa, &es, 24);
+    defer cmds.deinit(gpa, &es);
 
     const rb_interned: RigidBody = .{
         .position = .{ 0.5, 1.5 },
@@ -274,7 +276,7 @@ test "command buffer interning" {
     // Change archetype non optional
     e0.changeArchetypeCmd(
         &es,
-        &cb,
+        &cmds,
         .{
             .remove = zcs.Component.flags(&es, &.{Tag}),
             .add = .{ model_value, rb_interned },
@@ -282,20 +284,20 @@ test "command buffer interning" {
     );
     e1.changeArchetypeCmd(
         &es,
-        &cb,
+        &cmds,
         .{
             .add = .{ model_interned, rb_value },
             .remove = zcs.Component.flags(&es, &.{Tag}),
         },
     );
-    e0.changeArchetypeCmdFromComponents(&es, &cb, .{
+    e0.changeArchetypeCmdFromComponents(&es, &cmds, .{
         .add = &.{
             .init(&es, &model_value),
             .initInterned(&es, &rb_interned),
         },
         .remove = zcs.Component.flags(&es, &.{Tag}),
     });
-    e1.changeArchetypeCmdFromComponents(&es, &cb, .{
+    e1.changeArchetypeCmdFromComponents(&es, &cmds, .{
         .add = &.{
             .initInterned(&es, &model_interned),
             .init(&es, &rb_value),
@@ -306,7 +308,7 @@ test "command buffer interning" {
     // Change archetype optional
     e0.changeArchetypeCmd(
         &es,
-        &cb,
+        &cmds,
         .{
             .remove = zcs.Component.flags(&es, &.{Tag}),
             .add = .{ model_value_optional, rb_interned_optional },
@@ -314,20 +316,20 @@ test "command buffer interning" {
     );
     e1.changeArchetypeCmd(
         &es,
-        &cb,
+        &cmds,
         .{
             .remove = zcs.Component.flags(&es, &.{Tag}),
             .add = .{ model_interned_optional, rb_value_optional },
         },
     );
-    e0.changeArchetypeCmdFromComponents(&es, &cb, .{
+    e0.changeArchetypeCmdFromComponents(&es, &cmds, .{
         .remove = zcs.Component.flags(&es, &.{Tag}),
         .add = &.{
             .init(&es, &model_value_optional),
             .initInterned(&es, &rb_interned_optional),
         },
     });
-    e1.changeArchetypeCmdFromComponents(&es, &cb, .{
+    e1.changeArchetypeCmdFromComponents(&es, &cmds, .{
         .remove = zcs.Component.flags(&es, &.{Tag}),
         .add = &.{
             .initInterned(&es, &model_interned_optional),
@@ -338,7 +340,7 @@ test "command buffer interning" {
     // Change archetype null
     e0.changeArchetypeCmd(
         &es,
-        &cb,
+        &cmds,
         .{
             .remove = zcs.Component.flags(&es, &.{Tag}),
             .add = .{ model_value_null, rb_interned_null },
@@ -346,20 +348,20 @@ test "command buffer interning" {
     );
     e1.changeArchetypeCmd(
         &es,
-        &cb,
+        &cmds,
         .{
             .remove = zcs.Component.flags(&es, &.{Tag}),
             .add = .{ model_interned_null, rb_value_null },
         },
     );
-    e0.changeArchetypeCmdFromComponents(&es, &cb, .{
+    e0.changeArchetypeCmdFromComponents(&es, &cmds, .{
         .remove = zcs.Component.flags(&es, &.{Tag}),
         .add = &.{
             .init(&es, &model_value_null),
             .initInterned(&es, &rb_interned_null),
         },
     });
-    e1.changeArchetypeCmdFromComponents(&es, &cb, .{
+    e1.changeArchetypeCmdFromComponents(&es, &cmds, .{
         .remove = zcs.Component.flags(&es, &.{Tag}),
         .add = &.{
             .initInterned(&es, &model_interned_null),
@@ -369,11 +371,11 @@ test "command buffer interning" {
 
     // Test the results
     {
-        var iter = cb.iterator(&es);
+        var iter = cmds.change_archetype.iterator(&es);
 
         // Change archetype non optional
         {
-            const cmd = iter.next().?.change_archetype;
+            const cmd = iter.next().?;
             try expectEqual(e0, cmd.entity);
             try expectEqual(
                 zcs.Component.flags(&es, &.{Tag}),
@@ -390,7 +392,7 @@ test "command buffer interning" {
             try expectEqual(null, comps.next());
         }
         {
-            const cmd = iter.next().?.change_archetype;
+            const cmd = iter.next().?;
             try expectEqual(e1, cmd.entity);
             try expectEqual(
                 zcs.Component.flags(&es, &.{Tag}),
@@ -407,7 +409,7 @@ test "command buffer interning" {
             try expectEqual(null, comps.next());
         }
         {
-            const cmd = iter.next().?.change_archetype;
+            const cmd = iter.next().?;
             try expectEqual(e0, cmd.entity);
             try expectEqual(
                 zcs.Component.flags(&es, &.{Tag}),
@@ -424,7 +426,7 @@ test "command buffer interning" {
             try expectEqual(null, comps.next());
         }
         {
-            const cmd = iter.next().?.change_archetype;
+            const cmd = iter.next().?;
             try expectEqual(e1, cmd.entity);
             try expectEqual(
                 zcs.Component.flags(&es, &.{Tag}),
@@ -444,7 +446,7 @@ test "command buffer interning" {
 
         // Change archetype optional
         {
-            const cmd = iter.next().?.change_archetype;
+            const cmd = iter.next().?;
             try expectEqual(e0, cmd.entity);
             try expectEqual(
                 zcs.Component.flags(&es, &.{Tag}),
@@ -461,7 +463,7 @@ test "command buffer interning" {
             try expectEqual(null, comps.next());
         }
         {
-            const cmd = iter.next().?.change_archetype;
+            const cmd = iter.next().?;
             try expectEqual(e1, cmd.entity);
             try expectEqual(
                 zcs.Component.flags(&es, &.{Tag}),
@@ -478,7 +480,7 @@ test "command buffer interning" {
             try expectEqual(null, comps.next());
         }
         {
-            const cmd = iter.next().?.change_archetype;
+            const cmd = iter.next().?;
             try expectEqual(e0, cmd.entity);
             try expectEqual(
                 zcs.Component.flags(&es, &.{Tag}),
@@ -495,7 +497,7 @@ test "command buffer interning" {
             try expectEqual(null, comps.next());
         }
         {
-            const cmd = iter.next().?.change_archetype;
+            const cmd = iter.next().?;
             try expectEqual(e1, cmd.entity);
             try expectEqual(
                 zcs.Component.flags(&es, &.{Tag}),
@@ -515,7 +517,7 @@ test "command buffer interning" {
 
         // Change archetype null
         {
-            const cmd = iter.next().?.change_archetype;
+            const cmd = iter.next().?;
             try expectEqual(e0, cmd.entity);
             try expectEqual(
                 zcs.Component.flags(&es, &.{Tag}),
@@ -525,7 +527,7 @@ test "command buffer interning" {
             try expectEqual(null, comps.next());
         }
         {
-            const cmd = iter.next().?.change_archetype;
+            const cmd = iter.next().?;
             try expectEqual(e1, cmd.entity);
             try expectEqual(
                 zcs.Component.flags(&es, &.{Tag}),
@@ -535,7 +537,7 @@ test "command buffer interning" {
             try expectEqual(null, comps.next());
         }
         {
-            const cmd = iter.next().?.change_archetype;
+            const cmd = iter.next().?;
             try expectEqual(e0, cmd.entity);
             try expectEqual(
                 zcs.Component.flags(&es, &.{Tag}),
@@ -545,7 +547,7 @@ test "command buffer interning" {
             try expectEqual(null, comps.next());
         }
         {
-            const cmd = iter.next().?.change_archetype;
+            const cmd = iter.next().?;
             try expectEqual(e1, cmd.entity);
             try expectEqual(
                 zcs.Component.flags(&es, &.{Tag}),
@@ -572,77 +574,79 @@ test "command buffer overflow" {
 
     // Tag/destroy overflow
     {
-        var cb = try zcs.CmdBuf.initSeparateCapacities(gpa, &es, .{
+        var cmds = try zcs.CmdBuf.initGranularCapacity(gpa, &es, .{
             .tags = 0,
             .args = 100,
             .comp_bytes = 100,
             .destroy = 0,
             .reserved = 0,
         });
-        defer cb.deinit(gpa, &es);
+        defer cmds.deinit(gpa, &es);
 
-        try expectError(error.ZcsCmdBufOverflow, zcs.Entity.reserveImmediately(&es).changeArchetypeCmdChecked(&es, &cb, .{}));
-        try expectError(error.ZcsCmdBufOverflow, zcs.Entity.reserveImmediately(&es).destroyCmdChecked(&es, &cb));
+        try expectError(error.ZcsCmdBufOverflow, zcs.Entity.reserveImmediately(&es).changeArchetypeCmdChecked(&es, &cmds, .{}));
+        try expectError(error.ZcsCmdBufOverflow, zcs.Entity.reserveImmediately(&es).destroyCmdChecked(&es, &cmds));
 
-        try expectEqual(1.0, cb.worstCaseUsage());
+        try expectEqual(1.0, cmds.worstCaseUsage());
 
-        var iter = cb.iterator(&es);
+        var iter = cmds.change_archetype.iterator(&es);
         try expectEqual(null, iter.next());
     }
 
     // Arg overflow
     {
-        var cb = try zcs.CmdBuf.initSeparateCapacities(gpa, &es, .{
+        var cmds = try zcs.CmdBuf.initGranularCapacity(gpa, &es, .{
             .tags = 100,
             .args = 0,
             .comp_bytes = 100,
             .destroy = 100,
             .reserved = 0,
         });
-        defer cb.deinit(gpa, &es);
+        defer cmds.deinit(gpa, &es);
 
         try expectError(error.ZcsCmdBufOverflow, zcs.Entity.reserveImmediately(&es).changeArchetypeCmdChecked(
             &es,
-            &cb,
+            &cmds,
             .{},
         ));
         const e = zcs.Entity.reserveImmediately(&es);
-        e.destroyCmd(&es, &cb);
+        e.destroyCmd(&es, &cmds);
 
-        try expectEqual(1.0, cb.worstCaseUsage());
+        try expectEqual(1.0, cmds.worstCaseUsage());
 
-        var iter = cb.iterator(&es);
-        try expectEqual(zcs.CmdBuf.Cmd{ .destroy = e }, iter.next());
+        try expectEqual(1, cmds.destroy.items.len);
+        try expectEqual(e, cmds.destroy.items[0]);
+        var iter = cmds.change_archetype.iterator(&es);
         try expectEqual(null, iter.next());
     }
 
     // Component data overflow
     {
-        var cb = try zcs.CmdBuf.initSeparateCapacities(gpa, &es, .{
+        var cmds = try zcs.CmdBuf.initGranularCapacity(gpa, &es, .{
             .tags = 100,
             .args = 100,
             .comp_bytes = @sizeOf(RigidBody) * 2 - 1,
             .destroy = 100,
             .reserved = 0,
         });
-        defer cb.deinit(gpa, &es);
+        defer cmds.deinit(gpa, &es);
 
         const e: zcs.Entity = zcs.Entity.reserveImmediately(&es);
         const rb = RigidBody.random(rand);
 
-        _ = zcs.Entity.reserveImmediately(&es).changeArchetypeCmd(&es, &cb, .{ .add = .{rb} });
-        e.destroyCmd(&es, &cb);
+        _ = zcs.Entity.reserveImmediately(&es).changeArchetypeCmd(&es, &cmds, .{ .add = .{rb} });
+        e.destroyCmd(&es, &cmds);
         try expectError(error.ZcsCmdBufOverflow, e.changeArchetypeCmdChecked(
             &es,
-            &cb,
+            &cmds,
             .{ .add = .{RigidBody.random(rand)} },
         ));
 
-        try expectEqual(@as(f32, @sizeOf(RigidBody)) / @as(f32, @sizeOf(RigidBody) * 2 - 1), cb.worstCaseUsage());
+        try expectEqual(@as(f32, @sizeOf(RigidBody)) / @as(f32, @sizeOf(RigidBody) * 2 - 1), cmds.worstCaseUsage());
 
-        var iter = cb.iterator(&es);
-        try expectEqual(zcs.CmdBuf.Cmd{ .destroy = e }, iter.next());
-        const change_archetype = iter.next().?.change_archetype;
+        try expectEqual(1, cmds.destroy.items.len);
+        try expectEqual(e, cmds.destroy.items[0]);
+        var iter = cmds.change_archetype.iterator(&es);
+        const change_archetype = iter.next().?;
         var add_comps = change_archetype.componentIterator();
         const create_rb = add_comps.next().?;
         try expectEqual(es.getComponentId(RigidBody), create_rb.id);
@@ -660,8 +664,8 @@ test "command buffer worst case capacity" {
     var es = try zcs.Entities.init(gpa, cb_capacity * 10, comps);
     defer es.deinit(gpa);
 
-    var cb = try zcs.CmdBuf.initNoReserve(gpa, &es, cb_capacity);
-    defer cb.deinit(gpa, &es);
+    var cmds = try zcs.CmdBuf.init(gpa, &es, cb_capacity);
+    defer cmds.deinit(gpa, &es);
 
     // Change archetype
     {
@@ -669,7 +673,7 @@ test "command buffer worst case capacity" {
         for (0..cb_capacity) |_| {
             _ = try zcs.Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
                 &es,
-                &cb,
+                &cmds,
                 .{ .add = &.{
                     .init(&es, &@as(u0, 0)),
                     .init(&es, &@as(u8, 0)),
@@ -681,14 +685,14 @@ test "command buffer worst case capacity" {
             );
         }
 
-        try expect(cb.worstCaseUsage() > 0.8);
-        cb.clearWithoutRefill();
+        try expect(cmds.worstCaseUsage() > 0.8);
+        cmds.clear(&es);
 
         // Interned
         for (0..cb_capacity) |_| {
             _ = try zcs.Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
                 &es,
-                &cb,
+                &cmds,
                 .{ .add = &.{
                     .initInterned(&es, &@as(u0, 0)),
                     .initInterned(&es, &@as(u8, 0)),
@@ -700,8 +704,8 @@ test "command buffer worst case capacity" {
             );
         }
 
-        try expect(cb.worstCaseUsage() > 0.8);
-        cb.clearWithoutRefill();
+        try expect(cmds.worstCaseUsage() > 0.8);
+        cmds.clear(&es);
 
         // Duplicates don't take up extra space
         var dups: std.BoundedArray(zcs.Component.Optional, cb_capacity * 4) = .{};
@@ -710,10 +714,10 @@ test "command buffer worst case capacity" {
         }
         _ = try zcs.Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
             &es,
-            &cb,
+            &cmds,
             .{ .add = dups.constSlice() },
         );
-        cb.clearWithoutRefill();
+        cmds.clear(&es);
     }
 
     // Destroy
@@ -723,11 +727,11 @@ test "command buffer worst case capacity" {
                 .index = @intCast(i),
                 .generation = @enumFromInt(0),
             } };
-            try e.destroyCmdChecked(&es, &cb);
+            try e.destroyCmdChecked(&es, &cmds);
         }
 
-        try expect(cb.worstCaseUsage() == 1.0);
-        cb.clearWithoutRefill();
+        try expect(cmds.worstCaseUsage() == 1.0);
+        cmds.clear(&es);
     }
 }
 
@@ -739,160 +743,163 @@ fn checkRandomCmdBuf(
     // Queue random commands, apply them directly to the expected data and submit the command buffer
     // at the end.
     const cb_capacity = 20000;
-    var cb = try zcs.CmdBuf.initNoReserve(gpa, actual, cb_capacity);
-    defer cb.deinit(gpa, actual);
+    var capacity: zcs.CmdBuf.Capacity = .init(actual, cb_capacity);
+    capacity.reserved = 0;
+    var cmds = try zcs.CmdBuf.initGranularCapacity(gpa, actual, capacity);
+    defer cmds.deinit(gpa, actual);
     for (0..cb_capacity) |_| {
-        switch (rand.enumValue(@typeInfo(zcs.CmdBuf.Cmd).@"union".tag_type.?)) {
-            .destroy => {
-                // If we're at less than half capacity, give a slight bias against destroying
-                // entities so that we don't just hover near zero entities for the whole test
-                if (expected.count() < actual.slots.capacity / 2 and rand.float(f32) < 0.3) {
-                    continue;
-                }
+        if (rand.boolean()) {
+            // Destroy
 
-                const count = expected.count();
-                if (count > 0) {
-                    const index = rand.uintLessThan(usize, count);
-                    const entity = expected.keys()[index];
-                    try expect(expected.swapRemove(entity));
-                    entity.destroyCmd(actual, &cb);
-                }
-            },
-            .change_archetype => {
+            // If we're at less than half capacity, give a slight bias against destroying
+            // entities so that we don't just hover near zero entities for the whole test
+            if (expected.count() < actual.slots.capacity / 2 and rand.float(f32) < 0.3) {
+                continue;
+            }
+
+            const count = expected.count();
+            if (count > 0) {
+                const index = rand.uintLessThan(usize, count);
+                const entity = expected.keys()[index];
+                try expect(expected.swapRemove(entity));
+                entity.destroyCmd(actual, &cmds);
+            }
+        } else {
+            // Change archetype
+
+            // Typed
+            const entity = if (actual.count() > 0 and rand.boolean()) b: {
+                break :b expected.keys()[rand.uintLessThan(usize, expected.count())];
+            } else b: {
+                const e = zcs.Entity.reserveImmediately(actual);
+                try expected.putNoClobber(gpa, e, .{});
+                break :b e;
+            };
+
+            const expected_comps = expected.getPtr(entity).?;
+            var remove: zcs.Component.Flags = .{};
+            if (rand.boolean()) {
+                remove.insert(actual.getComponentId(Model));
+                expected_comps.model = null;
+            }
+            if (rand.boolean()) {
+                remove.insert(actual.getComponentId(RigidBody));
+                expected_comps.rb = null;
+            }
+            if (rand.boolean()) {
+                remove.insert(actual.getComponentId(Tag));
+                expected_comps.tag = null;
+            }
+
+            if (rand.boolean()) {
                 // Typed
-                const entity = if (actual.count() > 0 and rand.boolean()) b: {
-                    break :b expected.keys()[rand.uintLessThan(usize, expected.count())];
-                } else b: {
-                    const e = zcs.Entity.reserveImmediately(actual);
-                    try expected.putNoClobber(gpa, e, .{});
-                    break :b e;
-                };
-
-                const expected_comps = expected.getPtr(entity).?;
-                var remove: zcs.Component.Flags = .{};
                 if (rand.boolean()) {
-                    remove.insert(actual.getComponentId(Model));
-                    expected_comps.model = null;
-                }
-                if (rand.boolean()) {
-                    remove.insert(actual.getComponentId(RigidBody));
-                    expected_comps.rb = null;
-                }
-                if (rand.boolean()) {
-                    remove.insert(actual.getComponentId(Tag));
-                    expected_comps.tag = null;
-                }
-
-                if (rand.boolean()) {
-                    // Typed
-                    if (rand.boolean()) {
-                        // Optional
-                        const tag = Tag.randomOrNull(rand);
-                        const model = Model.randomOrNull(rand);
-                        const rb = RigidBody.randomOrNull(rand);
-                        if (tag) |v| expected_comps.tag = v;
-                        if (model) |v| expected_comps.model = v;
-                        if (rb) |v| expected_comps.rb = v;
-                        entity.changeArchetypeCmd(actual, &cb, .{
-                            .remove = remove,
-                            .add = .{ tag, model, rb },
-                        });
-                    } else {
-                        // Not optional
-                        switch (rand.enumValue(enum {
-                            empty,
-                            rb,
-                            model,
-                            tag,
-                            rb_model,
-                            rb_tag,
-                            rb_model_tag,
-                        })) {
-                            .empty => entity.changeArchetypeCmd(actual, &cb, .{ .remove = remove }),
-                            .rb => {
-                                const rb = RigidBody.random(rand);
-                                expected_comps.rb = rb;
-                                entity.changeArchetypeCmd(actual, &cb, .{
-                                    .remove = remove,
-                                    .add = .{rb},
-                                });
-                            },
-                            .model => {
-                                const model = Model.random(rand);
-                                expected_comps.model = model;
-                                entity.changeArchetypeCmd(actual, &cb, .{
-                                    .remove = remove,
-                                    .add = .{model},
-                                });
-                            },
-                            .tag => {
-                                const tag = Tag.random(rand);
-                                expected_comps.tag = tag;
-                                entity.changeArchetypeCmd(actual, &cb, .{
-                                    .remove = remove,
-                                    .add = .{tag},
-                                });
-                            },
-                            .rb_model => {
-                                const rb = RigidBody.random(rand);
-                                const model = Model.random(rand);
-                                expected_comps.rb = rb;
-                                expected_comps.model = model;
-                                entity.changeArchetypeCmd(actual, &cb, .{
-                                    .remove = remove,
-                                    .add = .{ rb, model },
-                                });
-                            },
-                            .rb_tag => {
-                                const rb = RigidBody.random(rand);
-                                const tag = Tag.random(rand);
-                                expected_comps.rb = rb;
-                                expected_comps.tag = tag;
-                                entity.changeArchetypeCmd(actual, &cb, .{
-                                    .remove = remove,
-                                    .add = .{ rb, tag },
-                                });
-                            },
-                            .rb_model_tag => {
-                                const rb = RigidBody.random(rand);
-                                const model = Model.random(rand);
-                                const tag = Tag.random(rand);
-                                expected_comps.rb = rb;
-                                expected_comps.model = model;
-                                expected_comps.tag = tag;
-                                entity.changeArchetypeCmd(actual, &cb, .{
-                                    .remove = remove,
-                                    .add = .{ rb, model, tag },
-                                });
-                            },
-                        }
-                    }
-                } else {
-                    // Untyped
+                    // Optional
+                    const tag = Tag.randomOrNull(rand);
                     const model = Model.randomOrNull(rand);
                     const rb = RigidBody.randomOrNull(rand);
-                    const tag = Tag.randomOrNull(rand);
-                    const add: [3]zcs.Component.Optional = .{
-                        .init(actual, &rb),
-                        .init(actual, &model),
-                        .init(actual, &tag),
-                    };
+                    if (tag) |v| expected_comps.tag = v;
                     if (model) |v| expected_comps.model = v;
                     if (rb) |v| expected_comps.rb = v;
-                    if (tag) |v| expected_comps.tag = v;
-                    entity.changeArchetypeCmdFromComponents(actual, &cb, .{
-                        .add = &add,
+                    entity.changeArchetypeCmd(actual, &cmds, .{
                         .remove = remove,
+                        .add = .{ tag, model, rb },
                     });
+                } else {
+                    // Not optional
+                    switch (rand.enumValue(enum {
+                        empty,
+                        rb,
+                        model,
+                        tag,
+                        rb_model,
+                        rb_tag,
+                        rb_model_tag,
+                    })) {
+                        .empty => entity.changeArchetypeCmd(actual, &cmds, .{ .remove = remove }),
+                        .rb => {
+                            const rb = RigidBody.random(rand);
+                            expected_comps.rb = rb;
+                            entity.changeArchetypeCmd(actual, &cmds, .{
+                                .remove = remove,
+                                .add = .{rb},
+                            });
+                        },
+                        .model => {
+                            const model = Model.random(rand);
+                            expected_comps.model = model;
+                            entity.changeArchetypeCmd(actual, &cmds, .{
+                                .remove = remove,
+                                .add = .{model},
+                            });
+                        },
+                        .tag => {
+                            const tag = Tag.random(rand);
+                            expected_comps.tag = tag;
+                            entity.changeArchetypeCmd(actual, &cmds, .{
+                                .remove = remove,
+                                .add = .{tag},
+                            });
+                        },
+                        .rb_model => {
+                            const rb = RigidBody.random(rand);
+                            const model = Model.random(rand);
+                            expected_comps.rb = rb;
+                            expected_comps.model = model;
+                            entity.changeArchetypeCmd(actual, &cmds, .{
+                                .remove = remove,
+                                .add = .{ rb, model },
+                            });
+                        },
+                        .rb_tag => {
+                            const rb = RigidBody.random(rand);
+                            const tag = Tag.random(rand);
+                            expected_comps.rb = rb;
+                            expected_comps.tag = tag;
+                            entity.changeArchetypeCmd(actual, &cmds, .{
+                                .remove = remove,
+                                .add = .{ rb, tag },
+                            });
+                        },
+                        .rb_model_tag => {
+                            const rb = RigidBody.random(rand);
+                            const model = Model.random(rand);
+                            const tag = Tag.random(rand);
+                            expected_comps.rb = rb;
+                            expected_comps.model = model;
+                            expected_comps.tag = tag;
+                            entity.changeArchetypeCmd(actual, &cmds, .{
+                                .remove = remove,
+                                .add = .{ rb, model, tag },
+                            });
+                        },
+                    }
                 }
-            },
+            } else {
+                // Untyped
+                const model = Model.randomOrNull(rand);
+                const rb = RigidBody.randomOrNull(rand);
+                const tag = Tag.randomOrNull(rand);
+                const add: [3]zcs.Component.Optional = .{
+                    .init(actual, &rb),
+                    .init(actual, &model),
+                    .init(actual, &tag),
+                };
+                if (model) |v| expected_comps.model = v;
+                if (rb) |v| expected_comps.rb = v;
+                if (tag) |v| expected_comps.tag = v;
+                entity.changeArchetypeCmdFromComponents(actual, &cmds, .{
+                    .add = &add,
+                    .remove = remove,
+                });
+            }
         }
     }
-    cb.execute(actual);
-    try expect(cb.worstCaseUsage() < 0.5);
-    cb.clearWithoutRefill();
-    try expect(cb.worstCaseUsage() == 0.0);
-    try expect(actual.reserved() == 0.0);
+    cmds.execute(actual);
+    try expect(cmds.worstCaseUsage() < 0.5);
+    cmds.clear(actual);
+    try expect(cmds.worstCaseUsage() == 0.0);
+    try expect(actual.reserved() == 0);
 
     // Compare the maps
     try expectEqual(expected.count(), actual.count());

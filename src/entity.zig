@@ -75,12 +75,12 @@ pub const Entity = packed struct {
         if (!self.exists(es)) return;
 
         // Check capacity
-        if (cmds.destroy_queue.items.len >= cmds.destroy_queue.capacity) {
+        if (cmds.destroy.items.len >= cmds.destroy.capacity) {
             return error.ZcsCmdBufOverflow;
         }
 
         // Queue the command
-        cmds.destroy_queue.appendAssumeCapacity(self);
+        cmds.destroy.appendAssumeCapacity(self);
     }
 
     /// Destroys the entity. May invalidate iterators.
@@ -200,15 +200,15 @@ pub const Entity = packed struct {
         const sorted_fields = comptime meta.alignmentSort(@TypeOf(add));
 
         // Issue the subcommands
-        try SubCmd.encode(es, cmds, .{ .bind_entity = self });
-        try SubCmd.encode(es, cmds, .{ .remove_components = remove });
+        try SubCmd.encode(es, &cmds.change_archetype, .{ .bind_entity = self });
+        try SubCmd.encode(es, &cmds.change_archetype, .{ .remove_components = remove });
         inline for (0..add.len) |i| {
             const field = @typeInfo(@TypeOf(add)).@"struct".fields[sorted_fields[i]];
 
             const optional: ?meta.Unwrapped(field.type) = @field(add, field.name);
             if (optional) |some| {
                 if (field.is_comptime and @sizeOf(@TypeOf(some)) > @sizeOf(usize)) {
-                    try SubCmd.encode(es, cmds, .{ .add_component_ptr = .{
+                    try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_ptr = .{
                         .id = es.getComponentId(@TypeOf(some)),
                         .ptr = &struct {
                             const interned = some;
@@ -216,7 +216,7 @@ pub const Entity = packed struct {
                         .interned = true,
                     } });
                 } else {
-                    try SubCmd.encode(es, cmds, .{ .add_component_val = .{
+                    try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_val = .{
                         .id = es.getComponentId(@TypeOf(some)),
                         .ptr = @ptrCast(&some),
                         .interned = false,
@@ -258,9 +258,9 @@ pub const Entity = packed struct {
         const restore = cmds.*;
         errdefer cmds.* = restore;
 
-        try SubCmd.encode(es, cmds, .{ .bind_entity = self });
+        try SubCmd.encode(es, &cmds.change_archetype, .{ .bind_entity = self });
         if (!changes.remove.eql(.{})) {
-            try SubCmd.encode(es, cmds, .{ .remove_components = changes.remove });
+            try SubCmd.encode(es, &cmds.change_archetype, .{ .remove_components = changes.remove });
         }
 
         // Issue subcommands to add the listed components. Issued in reverse order, duplicates are
@@ -272,9 +272,9 @@ pub const Entity = packed struct {
                 if (!added.contains(some.id)) {
                     added.insert(some.id);
                     if (some.interned) {
-                        try SubCmd.encode(es, cmds, .{ .add_component_ptr = some });
+                        try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_ptr = some });
                     } else {
-                        try SubCmd.encode(es, cmds, .{ .add_component_val = some });
+                        try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_val = some });
                     }
                 }
             }

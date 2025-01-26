@@ -1,26 +1,10 @@
-//! A buffer for queuing up ECS commands to execute later.
+//! Buffers ECS commands for later execution.
 //!
-//! Useful for doing operations while iterating without invalidating the iterator, or for working
-//! with ECS data from multiple threads. All commands are noops if the entity in question has been
-//! destroyed.
+//! This allows queuing destructive operations while iterating, or from multiple threads safely. All
+//! commands are noops if the entity in question is destroyed before the time of execution.
 //!
-//! You may also use `iterator` to inspect the contents of a command buffer and do additional
-//! processing, for example to maintain transform hierarchies when entities are scheduled for
-//! deletion.
-//!
-//! Command buffers allocate at init time, and then never again. They should be reused when possible
-//! rather than destroyed and recreated.
-//!
-//! # Example
-//! ```zig
-//! var cmds = try CmdBuf.init(gpa, &es, 4);
-//! defer cmds.deinit(gpa);
-//!
-//! cmds.changeArchetype(&es, es.reserve(), Component.flags(&es, &.{Fire}), .{ Hammer{} });
-//! cmds.execute(&es);
-//! cmds.destroy(entity1);
-//! cmds.clear();
-//! ```
+//! `CmdBuf` alloctes at init time, and then never again. It should be cleared and reused when
+//! possible.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -33,72 +17,61 @@ const Component = zcs.Component;
 
 const SubCmd = @import("CmdBuf/sub_cmd.zig").SubCmd;
 
-const CmdBuf = @This();
+pub const ChangeArchetypes = @import("CmdBuf/ChangeArchetypes.zig");
 
-tags: std.ArrayListUnmanaged(SubCmd.Tag),
-args: std.ArrayListUnmanaged(u64),
-comp_bytes: std.ArrayListAlignedUnmanaged(u8, Entities.max_align),
-/// All entities queued for destruction.
-destroy_queue: std.ArrayListUnmanaged(Entity),
+/// Entities queued for destruction.
+destroy: std.ArrayListUnmanaged(Entity),
+/// Archetype changes queued for execution.
+change_archetype: ChangeArchetypes,
+/// Reserved entities.
 reserved: std.ArrayListUnmanaged(Entity),
 
-/// Similar to `init`, but also reserves enough entities to satisfy `capacity`.
+/// Initializes a command buffer.
 pub fn init(
     gpa: Allocator,
     es: *Entities,
     capacity: usize,
 ) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
-    return initSeparateCapacities(gpa, es, .initFromCmds(es, capacity));
+    return initGranularCapacity(gpa, es, .init(es, capacity));
 }
 
-/// Initializes a command buffer with at least enough capacity for the given number of commands.
-///
-/// The reserved entity buffer's capacity is set to zero.
-pub fn initNoReserve(gpa: Allocator, es: *Entities, capacity: usize) Allocator.Error!@This() {
-    var capacities: Capacities = .initFromCmds(es, capacity);
-    capacities.reserved = 0;
-    return initSeparateCapacities(gpa, es, capacities) catch |err| switch (err) {
-        error.ZcsEntityOverflow => unreachable, // We set reserve cap to 0, so it can't fail
-        error.OutOfMemory => error.OutOfMemory,
-    };
-}
-
-/// Similar to `init` and `init`, but allows you to specify each buffer size
-/// individually.
-pub fn initSeparateCapacities(
+/// Similar to `init`, but allows you to specify capacity with more granularity. Prefer `init`.
+pub fn initGranularCapacity(
     gpa: Allocator,
     es: *Entities,
-    capacities: Capacities,
+    capacity: Capacity,
 ) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
     comptime assert(Component.Id.max < std.math.maxInt(u64));
 
-    var tags: std.ArrayListUnmanaged(SubCmd.Tag) = try .initCapacity(gpa, capacities.tags);
+    var tags: std.ArrayListUnmanaged(SubCmd.Tag) = try .initCapacity(gpa, capacity.tags);
     errdefer tags.deinit(gpa);
 
-    var args: std.ArrayListUnmanaged(u64) = try .initCapacity(gpa, capacities.args);
+    var args: std.ArrayListUnmanaged(u64) = try .initCapacity(gpa, capacity.args);
     errdefer args.deinit(gpa);
 
     var comp_bytes: std.ArrayListAlignedUnmanaged(u8, Entities.max_align) = try .initCapacity(
         gpa,
-        capacities.comp_bytes,
+        capacity.comp_bytes,
     );
     errdefer comp_bytes.deinit(gpa);
 
-    var destroy_queue: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacities.destroy);
-    errdefer destroy_queue.deinit(gpa);
+    var destroy: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacity.destroy);
+    errdefer destroy.deinit(gpa);
 
-    var reserved: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacities.reserved);
+    var reserved: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacity.reserved);
     errdefer reserved.deinit(gpa);
     for (0..reserved.capacity) |_| {
         reserved.appendAssumeCapacity(try Entity.reserveImmediatelyChecked(es));
     }
 
     return .{
-        .tags = tags,
-        .args = args,
-        .comp_bytes = comp_bytes,
-        .destroy_queue = destroy_queue,
+        .destroy = destroy,
         .reserved = reserved,
+        .change_archetype = .{
+            .tags = tags,
+            .args = args,
+            .comp_bytes = comp_bytes,
+        },
     };
 }
 
@@ -106,59 +79,46 @@ pub fn initSeparateCapacities(
 pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
     for (self.reserved.items) |entity| entity.destroyImmediately(es);
     self.reserved.deinit(gpa);
-    self.destroy_queue.deinit(gpa);
-    self.comp_bytes.deinit(gpa);
-    self.args.deinit(gpa);
-    self.tags.deinit(gpa);
+    self.destroy.deinit(gpa);
+    self.change_archetype.comp_bytes.deinit(gpa);
+    self.change_archetype.args.deinit(gpa);
+    self.change_archetype.tags.deinit(gpa);
     self.* = undefined;
 }
 
+/// Clears the command buffer for reuse. Refills the reserved entity list to capacity.
 pub fn clear(self: *@This(), es: *Entities) void {
     self.clearChecked(es) catch |err|
         @panic(@errorName(err));
 }
 
+/// Similar to `clear`, but returns `error.ZcsEntityOverflow` when failing to refill the reserved
+/// entity list instead of panicking.
 pub fn clearChecked(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
-    self.clearWithoutRefill();
-    try self.refillReservedEntitiesChecked(es);
-}
-
-/// Clears the command buffer for reuse.
-pub fn clearWithoutRefill(self: *@This()) void {
-    self.destroy_queue.clearRetainingCapacity();
-    self.comp_bytes.clearRetainingCapacity();
-    self.args.clearRetainingCapacity();
-    self.tags.clearRetainingCapacity();
-}
-
-/// Refills the reserved entities buffer to full capacity.
-pub fn refillReservedEntities(self: *@This(), es: *Entities) void {
-    self.refillReservedEntitiesChecked(es) catch |err|
-        @panic(@errorName(err));
-}
-
-/// Similar to `refillReservedEntities`, but returns `error.ZcsEntityOverflow` on failure instead of
-/// panicking.
-pub fn refillReservedEntitiesChecked(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
+    self.destroy.clearRetainingCapacity();
+    self.change_archetype.comp_bytes.clearRetainingCapacity();
+    self.change_archetype.args.clearRetainingCapacity();
+    self.change_archetype.tags.clearRetainingCapacity();
     while (self.reserved.items.len < self.reserved.capacity) {
         self.reserved.appendAssumeCapacity(try Entity.reserveImmediatelyChecked(es));
     }
-}
-
-fn usage(list: anytype) f32 {
-    if (list.capacity == 0) return 1.0;
-    return @as(f32, @floatFromInt(list.items.len)) / @as(f32, @floatFromInt(list.capacity));
 }
 
 /// Returns the ratio of length to capacity for the internal buffer that is the nearest to being
 /// full.
 pub fn worstCaseUsage(self: @This()) f32 {
     return @max(
-        usage(self.destroy_queue),
-        usage(self.comp_bytes),
-        usage(self.args),
-        usage(self.tags),
+        usage(self.destroy),
+        usage(self.change_archetype.comp_bytes),
+        usage(self.change_archetype.args),
+        usage(self.change_archetype.tags),
     );
+}
+
+/// Calculates the usage of a list as a ratio.
+fn usage(list: anytype) f32 {
+    if (list.capacity == 0) return 1.0;
+    return @as(f32, @floatFromInt(list.items.len)) / @as(f32, @floatFromInt(list.capacity));
 }
 
 /// Executes the command buffer.
@@ -167,8 +127,9 @@ pub fn execute(self: *@This(), es: *Entities) void {
         @panic(@errorName(err));
 }
 
-/// Similar to `execute`, but returns `error.ZcsEntityOverflow` on failure instead of panicking. On
-/// overflow, all work that doesn't trigger an overflow is still completed regardless of order
+/// Similar to `execute`, but returns `error.ZcsEntityOverflow` on failure instead of panicking.
+///
+/// On overflow, all work that doesn't trigger an overflow is still completed regardless of order
 /// relative to the overflowing work.
 pub fn executeChecked(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
     if (!self.executeOrOverflow(es)) return error.ZcsEntityOverflow;
@@ -180,30 +141,30 @@ pub fn executeChecked(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!vo
 fn executeOrOverflow(self: *@This(), es: *Entities) bool {
     var overflow = false;
 
-    // execute the commands
-    var iter = self.iterator(es);
-    while (iter.next()) |cmd| {
-        switch (cmd) {
-            .change_archetype => |args| {
-                if (args.entity.exists(es)) {
-                    args.entity.changeArchetypeUninitializedImmediatelyChecked(es, .{
-                        .remove = args.remove,
-                        .add = args.add,
-                    }) catch |err| switch (err) {
-                        error.ZcsEntityOverflow => {
-                            overflow = true;
-                            continue;
-                        },
-                    };
-                    var comps = args.componentIterator();
-                    while (comps.next()) |comp| {
-                        const src = comp.bytes();
-                        const dest = args.entity.getComponentFromId(es, comp.id).?;
-                        @memcpy(dest, src);
-                    }
-                }
-            },
-            .destroy => |entity| entity.destroyImmediately(es),
+    // Execute the destroys first since they might make some of the archetype changes redundant
+    for (self.destroy.items) |entity| {
+        entity.destroyImmediately(es);
+    }
+
+    // Execute the archetype changes
+    var iter = self.change_archetype.iterator(es);
+    while (iter.next()) |change| {
+        if (change.entity.exists(es)) {
+            change.entity.changeArchetypeUninitializedImmediatelyChecked(es, .{
+                .remove = change.remove,
+                .add = change.add,
+            }) catch |err| switch (err) {
+                error.ZcsEntityOverflow => {
+                    overflow = true;
+                    continue;
+                },
+            };
+            var comps = change.componentIterator();
+            while (comps.next()) |comp| {
+                const src = comp.bytes();
+                const dest = change.entity.getComponentFromId(es, comp.id).?;
+                @memcpy(dest, src);
+            }
         }
     }
 
@@ -211,115 +172,8 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
     return !overflow;
 }
 
-/// Returns an iterator over the commands in this command buffer. Iteration order is implementation
-/// defined but guaranteed to provide the same result as the order the commands were issued.
-pub fn iterator(self: *const @This(), es: *const Entities) Iterator {
-    return .{ .decoder = .{
-        .cmds = self,
-        .es = es,
-    } };
-}
-
-/// A command buffer command.
-pub const Cmd = union(enum) {
-    /// Change the archetype of the given entity if it exists.
-    change_archetype: struct {
-        entity: Entity,
-        remove: Component.Flags,
-        add: Component.Flags,
-        decoder: SubCmd.Decoder,
-
-        pub fn componentIterator(self: @This()) ComponentIterator {
-            return .{ .decoder = self.decoder };
-        }
-    },
-    /// Destroy the given entity if it exists.
-    destroy: Entity,
-};
-
-/// See `CmdBuf.iterator`.
-pub const Iterator = struct {
-    destroy_index: usize = 0,
-    decoder: SubCmd.Decoder,
-    committed: usize = 0,
-
-    pub fn next(self: *@This()) ?Cmd {
-        if (self.nextDestroy()) |entity| {
-            return .{ .destroy = entity };
-        }
-
-        if (self.decoder.next()) |cmd| {
-            switch (cmd) {
-                .bind_entity => |entity| {
-                    const comp_decoder = self.decoder;
-                    var remove: Component.Flags = .{};
-                    var add: Component.Flags = .{};
-                    while (self.decoder.peekTag()) |subcmd| {
-                        switch (subcmd) {
-                            .bind_entity => break,
-                            .add_component_val => {
-                                const comp = self.decoder.next().?.add_component_val;
-                                add.insert(comp.id);
-                                remove.remove(comp.id);
-                            },
-                            .add_component_ptr => {
-                                const comp = self.decoder.next().?.add_component_ptr;
-                                add.insert(comp.id);
-                                remove.remove(comp.id);
-                            },
-                            .remove_components => {
-                                const comps = self.decoder.next().?.remove_components;
-                                remove.setUnion(comps);
-                                add = add.differenceWith(comps);
-                            },
-                        }
-                    }
-                    return .{ .change_archetype = .{
-                        .remove = remove,
-                        .add = add,
-                        .entity = entity,
-                        .decoder = comp_decoder,
-                    } };
-                },
-                .add_component_val, .add_component_ptr, .remove_components => {
-                    unreachable; // Add/remove encoded without binding!
-                },
-            }
-        }
-
-        return null;
-    }
-
-    inline fn nextDestroy(self: *@This()) ?Entity {
-        if (self.destroy_index < self.decoder.cmds.destroy_queue.items.len) {
-            const entity = self.decoder.cmds.destroy_queue.items[self.destroy_index];
-            self.destroy_index += 1;
-            return entity;
-        } else {
-            return null;
-        }
-    }
-};
-
-/// An iterator over a command's component arguments.
-pub const ComponentIterator = struct {
-    decoder: SubCmd.Decoder,
-
-    pub fn next(self: *@This()) ?Component {
-        while (self.decoder.peekTag()) |tag| {
-            switch (tag) {
-                .add_component_val => return self.decoder.next().?.add_component_val,
-                .add_component_ptr => return self.decoder.next().?.add_component_ptr,
-                .remove_components => _ = self.decoder.next().?.remove_components,
-                .bind_entity => break,
-            }
-        }
-        return null;
-    }
-};
-
-/// Per buffer capacity.
-pub const Capacities = struct {
+/// Per buffer capacity. Prefer `CmdBuf.init`.
+pub const Capacity = struct {
     tags: usize,
     args: usize,
     comp_bytes: usize,
@@ -327,7 +181,7 @@ pub const Capacities = struct {
     reserved: usize,
 
     /// Sets each buffer capacity to be at least enough for the given number of commands.
-    pub fn initFromCmds(es: *const Entities, cmds: usize) Capacities {
+    pub fn init(es: *const Entities, cmds: usize) Capacity {
         _ = SubCmd.rename_when_changing_encoding;
 
         // Worst case component data size. Technically we could make this slightly tighter since

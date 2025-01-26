@@ -7,12 +7,12 @@ const Component = zcs.Component;
 const CmdBuf = zcs.CmdBuf;
 const Entities = zcs.Entities;
 
-/// Commands are comprised of a sequence of one or more subcommands which are encoded in a compact
-/// form in the command buffer.
+/// Implementation detail of `CmdBuf`. Archetype change commands are composed of a sequence of one
+/// or more subcommands which are then encoded in a compact form.
 pub const SubCmd = union(enum) {
     /// Binds an existing entity.
     bind_entity: Entity,
-    /// Schedules components to be added bye value. Always executes after `remove_components`
+    /// Schedules components to be added by value. Always executes after `remove_components`
     /// commands on the current binding, regardless of submission order. ID is passed as an
     /// argument, component data is passed via component data.
     add_component_val: Component,
@@ -29,8 +29,9 @@ pub const SubCmd = union(enum) {
 
     pub const Tag = @typeInfo(@This()).@"union".tag_type.?;
 
+    /// Decodes encoded subcommands.
     pub const Decoder = struct {
-        cmds: *const CmdBuf,
+        cmds: *const CmdBuf.ChangeArchetypes,
         es: *const Entities,
         tag_index: usize = 0,
         arg_index: usize = 0,
@@ -120,46 +121,49 @@ pub const SubCmd = union(enum) {
         }
     };
 
-    /// Submits a subcommand. The public facing commands are all build up of one or more subcommands for
-    /// encoding purposes. When modifying this encoding, keep `initFromCmds` in sync.
-    pub fn encode(es: *const Entities, cmds: *CmdBuf, sub_cmd: SubCmd) error{ZcsCmdBufOverflow}!void {
+    /// Encodes a subcommand.
+    pub fn encode(
+        es: *const Entities,
+        changes: *CmdBuf.ChangeArchetypes,
+        sub_cmd: SubCmd,
+    ) error{ZcsCmdBufOverflow}!void {
         _ = SubCmd.rename_when_changing_encoding;
 
         switch (sub_cmd) {
             .bind_entity => |entity| {
-                if (cmds.tags.items.len >= cmds.tags.capacity) return error.ZcsCmdBufOverflow;
-                if (cmds.args.items.len >= cmds.args.capacity) return error.ZcsCmdBufOverflow;
-                cmds.tags.appendAssumeCapacity(.bind_entity);
-                cmds.args.appendAssumeCapacity(@bitCast(entity));
+                if (changes.tags.items.len >= changes.tags.capacity) return error.ZcsCmdBufOverflow;
+                if (changes.args.items.len >= changes.args.capacity) return error.ZcsCmdBufOverflow;
+                changes.tags.appendAssumeCapacity(.bind_entity);
+                changes.args.appendAssumeCapacity(@bitCast(entity));
             },
             .add_component_val => |comp| {
                 const size = es.getComponentSize(comp.id);
                 const alignment = es.getComponentAlignment(comp.id);
-                const aligned = std.mem.alignForward(usize, cmds.comp_bytes.items.len, alignment);
-                if (cmds.tags.items.len >= cmds.tags.capacity) return error.ZcsCmdBufOverflow;
-                if (cmds.args.items.len + 1 > cmds.args.capacity) return error.ZcsCmdBufOverflow;
-                if (aligned + size > cmds.comp_bytes.capacity) {
+                const aligned = std.mem.alignForward(usize, changes.comp_bytes.items.len, alignment);
+                if (changes.tags.items.len >= changes.tags.capacity) return error.ZcsCmdBufOverflow;
+                if (changes.args.items.len + 1 > changes.args.capacity) return error.ZcsCmdBufOverflow;
+                if (aligned + size > changes.comp_bytes.capacity) {
                     return error.ZcsCmdBufOverflow;
                 }
-                cmds.tags.appendAssumeCapacity(.add_component_val);
-                cmds.args.appendAssumeCapacity(@intFromEnum(comp.id));
+                changes.tags.appendAssumeCapacity(.add_component_val);
+                changes.args.appendAssumeCapacity(@intFromEnum(comp.id));
                 const bytes = comp.bytes();
-                cmds.comp_bytes.items.len = aligned;
-                cmds.comp_bytes.appendSliceAssumeCapacity(bytes[0..size]);
+                changes.comp_bytes.items.len = aligned;
+                changes.comp_bytes.appendSliceAssumeCapacity(bytes[0..size]);
             },
             .add_component_ptr => |comp| {
                 assert(comp.interned);
-                if (cmds.tags.items.len >= cmds.tags.capacity) return error.ZcsCmdBufOverflow;
-                if (cmds.args.items.len + 2 > cmds.args.capacity) return error.ZcsCmdBufOverflow;
-                cmds.tags.appendAssumeCapacity(.add_component_ptr);
-                cmds.args.appendAssumeCapacity(@intFromEnum(comp.id));
-                cmds.args.appendAssumeCapacity(@intFromPtr(comp.ptr));
+                if (changes.tags.items.len >= changes.tags.capacity) return error.ZcsCmdBufOverflow;
+                if (changes.args.items.len + 2 > changes.args.capacity) return error.ZcsCmdBufOverflow;
+                changes.tags.appendAssumeCapacity(.add_component_ptr);
+                changes.args.appendAssumeCapacity(@intFromEnum(comp.id));
+                changes.args.appendAssumeCapacity(@intFromPtr(comp.ptr));
             },
             .remove_components => |comps| {
-                if (cmds.tags.items.len >= cmds.tags.capacity) return error.ZcsCmdBufOverflow;
-                if (cmds.args.items.len >= cmds.args.capacity) return error.ZcsCmdBufOverflow;
-                cmds.tags.appendAssumeCapacity(.remove_components);
-                cmds.args.appendAssumeCapacity(comps.bits.mask);
+                if (changes.tags.items.len >= changes.tags.capacity) return error.ZcsCmdBufOverflow;
+                if (changes.args.items.len >= changes.args.capacity) return error.ZcsCmdBufOverflow;
+                changes.tags.appendAssumeCapacity(.remove_components);
+                changes.args.appendAssumeCapacity(comps.bits.mask);
             },
         }
     }
