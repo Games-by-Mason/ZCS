@@ -169,6 +169,48 @@ pub const Entity = packed struct {
         return self.key.eql(other.key);
     }
 
+    pub fn addComponentCmd(
+        self: @This(),
+        es: *Entities,
+        cmds: *CmdBuf,
+        T: type,
+        comp: T,
+    ) void {
+        self.addComponentCmdChecked(es, cmds, T, comp) catch |err|
+            @panic(@errorName(err));
+    }
+
+    pub fn addComponentCmdChecked(
+        self: @This(),
+        es: *Entities,
+        cmds: *CmdBuf,
+        T: type,
+        comp: T,
+    ) error{ZcsCmdBufOverflow}!void {
+        try self.changeArchetypeCmdChecked(es, cmds, .{ .add = .{comp} });
+    }
+
+    pub fn removeComponentCmd(
+        self: @This(),
+        es: *Entities,
+        cmds: *CmdBuf,
+        T: type,
+    ) void {
+        self.removeComponentCmdChecked(es, cmds, T) catch |err|
+            @panic(@errorName(err));
+    }
+
+    pub fn removeComponentCmdChecked(
+        self: @This(),
+        es: *Entities,
+        cmds: *CmdBuf,
+        T: type,
+    ) error{ZcsCmdBufOverflow}!void {
+        try self.changeArchetypeCmdChecked(es, cmds, .{
+            .remove = Component.flags(es, &.{T}),
+        });
+    }
+
     /// Queues an archetype change. If the entity has been reserved but not committed, when executed
     /// the change will commit the entity.
     ///

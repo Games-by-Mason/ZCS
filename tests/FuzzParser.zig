@@ -78,6 +78,13 @@ pub fn nextLessThan(self: *@This(), T: type, less_than: T) T {
     return n % less_than;
 }
 
+pub fn nextBetween(self: *@This(), T: type, min: T, less_than: T) T {
+    assert(std.math.maxInt(T) >= less_than);
+    assert(less_than >= min);
+    const n: T = self.next(T);
+    return min + (n % (less_than - min));
+}
+
 fn nextRaw(self: *@This(), T: type) T {
     var bytes: [@sizeOf(T)]u8 = .{0} ** @sizeOf(T);
     for (0..bytes.len) |i| {

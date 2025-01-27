@@ -423,52 +423,56 @@ const FuzzCmdBuf = struct {
         // Get a random entity
         const entity = self.randomEntity();
 
-        // Pick random components to remove
-        const remove = self.parser.next(Component.Flags);
-
-        // Pick random components to add, and add them to the oracle
-        var rbs: std.BoundedArray(?RigidBody, change_cap) = .{};
-        var models: std.BoundedArray(?Model, change_cap) = .{};
-        var tags: std.BoundedArray(?Tag, change_cap) = .{};
-        var add: std.BoundedArray(Component.Optional, change_cap) = .{};
-        var add_oracle: ExpectedEntity = .{};
-
-        for (0..@intCast(self.parser.nextLessThan(u8, add.buffer.len))) |_| {
-            switch (self.parser.next(enum {
-                rb,
-                model,
-                tag,
-            })) {
-                .rb => if (self.addComponent(RigidBody, &rbs, &add).*) |rb| {
-                    add_oracle.rb = rb;
-                },
-                .model => if (self.addComponent(Model, &models, &add).*) |model| {
-                    add_oracle.model = model;
-                },
-                .tag => if (self.addComponent(Tag, &tags, &add).*) |tag| {
-                    add_oracle.tag = tag;
-                },
-            }
-        }
-
-        // Emit the command
-        entity.changeArchetypeCmdFromComponents(&self.es, &self.cmds, .{
-            .add = add.constSlice(),
-            .remove = remove,
-        });
-
-        // Update the oracle
+        // Get the oracle if any, committing it if needed
         if (self.reserved.swapRemove(entity)) {
             try self.committed.putNoClobber(gpa, entity, .{});
         }
+        const expected = self.committed.getPtr(entity);
 
-        if (self.committed.getPtr(entity)) |e| {
-            if (remove.contains(self.es.registerComponentType(RigidBody))) e.rb = null;
-            if (remove.contains(self.es.registerComponentType(Model))) e.model = null;
-            if (remove.contains(self.es.registerComponentType(Tag))) e.tag = null;
-            if (add_oracle.rb) |some| e.rb = some;
-            if (add_oracle.model) |some| e.model = some;
-            if (add_oracle.tag) |some| e.tag = some;
+        // Issue commands to add/remove N random components, updating the oracle along the way
+        for (0..@intCast(self.parser.nextBetween(u8, 1, change_cap))) |_| {
+            if (self.parser.next(bool)) {
+                switch (self.parser.next(enum {
+                    rb,
+                    model,
+                    tag,
+                })) {
+                    .rb => {
+                        const rb = self.parser.next(RigidBody);
+                        entity.addComponentCmd(&self.es, &self.cmds, RigidBody, rb);
+                        if (expected) |e| e.rb = rb;
+                    },
+                    .model => {
+                        const model = self.parser.next(Model);
+                        entity.addComponentCmd(&self.es, &self.cmds, Model, model);
+                        if (expected) |e| e.model = model;
+                    },
+                    .tag => {
+                        const tag = self.parser.next(Tag);
+                        entity.addComponentCmd(&self.es, &self.cmds, Tag, tag);
+                        if (expected) |e| e.tag = tag;
+                    },
+                }
+            } else {
+                switch (self.parser.next(enum {
+                    rb,
+                    model,
+                    tag,
+                })) {
+                    .rb => {
+                        entity.removeComponentCmd(&self.es, &self.cmds, RigidBody);
+                        if (expected) |e| e.rb = null;
+                    },
+                    .model => {
+                        entity.removeComponentCmd(&self.es, &self.cmds, Model);
+                        if (expected) |e| e.model = null;
+                    },
+                    .tag => {
+                        entity.removeComponentCmd(&self.es, &self.cmds, Tag);
+                        if (expected) |e| e.tag = null;
+                    },
+                }
+            }
         }
     }
 
