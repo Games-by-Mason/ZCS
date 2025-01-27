@@ -374,7 +374,6 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    // XXX: not tested by fuzzer
     /// Similar to `changeArchetypeImmediately`, but does not require compile time types.
     pub fn changeArchetypeFromComponentsImmediately(
         self: @This(),
@@ -440,7 +439,6 @@ pub const Entity = packed struct {
         slot.archetype = slot.archetype.unionWith(options.add);
     }
 
-    // XXX: not tested by fuzzer
     /// Default formatting for `Entity`.
     pub fn format(
         self: @This(),
@@ -452,6 +450,8 @@ pub const Entity = packed struct {
     }
 
     fn invalidateIterators(es: *Entities) void {
-        es.iterator_generation +%= 1;
+        if (@FieldType(Entities, "iterator_generation") != u0) {
+            es.iterator_generation +%= 1;
+        }
     }
 };
