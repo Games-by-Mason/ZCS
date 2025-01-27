@@ -31,23 +31,23 @@ pub const Optional = struct {
     interned_or_undef: bool,
 
     /// Similar to `Component.init`, but `ptr` may point to an optional.
-    pub fn init(es: *const Entities, ptr: anytype) @This() {
+    pub fn init(es: *Entities, ptr: anytype) @This() {
         return @This().initMaybeInterned(es, ptr, false);
     }
 
     /// Similar to `Component.initInterned`, but `ptr` may point to an optional.
-    pub fn initInterned(es: *const Entities, ptr: anytype) @This() {
+    pub fn initInterned(es: *Entities, ptr: anytype) @This() {
         return @This().initMaybeInterned(es, ptr, true);
     }
 
-    fn initMaybeInterned(es: *const Entities, ptr: anytype, interned: bool) @This() {
+    fn initMaybeInterned(es: *Entities, ptr: anytype, interned: bool) @This() {
         const pointer = @typeInfo(@TypeOf(ptr)).pointer;
         comptime assert(pointer.size == .one);
         comptime assert(pointer.sentinel_ptr == null);
 
         switch (@typeInfo(pointer.child)) {
             .optional => |opt| {
-                const id = es.getComponentId(opt.child);
+                const id = es.registerComponentType(opt.child);
                 const some = if (ptr.*) |*some| some else return .none;
                 return .{
                     .id_or_undef = id,
@@ -56,7 +56,7 @@ pub const Optional = struct {
                 };
             },
             else => return .{
-                .id_or_undef = es.getComponentId(pointer.child),
+                .id_or_undef = es.registerComponentType(pointer.child),
                 .ptr = @ptrCast(ptr),
                 .interned_or_undef = interned,
             },
@@ -77,7 +77,7 @@ pub const Optional = struct {
 };
 
 /// Initialize a component from a pointer to a registered component type.
-pub fn init(es: *const Entities, value: anytype) @This() {
+pub fn init(es: *Entities, value: anytype) @This() {
     return initMaybeInterned(es, value, false);
 }
 
@@ -86,10 +86,10 @@ pub fn initInterned(es: *const Entities, ptr: anytype) @This() {
     return initMaybeInterned(es, ptr, true);
 }
 
-fn initMaybeInterned(es: *const Entities, ptr: anytype, interned: bool) @This() {
+fn initMaybeInterned(es: *Entities, ptr: anytype, interned: bool) @This() {
     const T = @typeInfo(@TypeOf(ptr)).pointer.child;
     return .{
-        .id = es.getComponentId(T),
+        .id = es.registerComponentType(T),
         .ptr = std.mem.asBytes(ptr),
         .interned = interned,
     };
@@ -111,7 +111,7 @@ pub fn bytes(self: @This()) [*]const u8 {
 
 /// Returns the component as the given type if it matches its ID, or null otherwise.
 pub fn as(self: @This(), es: *const Entities, T: anytype) ?*const T {
-    if (self.id != es.getComponentId(T)) return null;
+    if (self.id != es.findComponentId(T)) return null;
     return @alignCast(@ptrCast(self.ptr));
 }
 
@@ -125,10 +125,10 @@ pub const Id = enum(u6) {
 pub const Flags = std.enums.EnumSet(Id);
 
 /// Initialize a set of component IDs from a list of component types.
-pub fn flags(es: *const Entities, types: []const type) Flags {
+pub fn flags(es: *Entities, types: []const type) Flags {
     var result: Flags = .{};
     inline for (types) |ty| {
-        result.insert(es.getComponentId(ty));
+        result.insert(es.registerComponentType(ty));
     }
     return result;
 }

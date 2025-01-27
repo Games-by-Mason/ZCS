@@ -53,7 +53,6 @@ live: std.DynamicBitSetUnmanaged,
 iterator_generation: IteratorGeneration = 0,
 reserved_entities: usize = 0,
 
-// XXX: capacity should be in bytes or something I guess
 /// Initializes the entity storage with the given capacity.
 pub fn init(gpa: Allocator, capacity: usize) Allocator.Error!@This() {
     // Reserve space for the map from component type IDs to component IDs
@@ -103,12 +102,12 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
     self.* = undefined;
 }
 
-pub fn registerComponentType(self: *@This(), T: type) void {
+pub fn registerComponentType(self: *@This(), T: type) Component.Id {
     // Check the type
     assertAllowedAsComponentType(T);
 
     // Early out if we're already registered
-    if (self.comp_types.contains(typeId(T))) return;
+    if (self.comp_types.getIndex(typeId(T))) |i| return @enumFromInt(i);
 
     // Check if we've registered too many components
     const i = self.comp_types.count();
@@ -127,6 +126,8 @@ pub fn registerComponentType(self: *@This(), T: type) void {
         .size = @sizeOf(T),
         .alignment = @alignOf(T),
     };
+
+    return @enumFromInt(i);
 }
 
 /// Invalidates all entities, leaving all `Entity`s dangling and all generations reset. This cannot
@@ -136,12 +137,12 @@ pub fn reset(self: *@This()) void {
     self.reserved_entities = 0;
 }
 
-/// Returns the component ID for the given component type. Panics if the given type was not
-/// registered.
-pub fn getComponentId(self: @This(), T: type) Component.Id {
-    return self.findComponentId(T) orelse {
-        @panic("component type not registered: " ++ @typeName(T));
-    };
+// XXX: rename to get
+/// Gets the ID of the given component type, or null if it hasn't been registered.
+pub fn findComponentId(self: @This(), T: type) ?Component.Id {
+    assertAllowedAsComponentType(T);
+    const id = self.comp_types.getIndex(typeId(T)) orelse return null;
+    return @enumFromInt(id);
 }
 
 /// Returns the size of the component type with the given ID.
@@ -152,13 +153,6 @@ pub fn getComponentSize(self: @This(), id: Component.Id) usize {
 /// Returns the alignment of the component type with the given ID.
 pub fn getComponentAlignment(self: @This(), id: Component.Id) u8 {
     return self.comp_info[@intFromEnum(id)].alignment;
-}
-
-/// Similar to `componentId`, but returns null if the component type was not registered.
-pub fn findComponentId(self: @This(), T: type) ?Component.Id {
-    assertAllowedAsComponentType(T);
-    const id = self.comp_types.getIndex(typeId(T)) orelse return null;
-    return @enumFromInt(id);
 }
 
 /// Returns the current number of entities.
@@ -251,7 +245,7 @@ pub const Iterator = struct {
 ///
 /// `View` must be a struct whose fields are all either type `Entity` or are pointers to registered
 /// component types. Pointers can be set to optional to make a component type optional.
-pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
+pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
     var base: View = undefined;
     var required_comps: Component.Flags = .{};
     var comp_ids: [@typeInfo(View).@"struct".fields.len]Component.Id = undefined;
@@ -263,7 +257,7 @@ pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
                 @compileError("view field is not Entity or pointer to a component: " ++ @typeName(field.type));
             };
 
-            const comp_id = self.getComponentId(T);
+            const comp_id = self.registerComponentType(T);
             comp_ids[i] = comp_id;
             if (@typeInfo(field.type) != .optional) {
                 required_comps.insert(comp_id);

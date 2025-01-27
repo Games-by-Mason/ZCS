@@ -74,9 +74,9 @@ test "command buffer some test decode" {
 
     var es = try Entities.init(gpa, 100);
     defer es.deinit(gpa);
-    es.registerComponentType(RigidBody);
-    es.registerComponentType(Model);
-    es.registerComponentType(Tag);
+    _ = es.registerComponentType(RigidBody);
+    _ = es.registerComponentType(Model);
+    _ = es.registerComponentType(Tag);
 
     // Check some entity equality stuff not tested elsewhere, checked more extensively in slot map
     try expect(Entity.none.eql(.none));
@@ -168,9 +168,9 @@ test "command buffer some test decode" {
 test "command buffer skip dups" {
     var es = try Entities.init(gpa, 100);
     defer es.deinit(gpa);
-    es.registerComponentType(RigidBody);
-    es.registerComponentType(Model);
-    es.registerComponentType(Tag);
+    _ = es.registerComponentType(RigidBody);
+    _ = es.registerComponentType(Model);
+    _ = es.registerComponentType(Tag);
 
     var cmds = try CmdBuf.init(gpa, &es, 24);
     defer cmds.deinit(gpa, &es);
@@ -225,9 +225,9 @@ test "command buffer interning" {
 
     var es = try Entities.init(gpa, 100);
     defer es.deinit(gpa);
-    es.registerComponentType(RigidBody);
-    es.registerComponentType(Model);
-    es.registerComponentType(Tag);
+    _ = es.registerComponentType(RigidBody);
+    _ = es.registerComponentType(Model);
+    _ = es.registerComponentType(Tag);
 
     var cmds = try CmdBuf.init(gpa, &es, 24);
     defer cmds.deinit(gpa, &es);
@@ -555,9 +555,9 @@ test "command buffer overflow" {
 
     var es = try Entities.init(gpa, 100);
     defer es.deinit(gpa);
-    es.registerComponentType(RigidBody);
-    es.registerComponentType(Model);
-    es.registerComponentType(Tag);
+    _ = es.registerComponentType(RigidBody);
+    _ = es.registerComponentType(Model);
+    _ = es.registerComponentType(Tag);
 
     // Tag/destroy overflow
     {
@@ -636,7 +636,7 @@ test "command buffer overflow" {
         const change_archetype = iter.next().?;
         var add_comps = change_archetype.componentIterator();
         const create_rb = add_comps.next().?;
-        try expectEqual(es.getComponentId(RigidBody), create_rb.id);
+        try expectEqual(es.registerComponentType(RigidBody), create_rb.id);
         try expectEqual(rb, create_rb.as(&es, RigidBody).?.*);
         try expectEqual(null, add_comps.next());
         try expectEqual(null, iter.next());
@@ -648,12 +648,12 @@ test "command buffer worst case capacity" {
 
     var es = try Entities.init(gpa, cb_capacity * 10);
     defer es.deinit(gpa);
-    es.registerComponentType(u0);
-    es.registerComponentType(u8);
-    es.registerComponentType(u16);
-    es.registerComponentType(u32);
-    es.registerComponentType(u64);
-    es.registerComponentType(u128);
+    _ = es.registerComponentType(u0);
+    _ = es.registerComponentType(u8);
+    _ = es.registerComponentType(u16);
+    _ = es.registerComponentType(u32);
+    _ = es.registerComponentType(u64);
+    _ = es.registerComponentType(u128);
 
     var cmds = try CmdBuf.init(gpa, &es, cb_capacity);
     defer cmds.deinit(gpa, &es);

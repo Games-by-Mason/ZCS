@@ -81,9 +81,9 @@ const FuzzCmdBuf = struct {
     fn init(input: []const u8) !@This() {
         var es: Entities = try .init(gpa, capacity);
         errdefer es.deinit(gpa);
-        es.registerComponentType(RigidBody);
-        es.registerComponentType(Model);
-        es.registerComponentType(Tag);
+        _ = es.registerComponentType(RigidBody);
+        _ = es.registerComponentType(Model);
+        _ = es.registerComponentType(Tag);
 
         var cmds: CmdBuf = try .init(gpa, &es, cmds_capacity);
         errdefer cmds.deinit(gpa, &es);
@@ -372,13 +372,13 @@ const FuzzCmdBuf = struct {
         var count: usize = 0;
         var iter = self.committed.iterator();
         while (iter.next()) |entry| {
-            if (archetype.contains(self.es.getComponentId(RigidBody))) {
+            if (archetype.contains(self.es.registerComponentType(RigidBody))) {
                 if (entry.value_ptr.rb == null) continue;
             }
-            if (archetype.contains(self.es.getComponentId(Model))) {
+            if (archetype.contains(self.es.registerComponentType(Model))) {
                 if (entry.value_ptr.model == null) continue;
             }
-            if (archetype.contains(self.es.getComponentId(Tag))) {
+            if (archetype.contains(self.es.registerComponentType(Tag))) {
                 if (entry.value_ptr.tag == null) continue;
             }
             count += 1;
@@ -466,9 +466,9 @@ const FuzzCmdBuf = struct {
         }
 
         if (self.committed.getPtr(entity)) |e| {
-            if (remove.contains(self.es.getComponentId(RigidBody))) e.rb = null;
-            if (remove.contains(self.es.getComponentId(Model))) e.model = null;
-            if (remove.contains(self.es.getComponentId(Tag))) e.tag = null;
+            if (remove.contains(self.es.registerComponentType(RigidBody))) e.rb = null;
+            if (remove.contains(self.es.registerComponentType(Model))) e.model = null;
+            if (remove.contains(self.es.registerComponentType(Tag))) e.tag = null;
             if (add_oracle.rb) |some| e.rb = some;
             if (add_oracle.model) |some| e.model = some;
             if (add_oracle.tag) |some| e.tag = some;

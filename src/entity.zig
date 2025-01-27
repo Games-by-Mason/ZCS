@@ -126,7 +126,7 @@ pub const Entity = packed struct {
     ///
     /// `Component` must be a registered component type.
     pub fn hasComponent(self: @This(), es: *const Entities, T: type) bool {
-        const comp_id = es.getComponentId(T);
+        const comp_id = es.findComponentId(T) orelse return false;
         return self.hasComponentId(es, comp_id);
     }
 
@@ -145,7 +145,7 @@ pub const Entity = packed struct {
     ///
     /// `Component` must be a registered component type.
     pub fn getComponent(self: @This(), es: *const Entities, T: type) ?*T {
-        const comp_id = es.getComponentId(T);
+        const comp_id = es.findComponentId(T) orelse return null;
         const untyped = self.getComponentFromId(es, comp_id) orelse return null;
         return @alignCast(@ptrCast(untyped));
     }
@@ -184,7 +184,7 @@ pub const Entity = packed struct {
     /// * Are interned if the field is comptime and the component type is larger than a pointer
     pub fn changeArchetypeCmd(
         self: @This(),
-        es: *const Entities,
+        es: *Entities,
         cmds: *CmdBuf,
         change: anytype,
     ) void {
@@ -196,7 +196,7 @@ pub const Entity = packed struct {
     /// panicking.
     pub fn changeArchetypeCmdChecked(
         self: @This(),
-        es: *const Entities,
+        es: *Entities,
         cmds: *CmdBuf,
         changes: anytype,
     ) error{ZcsCmdBufOverflow}!void {
@@ -225,7 +225,7 @@ pub const Entity = packed struct {
             if (optional) |some| {
                 if (field.is_comptime and @sizeOf(@TypeOf(some)) > @sizeOf(usize)) {
                     try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_ptr = .{
-                        .id = es.getComponentId(@TypeOf(some)),
+                        .id = es.registerComponentType(@TypeOf(some)),
                         .ptr = &struct {
                             const interned = some;
                         }.interned,
@@ -233,7 +233,7 @@ pub const Entity = packed struct {
                     } });
                 } else {
                     try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_val = .{
-                        .id = es.getComponentId(@TypeOf(some)),
+                        .id = es.registerComponentType(@TypeOf(some)),
                         .ptr = @ptrCast(&some),
                         .interned = false,
                     } });
