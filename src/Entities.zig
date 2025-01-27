@@ -53,40 +53,17 @@ live: std.DynamicBitSetUnmanaged,
 iterator_generation: IteratorGeneration = 0,
 reserved_entities: usize = 0,
 
-/// Initializes the entity storage with the given capacity, and registers the given component types.
-pub fn init(
-    gpa: Allocator,
-    capacity: usize,
-    comptime Components: []const type,
-) Allocator.Error!@This() {
-    // Check the component types
-    comptime assert(Components.len < Component.Id.max);
-    inline for (Components) |T| {
-        assertAllowedAsComponentType(T);
-    }
-
-    // Register the component types
+// XXX: capacity should be in bytes or something I guess
+/// Initializes the entity storage with the given capacity.
+pub fn init(gpa: Allocator, capacity: usize) Allocator.Error!@This() {
+    // Reserve space for the map from component type IDs to component IDs
     var comp_types: std.AutoArrayHashMapUnmanaged(TypeId, void) = .empty;
     errdefer comp_types.deinit(gpa);
-    try comp_types.ensureTotalCapacity(gpa, Components.len);
-
-    inline for (Components) |T| {
-        const entry = comp_types.getOrPutAssumeCapacity(typeId(T));
-        if (entry.found_existing) {
-            @panic("component registered twice: " ++ @typeName(T));
-        }
-    }
+    try comp_types.ensureTotalCapacity(gpa, Component.Id.max);
 
     // Register the component sizes
-    const comp_info = try gpa.alloc(ComponentInfo, Components.len);
+    const comp_info = try gpa.alloc(ComponentInfo, Component.Id.max);
     errdefer gpa.free(comp_info);
-    inline for (Components, comp_info) |T, *size| {
-        comptime assert(@alignOf(T) <= max_align);
-        size.* = .{
-            .size = @sizeOf(T),
-            .alignment = @alignOf(T),
-        };
-    }
 
     var slots = try SlotMap(Slot, .{}).init(gpa, capacity);
     errdefer slots.deinit(gpa);
@@ -95,14 +72,9 @@ pub fn init(
     errdefer gpa.destroy(comps);
 
     comptime var comps_init = 0;
-    errdefer for (0..comps_init) |id| gpa.free(comps[id]);
-    inline for (Components) |T| {
-        const id = comp_types.getIndex(typeId(T)).?;
-        comps[id] = try gpa.alignedAlloc(
-            u8,
-            max_align,
-            @sizeOf(T) * capacity,
-        );
+    errdefer for (0..comps_init) |i| gpa.free(comps[i]);
+    inline for (comps) |*comp| {
+        comp.* = try gpa.alignedAlloc(u8, max_align, capacity);
         comps_init += 1;
     }
 
@@ -121,14 +93,40 @@ pub fn init(
 /// Destroys the entity storage.
 pub fn deinit(self: *@This(), gpa: Allocator) void {
     self.live.deinit(gpa);
-    for (0..self.comp_types.count()) |id| {
-        gpa.free(self.comps[id]);
+    for (self.comps) |comp| {
+        gpa.free(comp);
     }
     self.comp_types.deinit(gpa);
     gpa.free(self.comp_info);
     gpa.destroy(self.comps);
     self.slots.deinit(gpa);
     self.* = undefined;
+}
+
+pub fn registerComponentType(self: *@This(), T: type) void {
+    // Check the type
+    assertAllowedAsComponentType(T);
+
+    // Early out if we're already registered
+    if (self.comp_types.contains(typeId(T))) return;
+
+    // Check if we've registered too many components
+    const i = self.comp_types.count();
+    if (i == Component.Id.max / 2) {
+        std.log.warn("{} component types registered, you're at 50% the fatal capacity!", .{i});
+    }
+    if (i >= Component.Id.max) {
+        @panic("component type overflow");
+    }
+
+    // Register the ID
+    self.comp_types.putAssumeCapacity(typeId(T), {});
+
+    // Register the component size and alignment
+    self.comp_info[i] = .{
+        .size = @sizeOf(T),
+        .alignment = @alignOf(T),
+    };
 }
 
 /// Invalidates all entities, leaving all `Entity`s dangling and all generations reset. This cannot
@@ -348,4 +346,5 @@ fn assertAllowedAsComponentType(T: type) void {
         // field, or a tagged union.
         @compileError("component types may not be optional: " ++ @typeName(T));
     }
+    comptime assert(@alignOf(T) <= max_align);
 }

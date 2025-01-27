@@ -8,6 +8,11 @@ const expectEqual = std.testing.expectEqual;
 const expect = std.testing.expect;
 const expectError = std.testing.expectError;
 
+const Entities = zcs.Entities;
+const Entity = zcs.Entity;
+const CmdBuf = zcs.CmdBuf;
+const Component = zcs.Component;
+
 const RigidBody = struct {
     position: [2]f32 = .{ 1.0, 2.0 },
     velocity: [2]f32 = .{ 3.0, 4.0 },
@@ -67,16 +72,19 @@ test "command buffer some test decode" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es = try zcs.Entities.init(gpa, 100, &.{ RigidBody, Model, Tag });
+    var es = try Entities.init(gpa, 100);
     defer es.deinit(gpa);
+    es.registerComponentType(RigidBody);
+    es.registerComponentType(Model);
+    es.registerComponentType(Tag);
 
     // Check some entity equality stuff not tested elsewhere, checked more extensively in slot map
-    try expect(zcs.Entity.none.eql(.none));
-    try expect(!zcs.Entity.none.exists(&es));
+    try expect(Entity.none.eql(.none));
+    try expect(!Entity.none.exists(&es));
 
     // Make sure we exercise the `toOptional` API and such
-    const comp: zcs.Component = .init(&es, &Tag{});
-    const comp_interned: zcs.Component = .init(&es, &Tag{});
+    const comp: Component = .init(&es, &Tag{});
+    const comp_interned: Component = .init(&es, &Tag{});
     const comp_optional = comp.toOptional();
     const comp_optional_interned = comp.toOptional();
     try expect(!comp.interned);
@@ -84,16 +92,16 @@ test "command buffer some test decode" {
     try expectEqual(comp, comp_optional.unwrap().?);
     try expectEqual(comp, comp_optional_interned.unwrap().?);
 
-    var capacity: zcs.CmdBuf.Capacity = .init(&es, 4);
+    var capacity: CmdBuf.Capacity = .init(&es, 4);
     capacity.reserved = 0;
-    var cmds = try zcs.CmdBuf.initGranularCapacity(gpa, &es, capacity);
+    var cmds = try CmdBuf.initGranularCapacity(gpa, &es, capacity);
     defer cmds.deinit(gpa, &es);
 
     try expectEqual(0, es.count());
 
-    const e0 = zcs.Entity.reserveImmediately(&es);
-    const e1 = zcs.Entity.reserveImmediately(&es);
-    const e2 = zcs.Entity.reserveImmediately(&es);
+    const e0 = Entity.reserveImmediately(&es);
+    const e1 = Entity.reserveImmediately(&es);
+    const e2 = Entity.reserveImmediately(&es);
     e0.changeArchetypeCmd(&es, &cmds, .{});
     e1.changeArchetypeCmdFromComponents(&es, &cmds, .{});
     const rb = RigidBody.random(rand);
@@ -131,10 +139,10 @@ test "command buffer some test decode" {
     try expect(!e1.eql(e2));
     try expect(!e1.eql(.none));
 
-    e0.changeArchetypeCmd(&es, &cmds, .{ .remove = zcs.Component.flags(&es, &.{RigidBody}) });
-    e1.changeArchetypeCmdFromComponents(&es, &cmds, .{ .remove = zcs.Component.flags(&es, &.{RigidBody}) });
+    e0.changeArchetypeCmd(&es, &cmds, .{ .remove = Component.flags(&es, &.{RigidBody}) });
+    e1.changeArchetypeCmdFromComponents(&es, &cmds, .{ .remove = Component.flags(&es, &.{RigidBody}) });
     e2.changeArchetypeCmd(&es, &cmds, .{
-        .remove = zcs.Component.flags(&es, &.{RigidBody}),
+        .remove = Component.flags(&es, &.{RigidBody}),
         .add = .{model},
     });
     cmds.execute(&es);
@@ -158,10 +166,13 @@ test "command buffer some test decode" {
 // Verify that fromComponents methods don't pass duplicate component data, this allows us to make
 // our capacity guarantees
 test "command buffer skip dups" {
-    var es = try zcs.Entities.init(gpa, 100, &.{ RigidBody, Model, Tag });
+    var es = try Entities.init(gpa, 100);
     defer es.deinit(gpa);
+    es.registerComponentType(RigidBody);
+    es.registerComponentType(Model);
+    es.registerComponentType(Tag);
 
-    var cmds = try zcs.CmdBuf.init(gpa, &es, 24);
+    var cmds = try CmdBuf.init(gpa, &es, 24);
     defer cmds.deinit(gpa, &es);
 
     const model1: Model = .{
@@ -173,12 +184,12 @@ test "command buffer skip dups" {
         .vertex_count = 4,
     };
 
-    const e0: zcs.Entity = zcs.Entity.reserveImmediately(&es);
+    const e0: Entity = Entity.reserveImmediately(&es);
 
     {
         defer cmds.clear(&es);
         e0.changeArchetypeCmdFromComponents(&es, &cmds, .{
-            .remove = zcs.Component.flags(&es, &.{}),
+            .remove = Component.flags(&es, &.{}),
             .add = &.{
                 .init(&es, &model1),
                 .init(&es, &RigidBody{}),
@@ -189,7 +200,7 @@ test "command buffer skip dups" {
         var iter = cmds.change_archetype.iterator(&es);
         const change_archetype = iter.next().?;
         try expectEqual(
-            zcs.Component.Flags{},
+            Component.Flags{},
             change_archetype.remove,
         );
         var comps = change_archetype.componentIterator();
@@ -212,10 +223,13 @@ test "command buffer interning" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es = try zcs.Entities.init(gpa, 100, &.{ RigidBody, Model, Tag });
+    var es = try Entities.init(gpa, 100);
     defer es.deinit(gpa);
+    es.registerComponentType(RigidBody);
+    es.registerComponentType(Model);
+    es.registerComponentType(Tag);
 
-    var cmds = try zcs.CmdBuf.init(gpa, &es, 24);
+    var cmds = try CmdBuf.init(gpa, &es, 24);
     defer cmds.deinit(gpa, &es);
 
     const rb_interned: RigidBody = .{
@@ -240,15 +254,15 @@ test "command buffer interning" {
     const model_interned_null: ?Model = null;
     const model_value_null: ?Model = null;
 
-    const e0: zcs.Entity = .reserveImmediately(&es);
-    const e1: zcs.Entity = .reserveImmediately(&es);
+    const e0: Entity = .reserveImmediately(&es);
+    const e1: Entity = .reserveImmediately(&es);
 
     // Change archetype non optional
     e0.changeArchetypeCmd(
         &es,
         &cmds,
         .{
-            .remove = zcs.Component.flags(&es, &.{Tag}),
+            .remove = Component.flags(&es, &.{Tag}),
             .add = .{ model_value, rb_interned },
         },
     );
@@ -257,7 +271,7 @@ test "command buffer interning" {
         &cmds,
         .{
             .add = .{ model_interned, rb_value },
-            .remove = zcs.Component.flags(&es, &.{Tag}),
+            .remove = Component.flags(&es, &.{Tag}),
         },
     );
     e0.changeArchetypeCmdFromComponents(&es, &cmds, .{
@@ -265,14 +279,14 @@ test "command buffer interning" {
             .init(&es, &model_value),
             .initInterned(&es, &rb_interned),
         },
-        .remove = zcs.Component.flags(&es, &.{Tag}),
+        .remove = Component.flags(&es, &.{Tag}),
     });
     e1.changeArchetypeCmdFromComponents(&es, &cmds, .{
         .add = &.{
             .initInterned(&es, &model_interned),
             .init(&es, &rb_value),
         },
-        .remove = zcs.Component.flags(&es, &.{Tag}),
+        .remove = Component.flags(&es, &.{Tag}),
     });
 
     // Change archetype optional
@@ -280,7 +294,7 @@ test "command buffer interning" {
         &es,
         &cmds,
         .{
-            .remove = zcs.Component.flags(&es, &.{Tag}),
+            .remove = Component.flags(&es, &.{Tag}),
             .add = .{ model_value_optional, rb_interned_optional },
         },
     );
@@ -288,19 +302,19 @@ test "command buffer interning" {
         &es,
         &cmds,
         .{
-            .remove = zcs.Component.flags(&es, &.{Tag}),
+            .remove = Component.flags(&es, &.{Tag}),
             .add = .{ model_interned_optional, rb_value_optional },
         },
     );
     e0.changeArchetypeCmdFromComponents(&es, &cmds, .{
-        .remove = zcs.Component.flags(&es, &.{Tag}),
+        .remove = Component.flags(&es, &.{Tag}),
         .add = &.{
             .init(&es, &model_value_optional),
             .initInterned(&es, &rb_interned_optional),
         },
     });
     e1.changeArchetypeCmdFromComponents(&es, &cmds, .{
-        .remove = zcs.Component.flags(&es, &.{Tag}),
+        .remove = Component.flags(&es, &.{Tag}),
         .add = &.{
             .initInterned(&es, &model_interned_optional),
             .init(&es, &rb_value_optional),
@@ -312,7 +326,7 @@ test "command buffer interning" {
         &es,
         &cmds,
         .{
-            .remove = zcs.Component.flags(&es, &.{Tag}),
+            .remove = Component.flags(&es, &.{Tag}),
             .add = .{ model_value_null, rb_interned_null },
         },
     );
@@ -320,19 +334,19 @@ test "command buffer interning" {
         &es,
         &cmds,
         .{
-            .remove = zcs.Component.flags(&es, &.{Tag}),
+            .remove = Component.flags(&es, &.{Tag}),
             .add = .{ model_interned_null, rb_value_null },
         },
     );
     e0.changeArchetypeCmdFromComponents(&es, &cmds, .{
-        .remove = zcs.Component.flags(&es, &.{Tag}),
+        .remove = Component.flags(&es, &.{Tag}),
         .add = &.{
             .init(&es, &model_value_null),
             .initInterned(&es, &rb_interned_null),
         },
     });
     e1.changeArchetypeCmdFromComponents(&es, &cmds, .{
-        .remove = zcs.Component.flags(&es, &.{Tag}),
+        .remove = Component.flags(&es, &.{Tag}),
         .add = &.{
             .initInterned(&es, &model_interned_null),
             .init(&es, &rb_value_null),
@@ -348,7 +362,7 @@ test "command buffer interning" {
             const cmd = iter.next().?;
             try expectEqual(e0, cmd.entity);
             try expectEqual(
-                zcs.Component.flags(&es, &.{Tag}),
+                Component.flags(&es, &.{Tag}),
                 cmd.remove,
             );
             // Components reordered due to alignment
@@ -365,7 +379,7 @@ test "command buffer interning" {
             const cmd = iter.next().?;
             try expectEqual(e1, cmd.entity);
             try expectEqual(
-                zcs.Component.flags(&es, &.{Tag}),
+                Component.flags(&es, &.{Tag}),
                 cmd.remove,
             );
             // Components reordered due to alignment
@@ -382,7 +396,7 @@ test "command buffer interning" {
             const cmd = iter.next().?;
             try expectEqual(e0, cmd.entity);
             try expectEqual(
-                zcs.Component.flags(&es, &.{Tag}),
+                Component.flags(&es, &.{Tag}),
                 cmd.remove,
             );
             // Comps are encoded in reverse order by *fromComponents methods
@@ -399,7 +413,7 @@ test "command buffer interning" {
             const cmd = iter.next().?;
             try expectEqual(e1, cmd.entity);
             try expectEqual(
-                zcs.Component.flags(&es, &.{Tag}),
+                Component.flags(&es, &.{Tag}),
                 cmd.remove,
             );
             // Comps are encoded in reverse order by *fromComponents methods
@@ -419,7 +433,7 @@ test "command buffer interning" {
             const cmd = iter.next().?;
             try expectEqual(e0, cmd.entity);
             try expectEqual(
-                zcs.Component.flags(&es, &.{Tag}),
+                Component.flags(&es, &.{Tag}),
                 cmd.remove,
             );
             // Components reordered due to alignment
@@ -436,7 +450,7 @@ test "command buffer interning" {
             const cmd = iter.next().?;
             try expectEqual(e1, cmd.entity);
             try expectEqual(
-                zcs.Component.flags(&es, &.{Tag}),
+                Component.flags(&es, &.{Tag}),
                 cmd.remove,
             );
             // Components reordered due to alignment
@@ -453,7 +467,7 @@ test "command buffer interning" {
             const cmd = iter.next().?;
             try expectEqual(e0, cmd.entity);
             try expectEqual(
-                zcs.Component.flags(&es, &.{Tag}),
+                Component.flags(&es, &.{Tag}),
                 cmd.remove,
             );
             // Comps are encoded in reverse order by *fromComponents methods
@@ -470,7 +484,7 @@ test "command buffer interning" {
             const cmd = iter.next().?;
             try expectEqual(e1, cmd.entity);
             try expectEqual(
-                zcs.Component.flags(&es, &.{Tag}),
+                Component.flags(&es, &.{Tag}),
                 cmd.remove,
             );
             // Comps are encoded in reverse order by *fromComponents methods
@@ -490,7 +504,7 @@ test "command buffer interning" {
             const cmd = iter.next().?;
             try expectEqual(e0, cmd.entity);
             try expectEqual(
-                zcs.Component.flags(&es, &.{Tag}),
+                Component.flags(&es, &.{Tag}),
                 cmd.remove,
             );
             var comps = cmd.componentIterator();
@@ -500,7 +514,7 @@ test "command buffer interning" {
             const cmd = iter.next().?;
             try expectEqual(e1, cmd.entity);
             try expectEqual(
-                zcs.Component.flags(&es, &.{Tag}),
+                Component.flags(&es, &.{Tag}),
                 cmd.remove,
             );
             var comps = cmd.componentIterator();
@@ -510,7 +524,7 @@ test "command buffer interning" {
             const cmd = iter.next().?;
             try expectEqual(e0, cmd.entity);
             try expectEqual(
-                zcs.Component.flags(&es, &.{Tag}),
+                Component.flags(&es, &.{Tag}),
                 cmd.remove,
             );
             var comps = cmd.componentIterator();
@@ -520,7 +534,7 @@ test "command buffer interning" {
             const cmd = iter.next().?;
             try expectEqual(e1, cmd.entity);
             try expectEqual(
-                zcs.Component.flags(&es, &.{Tag}),
+                Component.flags(&es, &.{Tag}),
                 cmd.remove,
             );
             var comps = cmd.componentIterator();
@@ -539,12 +553,15 @@ test "command buffer overflow" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es = try zcs.Entities.init(gpa, 100, &.{ RigidBody, Model, Tag });
+    var es = try Entities.init(gpa, 100);
     defer es.deinit(gpa);
+    es.registerComponentType(RigidBody);
+    es.registerComponentType(Model);
+    es.registerComponentType(Tag);
 
     // Tag/destroy overflow
     {
-        var cmds = try zcs.CmdBuf.initGranularCapacity(gpa, &es, .{
+        var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
             .tags = 0,
             .args = 100,
             .comp_bytes = 100,
@@ -553,8 +570,8 @@ test "command buffer overflow" {
         });
         defer cmds.deinit(gpa, &es);
 
-        try expectError(error.ZcsCmdBufOverflow, zcs.Entity.reserveImmediately(&es).changeArchetypeCmdChecked(&es, &cmds, .{}));
-        try expectError(error.ZcsCmdBufOverflow, zcs.Entity.reserveImmediately(&es).destroyCmdChecked(&es, &cmds));
+        try expectError(error.ZcsCmdBufOverflow, Entity.reserveImmediately(&es).changeArchetypeCmdChecked(&es, &cmds, .{}));
+        try expectError(error.ZcsCmdBufOverflow, Entity.reserveImmediately(&es).destroyCmdChecked(&es, &cmds));
 
         try expectEqual(1.0, cmds.worstCaseUsage());
 
@@ -564,7 +581,7 @@ test "command buffer overflow" {
 
     // Arg overflow
     {
-        var cmds = try zcs.CmdBuf.initGranularCapacity(gpa, &es, .{
+        var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
             .tags = 100,
             .args = 0,
             .comp_bytes = 100,
@@ -573,12 +590,12 @@ test "command buffer overflow" {
         });
         defer cmds.deinit(gpa, &es);
 
-        try expectError(error.ZcsCmdBufOverflow, zcs.Entity.reserveImmediately(&es).changeArchetypeCmdChecked(
+        try expectError(error.ZcsCmdBufOverflow, Entity.reserveImmediately(&es).changeArchetypeCmdChecked(
             &es,
             &cmds,
             .{},
         ));
-        const e = zcs.Entity.reserveImmediately(&es);
+        const e = Entity.reserveImmediately(&es);
         e.destroyCmd(&es, &cmds);
 
         try expectEqual(1.0, cmds.worstCaseUsage());
@@ -591,7 +608,7 @@ test "command buffer overflow" {
 
     // Component data overflow
     {
-        var cmds = try zcs.CmdBuf.initGranularCapacity(gpa, &es, .{
+        var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
             .tags = 100,
             .args = 100,
             .comp_bytes = @sizeOf(RigidBody) * 2 - 1,
@@ -600,10 +617,10 @@ test "command buffer overflow" {
         });
         defer cmds.deinit(gpa, &es);
 
-        const e: zcs.Entity = zcs.Entity.reserveImmediately(&es);
+        const e: Entity = Entity.reserveImmediately(&es);
         const rb = RigidBody.random(rand);
 
-        _ = zcs.Entity.reserveImmediately(&es).changeArchetypeCmd(&es, &cmds, .{ .add = .{rb} });
+        _ = Entity.reserveImmediately(&es).changeArchetypeCmd(&es, &cmds, .{ .add = .{rb} });
         e.destroyCmd(&es, &cmds);
         try expectError(error.ZcsCmdBufOverflow, e.changeArchetypeCmdChecked(
             &es,
@@ -629,19 +646,23 @@ test "command buffer overflow" {
 test "command buffer worst case capacity" {
     const cb_capacity = 100;
 
-    const comps: []const type = &.{ u0, u8, u16, u32, u64, u128 };
-
-    var es = try zcs.Entities.init(gpa, cb_capacity * 10, comps);
+    var es = try Entities.init(gpa, cb_capacity * 10);
     defer es.deinit(gpa);
+    es.registerComponentType(u0);
+    es.registerComponentType(u8);
+    es.registerComponentType(u16);
+    es.registerComponentType(u32);
+    es.registerComponentType(u64);
+    es.registerComponentType(u128);
 
-    var cmds = try zcs.CmdBuf.init(gpa, &es, cb_capacity);
+    var cmds = try CmdBuf.init(gpa, &es, cb_capacity);
     defer cmds.deinit(gpa, &es);
 
     // Change archetype
     {
         // Non interned
         for (0..cb_capacity) |_| {
-            _ = try zcs.Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
+            _ = try Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
                 &es,
                 &cmds,
                 .{ .add = &.{
@@ -660,7 +681,7 @@ test "command buffer worst case capacity" {
 
         // Interned
         for (0..cb_capacity) |_| {
-            _ = try zcs.Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
+            _ = try Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
                 &es,
                 &cmds,
                 .{ .add = &.{
@@ -678,11 +699,11 @@ test "command buffer worst case capacity" {
         cmds.clear(&es);
 
         // Duplicates don't take up extra space
-        var dups: std.BoundedArray(zcs.Component.Optional, cb_capacity * 4) = .{};
+        var dups: std.BoundedArray(Component.Optional, cb_capacity * 4) = .{};
         for (0..dups.buffer.len) |i| {
             dups.appendAssumeCapacity(.init(&es, &@as(u128, i)));
         }
-        _ = try zcs.Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
+        _ = try Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
             &es,
             &cmds,
             .{ .add = dups.constSlice() },
@@ -693,7 +714,7 @@ test "command buffer worst case capacity" {
     // Destroy
     {
         for (0..cb_capacity) |i| {
-            const e: zcs.Entity = .{ .key = .{
+            const e: Entity = .{ .key = .{
                 .index = @intCast(i),
                 .generation = @enumFromInt(0),
             } };
