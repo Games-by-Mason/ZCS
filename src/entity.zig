@@ -126,7 +126,7 @@ pub const Entity = packed struct {
     ///
     /// `Component` must be a registered component type.
     pub fn hasComponent(self: @This(), es: *const Entities, T: type) bool {
-        const comp_id = es.findComponentId(T) orelse return false;
+        const comp_id = es.getComponentId(T) orelse return false;
         return self.hasComponentId(es, comp_id);
     }
 
@@ -145,7 +145,7 @@ pub const Entity = packed struct {
     ///
     /// `Component` must be a registered component type.
     pub fn getComponent(self: @This(), es: *const Entities, T: type) ?*T {
-        const comp_id = es.findComponentId(T) orelse return null;
+        const comp_id = es.getComponentId(T) orelse return null;
         const untyped = self.getComponentFromId(es, comp_id) orelse return null;
         return @alignCast(@ptrCast(untyped));
     }

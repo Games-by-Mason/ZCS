@@ -31,16 +31,16 @@ reserved: std.ArrayListUnmanaged(Entity),
 pub fn init(
     gpa: Allocator,
     es: *Entities,
-    capacity: usize,
+    capacity: Capacity,
 ) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
-    return initGranularCapacity(gpa, es, .init(es, capacity));
+    return initGranularCapacity(gpa, es, .init(capacity));
 }
 
 /// Similar to `init`, but allows you to specify capacity with more granularity. Prefer `init`.
 pub fn initGranularCapacity(
     gpa: Allocator,
     es: *Entities,
-    capacity: Capacity,
+    capacity: GranularCapacity,
 ) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
     comptime assert(Component.Id.max < std.math.maxInt(u64));
 
@@ -173,46 +173,47 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
     return !overflow;
 }
 
-/// Per buffer capacity. Prefer `CmdBuf.init`.
+/// Worst case capacity for a command buffer.
 pub const Capacity = struct {
+    /// Space for at least this many commands will be reserved.
+    cmds: usize,
+    /// Space for an average of at least this many bytes per component will be reserved.
+    comp_bytes: usize,
+};
+
+/// Per buffer capacity. Prefer `Capacity`.
+pub const GranularCapacity = struct {
     tags: usize,
     args: usize,
     comp_bytes: usize,
     destroy: usize,
     reserved: usize,
 
-    /// Sets each buffer capacity to be at least enough for the given number of commands.
-    pub fn init(es: *const Entities, cmds: usize) Capacity {
+    /// Estimates the granular capacity from worst case capacity.
+    pub fn init(cap: Capacity) @This() {
         _ = SubCmd.rename_when_changing_encoding;
 
-        // Worst case component data size. Technically we could make this slightly tighter since
-        // alignment must be a power of two, but this calculation is much simpler.
-        var comp_bytes_cap: usize = 0;
-        for (0..es.comp_types.count()) |i| {
-            const id: Component.Id = @enumFromInt(i);
-            comp_bytes_cap += es.getComponentSize(id);
-            comp_bytes_cap += es.getComponentAlignment(id) - 1;
-        }
-        comp_bytes_cap *= cmds;
+        // Each command can have at most one component's worth of component data.
+        const comp_bytes_cap = (cap.comp_bytes + Entities.max_align) * cap.cmds;
 
         // The command with the most subcommands is change archetype
         var change_archetype_tags: usize = 0;
         change_archetype_tags += 1; // Bind
         change_archetype_tags += 1; // Remove components
-        change_archetype_tags += es.comp_types.count(); // Add component
-        const tags_cap = change_archetype_tags * cmds;
+        change_archetype_tags += 1; // Add component
+        const tags_cap = change_archetype_tags * cap.cmds;
 
         // The command with the most args is change archetype with interned components
         var change_archetype_args: usize = 0;
         change_archetype_args += 1; // Bind
-        change_archetype_args += es.comp_types.count() * 2; // comps * (id + ptr)
-        const args_cap = change_archetype_args * cmds;
+        change_archetype_args += 2; // comps * (id + ptr)
+        const args_cap = change_archetype_args * cap.cmds;
 
         // The most destroys we could do is the number of commands.
-        const destroy_cap = cmds;
+        const destroy_cap = cap.cmds;
 
         // The most creates we could do is the number of commands.
-        const reserved_cap = cmds;
+        const reserved_cap = cap.cmds;
 
         return .{
             .tags = tags_cap,

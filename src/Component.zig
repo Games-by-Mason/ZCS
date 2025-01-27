@@ -111,7 +111,7 @@ pub fn bytes(self: @This()) [*]const u8 {
 
 /// Returns the component as the given type if it matches its ID, or null otherwise.
 pub fn as(self: @This(), es: *const Entities, T: anytype) ?*const T {
-    if (self.id != es.findComponentId(T)) return null;
+    if (self.id != es.getComponentId(T)) return null;
     return @alignCast(@ptrCast(self.ptr));
 }
 

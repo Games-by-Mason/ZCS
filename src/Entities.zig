@@ -137,9 +137,8 @@ pub fn reset(self: *@This()) void {
     self.reserved_entities = 0;
 }
 
-// XXX: rename to get
 /// Gets the ID of the given component type, or null if it hasn't been registered.
-pub fn findComponentId(self: @This(), T: type) ?Component.Id {
+pub fn getComponentId(self: @This(), T: type) ?Component.Id {
     assertAllowedAsComponentType(T);
     const id = self.comp_types.getIndex(typeId(T)) orelse return null;
     return @enumFromInt(id);

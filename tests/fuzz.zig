@@ -81,11 +81,8 @@ const FuzzCmdBuf = struct {
     fn init(input: []const u8) !@This() {
         var es: Entities = try .init(gpa, capacity);
         errdefer es.deinit(gpa);
-        _ = es.registerComponentType(RigidBody);
-        _ = es.registerComponentType(Model);
-        _ = es.registerComponentType(Tag);
 
-        var cmds: CmdBuf = try .init(gpa, &es, cmds_capacity);
+        var cmds: CmdBuf = try .init(gpa, &es, .{ .cmds = cmds_capacity, .comp_bytes = @sizeOf(RigidBody) });
         errdefer cmds.deinit(gpa, &es);
 
         var reserved: std.AutoArrayHashMapUnmanaged(Entity, void) = .{};
