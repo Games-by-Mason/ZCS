@@ -21,8 +21,8 @@ pub fn next(self: *@This(), T: type) T {
         .bool => return (self.nextRaw(u8)) % 2 == 0,
         .int => return self.nextRaw(T),
         .float => {
-            // XXX: ...
             const val = self.nextRaw(T);
+            // https://github.com/ziglang/zig/pull/22621
             if (std.math.isNan(val)) return 0.0;
             return val;
         },

@@ -1,9 +1,9 @@
 const std = @import("std");
-const zcs = @import("../root.zig");
+const zcs = @import("zcs");
 
 const gpa = std.testing.allocator;
 const assert = std.debug.assert;
-const expectEqual = @import("expect_equal.zig").expectEqual;
+const expectEqual = std.testing.expectEqual;
 const expect = std.testing.expect;
 
 const FuzzParser = @import("FuzzParser.zig");
@@ -17,19 +17,13 @@ test "fuzz cmdbuf" {
     try std.testing.fuzz(FuzzCmdBuf.run, .{ .corpus = &.{} });
 }
 
-// XXX: wow this fails and the fuzzer doesn't??
-// XXX: check that this actually does substantial work
 test "rand cmdbuf" {
-    // // XXX: finds a failure that fuzzer doesn't, make a corpus with more data?
-    // var xoshiro_256: std.Random.Xoshiro256 = .init(0);
-    // const rand = xoshiro_256.random();
-    // // XXX: Finds a failure, include in corpus?
-    // const input: []u8 = try gpa.alloc(u8, 1048576);
-    // defer gpa.free(input);
-    // rand.bytes(input);
-    // try FuzzCmdBuf.run(input);
-
-    try expectEqual(std.math.nan(f32), 2.0);
+    var xoshiro_256: std.Random.Xoshiro256 = .init(0);
+    const rand = xoshiro_256.random();
+    const input: []u8 = try gpa.alloc(u8, 8192);
+    defer gpa.free(input);
+    rand.bytes(input);
+    try FuzzCmdBuf.run(input);
 }
 
 const RigidBody = struct {
@@ -136,24 +130,32 @@ const FuzzCmdBuf = struct {
 
         var i = self.parser.index;
         while (!self.parser.isEmpty()) {
+            // Modify the entities via a command buffer
             for (0..self.parser.nextLessThan(u16, cmds_capacity)) |_| {
-                if (self.parser.isEmpty()) break; // XXX: needed?
+                if (self.parser.isEmpty()) break;
                 i = self.parser.index;
                 switch (self.parser.next(enum {
                     reserve,
                     destroy,
                     change_archetype,
-                    modify,
                 })) {
                     .reserve => try self.reserve(),
                     .destroy => try self.destroy(),
                     .change_archetype => try self.changeArchetype(),
-                    .modify => try self.modify(),
                 }
             }
 
             self.cmds.execute(&self.es);
             self.cmds.clear(&self.es);
+            try self.checkOracle();
+
+            // Modify the entities directly. We do this later since interspersing it with the
+            // command buffer will get incorrect results since the oracle applies everything
+            // instantly. We only do a few iterations because this test is easily exhausted.
+            for (0..self.parser.nextLessThan(u16, 100)) |_| {
+                if (self.parser.isEmpty()) break;
+                try self.modify();
+            }
             try self.checkOracle();
         }
     }

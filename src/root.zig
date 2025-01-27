@@ -13,10 +13,5 @@ pub const Component = @import("Component.zig");
 pub const CmdBuf = @import("CmdBuf.zig");
 
 test {
-    _ = @import("tests/index.zig");
-}
-
-test "foo" {
-    const x = 10;
-    _ = x;
+    _ = @import("meta.zig");
 }

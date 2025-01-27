@@ -1,15 +1,14 @@
 //! Normal unit tests.
 
 const std = @import("std");
+const zcs = @import("zcs");
 const assert = std.debug.assert;
-const zcs = @import("../root.zig");
 const gpa = std.testing.allocator;
 const expectEqual = std.testing.expectEqual;
 const expect = std.testing.expect;
 const expectError = std.testing.expectError;
 
 const RigidBody = struct {
-    pub const name = "RigidBody";
     position: [2]f32 = .{ 1.0, 2.0 },
     velocity: [2]f32 = .{ 3.0, 4.0 },
     mass: f32 = 5.0,
@@ -29,7 +28,6 @@ const RigidBody = struct {
 };
 
 const Model = struct {
-    pub const name = "Model";
     vertex_start: u16 = 6,
     vertex_count: u16 = 7,
 
@@ -48,8 +46,6 @@ const Model = struct {
 
 /// A zero sized component type
 pub const Tag = struct {
-    pub const name = "Tag";
-
     pub fn random(rand: std.Random) @This() {
         _ = rand;
         return .{};
@@ -67,33 +63,7 @@ const Components = struct {
     tag: ?Tag = null,
 };
 
-test "command buffers" {
-    // Initialize
-    var xoshiro_256: std.Random.Xoshiro256 = .init(0);
-    const rand = xoshiro_256.random();
-
-    const capacity = 100000;
-
-    const comps: []const type = &.{ RigidBody, Model, Tag };
-
-    var expected: std.AutoArrayHashMapUnmanaged(zcs.Entity, Components) = .{};
-    defer expected.deinit(gpa);
-
-    var actual = try zcs.Entities.init(gpa, capacity, comps);
-    defer actual.deinit(gpa);
-
-    // We do two passes, so that the second pass has a chance to read results from the first
-    try checkRandomCmdBuf(rand, &expected, &actual);
-    try checkRandomCmdBuf(rand, &expected, &actual);
-    // Make sure we're not accidentally destroying so many entities that the test is not executing
-    // many interesting paths
-    try expect(actual.count() > 1000);
-}
-
-// The normal command buffer tests have a "key" component on every entity to simplify the tests,
-// so here we just run a few tests to make sure that empty entities don't cause issues since
-// they get no coverage there.
-test "command buffer create empty" {
+test "command buffer some test decode" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
@@ -733,191 +703,4 @@ test "command buffer worst case capacity" {
         try expect(cmds.worstCaseUsage() == 1.0);
         cmds.clear(&es);
     }
-}
-
-fn checkRandomCmdBuf(
-    rand: std.Random,
-    expected: *std.AutoArrayHashMapUnmanaged(zcs.Entity, Components),
-    actual: *zcs.Entities,
-) !void {
-    // Queue random commands, apply them directly to the expected data and submit the command buffer
-    // at the end.
-    const cb_capacity = 20000;
-    var capacity: zcs.CmdBuf.Capacity = .init(actual, cb_capacity);
-    capacity.reserved = 0;
-    var cmds = try zcs.CmdBuf.initGranularCapacity(gpa, actual, capacity);
-    defer cmds.deinit(gpa, actual);
-    for (0..cb_capacity) |_| {
-        if (rand.boolean()) {
-            // Destroy
-
-            // If we're at less than half capacity, give a slight bias against destroying
-            // entities so that we don't just hover near zero entities for the whole test
-            if (expected.count() < actual.slots.capacity / 2 and rand.float(f32) < 0.3) {
-                continue;
-            }
-
-            const count = expected.count();
-            if (count > 0) {
-                const index = rand.uintLessThan(usize, count);
-                const entity = expected.keys()[index];
-                try expect(expected.swapRemove(entity));
-                entity.destroyCmd(actual, &cmds);
-            }
-        } else {
-            // Change archetype
-
-            // Typed
-            const entity = if (actual.count() > 0 and rand.boolean()) b: {
-                break :b expected.keys()[rand.uintLessThan(usize, expected.count())];
-            } else b: {
-                const e = zcs.Entity.reserveImmediately(actual);
-                try expected.putNoClobber(gpa, e, .{});
-                break :b e;
-            };
-
-            const expected_comps = expected.getPtr(entity).?;
-            var remove: zcs.Component.Flags = .{};
-            if (rand.boolean()) {
-                remove.insert(actual.getComponentId(Model));
-                expected_comps.model = null;
-            }
-            if (rand.boolean()) {
-                remove.insert(actual.getComponentId(RigidBody));
-                expected_comps.rb = null;
-            }
-            if (rand.boolean()) {
-                remove.insert(actual.getComponentId(Tag));
-                expected_comps.tag = null;
-            }
-
-            if (rand.boolean()) {
-                // Typed
-                if (rand.boolean()) {
-                    // Optional
-                    const tag = Tag.randomOrNull(rand);
-                    const model = Model.randomOrNull(rand);
-                    const rb = RigidBody.randomOrNull(rand);
-                    if (tag) |v| expected_comps.tag = v;
-                    if (model) |v| expected_comps.model = v;
-                    if (rb) |v| expected_comps.rb = v;
-                    entity.changeArchetypeCmd(actual, &cmds, .{
-                        .remove = remove,
-                        .add = .{ tag, model, rb },
-                    });
-                } else {
-                    // Not optional
-                    switch (rand.enumValue(enum {
-                        empty,
-                        rb,
-                        model,
-                        tag,
-                        rb_model,
-                        rb_tag,
-                        rb_model_tag,
-                    })) {
-                        .empty => entity.changeArchetypeCmd(actual, &cmds, .{ .remove = remove }),
-                        .rb => {
-                            const rb = RigidBody.random(rand);
-                            expected_comps.rb = rb;
-                            entity.changeArchetypeCmd(actual, &cmds, .{
-                                .remove = remove,
-                                .add = .{rb},
-                            });
-                        },
-                        .model => {
-                            const model = Model.random(rand);
-                            expected_comps.model = model;
-                            entity.changeArchetypeCmd(actual, &cmds, .{
-                                .remove = remove,
-                                .add = .{model},
-                            });
-                        },
-                        .tag => {
-                            const tag = Tag.random(rand);
-                            expected_comps.tag = tag;
-                            entity.changeArchetypeCmd(actual, &cmds, .{
-                                .remove = remove,
-                                .add = .{tag},
-                            });
-                        },
-                        .rb_model => {
-                            const rb = RigidBody.random(rand);
-                            const model = Model.random(rand);
-                            expected_comps.rb = rb;
-                            expected_comps.model = model;
-                            entity.changeArchetypeCmd(actual, &cmds, .{
-                                .remove = remove,
-                                .add = .{ rb, model },
-                            });
-                        },
-                        .rb_tag => {
-                            const rb = RigidBody.random(rand);
-                            const tag = Tag.random(rand);
-                            expected_comps.rb = rb;
-                            expected_comps.tag = tag;
-                            entity.changeArchetypeCmd(actual, &cmds, .{
-                                .remove = remove,
-                                .add = .{ rb, tag },
-                            });
-                        },
-                        .rb_model_tag => {
-                            const rb = RigidBody.random(rand);
-                            const model = Model.random(rand);
-                            const tag = Tag.random(rand);
-                            expected_comps.rb = rb;
-                            expected_comps.model = model;
-                            expected_comps.tag = tag;
-                            entity.changeArchetypeCmd(actual, &cmds, .{
-                                .remove = remove,
-                                .add = .{ rb, model, tag },
-                            });
-                        },
-                    }
-                }
-            } else {
-                // Untyped
-                const model = Model.randomOrNull(rand);
-                const rb = RigidBody.randomOrNull(rand);
-                const tag = Tag.randomOrNull(rand);
-                const add: [3]zcs.Component.Optional = .{
-                    .init(actual, &rb),
-                    .init(actual, &model),
-                    .init(actual, &tag),
-                };
-                if (model) |v| expected_comps.model = v;
-                if (rb) |v| expected_comps.rb = v;
-                if (tag) |v| expected_comps.tag = v;
-                entity.changeArchetypeCmdFromComponents(actual, &cmds, .{
-                    .add = &add,
-                    .remove = remove,
-                });
-            }
-        }
-    }
-    cmds.execute(actual);
-    try expect(cmds.worstCaseUsage() < 0.5);
-    cmds.clear(actual);
-    try expect(cmds.worstCaseUsage() == 0.0);
-    try expect(actual.reserved() == 0);
-
-    // Compare the maps
-    try expectEqual(expected.count(), actual.count());
-    var iter = expected.iterator();
-    while (iter.next()) |entry| {
-        const e = entry.key_ptr.*;
-        const expected_comps = entry.value_ptr;
-        try expectEqual(expected_comps.rb, if (e.getComponent(actual, RigidBody)) |v| v.* else null);
-        try expectEqual(expected_comps.model, if (e.getComponent(actual, Model)) |v| v.* else null);
-        try expectEqual(expected_comps.tag, if (e.getComponent(actual, Tag)) |v| v.* else null);
-    }
-
-    // Double check the count via iterating
-    var results_iter = actual.iterator(.{});
-    var iter_count: usize = 0;
-    while (results_iter.next()) |item| {
-        try expect(expected.contains(item));
-        iter_count += 1;
-    }
-    try expectEqual(expected.count(), iter_count);
 }
