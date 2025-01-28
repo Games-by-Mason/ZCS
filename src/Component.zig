@@ -13,8 +13,8 @@ const Component = @This();
 
 /// The component type's index.
 index: Index,
-/// A pointer to the component data.
-ptr: *const anyopaque,
+/// The component data.
+bytes: []const u8,
 /// If true, `ptr` points to constant. If false, it points to a temporary value.
 interned: bool,
 
@@ -27,7 +27,7 @@ pub const Optional = struct {
     };
 
     index_or_undef: Index,
-    ptr: ?*const anyopaque,
+    bytes: ?[]const u8,
     interned_or_undef: bool,
 
     /// Similar to `Component.init`, but `ptr` may point to an optional.
@@ -65,10 +65,10 @@ pub const Optional = struct {
 
     /// Unwrap as `?Component`.
     pub fn unwrap(self: @This()) ?Component {
-        if (self.ptr) |ptr| {
+        if (self.bytes) |bytes| {
             return .{
                 .index = self.index_or_undef,
-                .ptr = ptr,
+                .bytes = bytes,
                 .interned = self.interned_or_undef,
             };
         }
@@ -90,7 +90,7 @@ fn initMaybeInterned(es: *Entities, ptr: anytype, interned: bool) @This() {
     const T = @typeInfo(@TypeOf(ptr)).pointer.child;
     return .{
         .index = es.comp_types.registerIndex(T),
-        .ptr = std.mem.asBytes(ptr),
+        .bytes = std.mem.asBytes(ptr),
         .interned = interned,
     };
 }
@@ -99,20 +99,16 @@ fn initMaybeInterned(es: *Entities, ptr: anytype, interned: bool) @This() {
 pub fn toOptional(self: @This()) Optional {
     return .{
         .index_or_undef = self.index,
-        .ptr = self.ptr,
+        .bytes = self.bytes,
         .interned_or_undef = self.interned,
     };
-}
-
-/// Returns the component's bytes.
-pub fn bytes(self: @This()) [*]const u8 {
-    return @ptrCast(self.ptr);
 }
 
 /// Returns the component as the given type if it matches its ID, or null otherwise.
 pub fn as(self: @This(), es: *const Entities, T: anytype) ?*const T {
     if (self.index != es.comp_types.getIndex(T)) return null;
-    return @alignCast(@ptrCast(self.ptr));
+    // XXX: does this assert size matches or should we?
+    return @alignCast(@ptrCast(self.bytes));
 }
 
 /// The index of a registered component type.

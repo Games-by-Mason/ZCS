@@ -49,20 +49,22 @@ pub const SubCmd = union(enum) {
                     },
                     .add_component_val => {
                         const index: Component.Index = @enumFromInt(self.nextArg().?);
-                        const ptr = self.nextComponentData(index);
+                        const bytes = self.nextComponentData(index);
                         const comp: Component = .{
                             .index = index,
-                            .ptr = ptr,
+                            .bytes = bytes,
                             .interned = false,
                         };
                         return .{ .add_component_val = comp };
                     },
                     .add_component_ptr => {
                         const index: Component.Index = @enumFromInt(self.nextArg().?);
-                        const ptr: [*]u8 = @ptrFromInt(self.nextArg().?);
+                        const size = self.es.comp_types.getSize(index);
+                        const bytes_unsized: [*]const u8 = @ptrFromInt(self.nextArg().?);
+                        const bytes = bytes_unsized[0..size];
                         const comp: Component = .{
                             .index = index,
-                            .ptr = ptr,
+                            .bytes = bytes,
                             .interned = true,
                         };
                         return .{ .add_component_ptr = comp };
@@ -107,7 +109,7 @@ pub const SubCmd = union(enum) {
             }
         }
 
-        pub inline fn nextComponentData(self: *@This(), index: Component.Index) [*]const u8 {
+        pub inline fn nextComponentData(self: *@This(), index: Component.Index) []const u8 {
             const size = self.es.comp_types.getSize(index);
             const alignment = self.es.comp_types.getAlignment(index);
             self.component_bytes_index = std.mem.alignForward(
@@ -115,7 +117,7 @@ pub const SubCmd = union(enum) {
                 self.component_bytes_index,
                 alignment,
             );
-            const result = self.cmds.comp_bytes.items[self.component_bytes_index..].ptr;
+            const result = self.cmds.comp_bytes.items[self.component_bytes_index..][0..size];
             self.component_bytes_index += size;
             return result;
         }
@@ -139,19 +141,17 @@ pub const SubCmd = union(enum) {
                 changes.args.appendAssumeCapacity(@bitCast(entity));
             },
             .add_component_val => |comp| {
-                const size = es.comp_types.getSize(comp.index);
                 const alignment = es.comp_types.getAlignment(comp.index);
                 const aligned = std.mem.alignForward(usize, changes.comp_bytes.items.len, alignment);
                 if (changes.tags.items.len >= changes.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (changes.args.items.len + 1 > changes.args.capacity) return error.ZcsCmdBufOverflow;
-                if (aligned + size > changes.comp_bytes.capacity) {
+                if (aligned + comp.bytes.len > changes.comp_bytes.capacity) {
                     return error.ZcsCmdBufOverflow;
                 }
                 changes.tags.appendAssumeCapacity(.add_component_val);
                 changes.args.appendAssumeCapacity(@intFromEnum(comp.index));
-                const bytes = comp.bytes();
                 changes.comp_bytes.items.len = aligned;
-                changes.comp_bytes.appendSliceAssumeCapacity(bytes[0..size]);
+                changes.comp_bytes.appendSliceAssumeCapacity(comp.bytes);
             },
             .add_component_ptr => |comp| {
                 assert(comp.interned);
@@ -159,7 +159,7 @@ pub const SubCmd = union(enum) {
                 if (changes.args.items.len + 2 > changes.args.capacity) return error.ZcsCmdBufOverflow;
                 changes.tags.appendAssumeCapacity(.add_component_ptr);
                 changes.args.appendAssumeCapacity(@intFromEnum(comp.index));
-                changes.args.appendAssumeCapacity(@intFromPtr(comp.ptr));
+                changes.args.appendAssumeCapacity(@intFromPtr(comp.bytes.ptr));
             },
             .remove_components => |comps| {
                 if (changes.tags.items.len >= changes.tags.capacity) return error.ZcsCmdBufOverflow;

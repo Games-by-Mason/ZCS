@@ -246,7 +246,7 @@ pub const Entity = packed struct {
         try SubCmd.encode(es, &cmds.change_archetype, .{ .bind_entity = self });
         try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_val = .{
             .index = es.comp_types.registerIndex(T),
-            .ptr = @ptrCast(&comp),
+            .bytes = std.mem.asBytes(&comp),
             .interned = false,
         } });
     }
@@ -287,7 +287,7 @@ pub const Entity = packed struct {
         try SubCmd.encode(es, &cmds.change_archetype, .{ .bind_entity = self });
         try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_ptr = .{
             .index = es.comp_types.registerIndex(T),
-            .ptr = @ptrCast(&Interned.value),
+            .bytes = std.mem.asBytes(&Interned.value),
             .interned = true,
         } });
     }

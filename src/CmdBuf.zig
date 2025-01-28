@@ -167,7 +167,7 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
             };
             var comps = change.componentIterator();
             while (comps.next()) |comp| {
-                const src = comp.bytes();
+                const src = comp.bytes;
                 const dest = change.entity.getComponentFromIndex(es, comp.index).?;
                 @memcpy(dest, src);
             }
