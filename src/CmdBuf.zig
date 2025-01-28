@@ -26,6 +26,10 @@ destroy: std.ArrayListUnmanaged(Entity),
 change_archetype: ChangeArchetypes,
 /// Reserved entities.
 reserved: std.ArrayListUnmanaged(Entity),
+// XXX: unimplemented
+// /// Local IDs for component types. New types can be registered here without modifying `Entities`,
+// /// however the IDs need to be remapped on execute.
+// comp_types: std.AutoArrayHashMapUnmanaged(TypeId, void),
 
 /// Initializes a command buffer.
 pub fn init(
@@ -204,7 +208,7 @@ pub const GranularCapacity = struct {
         change_archetype_tags += 1; // Add component
         const tags_cap = change_archetype_tags * cap.cmds;
 
-        // The command with the most args is change archetype with interned components
+        // The command with the most args is change archetype with by pointer components
         var change_archetype_args: usize = 0;
         change_archetype_args += 1; // Bind
         change_archetype_args += 2; // comps * (id + ptr)

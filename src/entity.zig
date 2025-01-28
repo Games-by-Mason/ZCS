@@ -169,7 +169,7 @@ pub const Entity = packed struct {
         return self.key.eql(other.key);
     }
 
-    pub fn addComponentCmd(
+    pub inline fn addComponentCmd(
         self: @This(),
         es: *Entities,
         cmds: *CmdBuf,
@@ -180,14 +180,89 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    pub fn addComponentCmdChecked(
+    pub inline fn addComponentCmdChecked(
         self: @This(),
         es: *Entities,
         cmds: *CmdBuf,
         T: type,
         comp: T,
     ) error{ZcsCmdBufOverflow}!void {
-        try self.changeArchetypeCmdChecked(es, cmds, .{ .add = .{comp} });
+        if (@sizeOf(T) > @sizeOf(*T) and meta.isComptimeKnown(comp)) {
+            try self.addComponentByPtrCmdChecked(es, cmds, T, comp);
+        } else {
+            try self.addComponentByValueCmdChecked(es, cmds, T, comp);
+        }
+    }
+
+    pub fn addComponentByValueCmd(
+        self: @This(),
+        es: *Entities,
+        cmds: *CmdBuf,
+        T: type,
+        comp: T,
+    ) void {
+        self.addComponentByValueCmdChecked(es, cmds, T, comp) catch |err|
+            @panic(@errorName(err));
+    }
+
+    pub fn addComponentByValueCmdChecked(
+        self: @This(),
+        es: *Entities,
+        cmds: *CmdBuf,
+        T: type,
+        comp: T,
+    ) error{ZcsCmdBufOverflow}!void {
+        // Early out if destroyed, also checks some assertions
+        if (!self.exists(es)) return;
+
+        // Restore the state on failure
+        const restore = cmds.*;
+        errdefer cmds.* = restore;
+
+        // Issue the subcommands
+        try SubCmd.encode(es, &cmds.change_archetype, .{ .bind_entity = self });
+        try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_val = .{
+            .id = es.registerComponentType(T),
+            .ptr = @ptrCast(&comp),
+            .interned = false,
+        } });
+    }
+
+    pub fn addComponentByPtrCmd(
+        self: @This(),
+        es: *Entities,
+        cmds: *CmdBuf,
+        T: type,
+        comptime comp: T,
+    ) void {
+        self.addComponentByPtrCmdChecked(es, cmds, T, comp) catch |err|
+            @panic(@errorName(err));
+    }
+
+    pub fn addComponentByPtrCmdChecked(
+        self: @This(),
+        es: *Entities,
+        cmds: *CmdBuf,
+        T: type,
+        comptime comp: T,
+    ) error{ZcsCmdBufOverflow}!void {
+        // Early out if destroyed, also checks some assertions
+        if (!self.exists(es)) return;
+
+        // Restore the state on failure
+        const restore = cmds.*;
+        errdefer cmds.* = restore;
+
+        // Issue the subcommands
+        const Interned = struct {
+            const value = comp;
+        };
+        try SubCmd.encode(es, &cmds.change_archetype, .{ .bind_entity = self });
+        try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_ptr = .{
+            .id = es.registerComponentType(T),
+            .ptr = @ptrCast(&Interned.value),
+            .interned = true,
+        } });
     }
 
     pub fn removeComponentCmd(
@@ -206,47 +281,6 @@ pub const Entity = packed struct {
         cmds: *CmdBuf,
         T: type,
     ) error{ZcsCmdBufOverflow}!void {
-        try self.changeArchetypeCmdChecked(es, cmds, .{
-            .remove = Component.flags(es, &.{T}),
-        });
-    }
-
-    /// Queues an archetype change. If the entity has been reserved but not committed, when executed
-    /// the change will commit the entity.
-    ///
-    /// `change` is allowed to have up to two fields:
-    /// * `add` is a tuple of components to add
-    /// * `remove` is a `Component.Flags` instance specifying which components to remove
-    ///
-    /// `add` is applied before `remove`.
-    ///
-    /// Added components:
-    /// * Must be registered component types
-    /// * May be optional, if null they will be skipped
-    /// * Are interned if the field is comptime and the component type is larger than a pointer
-    pub fn changeArchetypeCmd(
-        self: @This(),
-        es: *Entities,
-        cmds: *CmdBuf,
-        change: anytype,
-    ) void {
-        self.changeArchetypeCmdChecked(es, cmds, change) catch |err|
-            @panic(@errorName(err));
-    }
-
-    /// Similar to `changeArchetypeCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
-    /// panicking.
-    pub fn changeArchetypeCmdChecked(
-        self: @This(),
-        es: *Entities,
-        cmds: *CmdBuf,
-        changes: anytype,
-    ) error{ZcsCmdBufOverflow}!void {
-        // Check the types
-        const Changes = meta.ArchetypeChanges(@TypeOf(changes));
-        const add = Changes.getAdd(changes);
-        const remove = Changes.getRemove(changes);
-
         // Early out if destroyed, also checks some assertions
         if (!self.exists(es)) return;
 
@@ -254,34 +288,36 @@ pub const Entity = packed struct {
         const restore = cmds.*;
         errdefer cmds.* = restore;
 
-        // Sort for minimal padding
-        const sorted_fields = comptime meta.alignmentSort(@TypeOf(add));
-
         // Issue the subcommands
         try SubCmd.encode(es, &cmds.change_archetype, .{ .bind_entity = self });
-        try SubCmd.encode(es, &cmds.change_archetype, .{ .remove_components = remove });
-        inline for (0..add.len) |i| {
-            const field = @typeInfo(@TypeOf(add)).@"struct".fields[sorted_fields[i]];
+        try SubCmd.encode(es, &cmds.change_archetype, .{
+            .remove_components = Component.flags(es, &.{T}),
+        });
+    }
 
-            const optional: ?meta.Unwrapped(field.type) = @field(add, field.name);
-            if (optional) |some| {
-                if (field.is_comptime and @sizeOf(@TypeOf(some)) > @sizeOf(usize)) {
-                    try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_ptr = .{
-                        .id = es.registerComponentType(@TypeOf(some)),
-                        .ptr = &struct {
-                            const interned = some;
-                        }.interned,
-                        .interned = true,
-                    } });
-                } else {
-                    try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_val = .{
-                        .id = es.registerComponentType(@TypeOf(some)),
-                        .ptr = @ptrCast(&some),
-                        .interned = false,
-                    } });
-                }
-            }
-        }
+    /// Schedules the entity to be committed. Has no effect if it has already been committed, called
+    /// implicitly on add/remove. In practice only necessary when creating an empty entity.
+    pub fn commitCmd(self: @This(), es: *Entities, cmds: *CmdBuf) void {
+        self.commitCmdChecked(es, cmds) catch |err|
+            @panic(@errorName(err));
+    }
+
+    /// Similar to `commitCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
+    /// panicking.
+    pub fn commitCmdChecked(
+        self: @This(),
+        es: *Entities,
+        cmds: *CmdBuf,
+    ) error{ZcsCmdBufOverflow}!void {
+        // Early out if destroyed, also checks some assertions
+        if (!self.exists(es)) return;
+
+        // Restore the state on failure
+        const restore = cmds.*;
+        errdefer cmds.* = restore;
+
+        // Issue the subcommand
+        try SubCmd.encode(es, &cmds.change_archetype, .{ .bind_entity = self });
     }
 
     pub const ChangeArchetypeFromComponentsOptions = struct {

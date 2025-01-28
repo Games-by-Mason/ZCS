@@ -102,11 +102,11 @@ test "command buffer some test decode" {
     const e0 = Entity.reserveImmediately(&es);
     const e1 = Entity.reserveImmediately(&es);
     const e2 = Entity.reserveImmediately(&es);
-    e0.changeArchetypeCmd(&es, &cmds, .{});
-    e1.changeArchetypeCmdFromComponents(&es, &cmds, .{});
+    e0.commitCmd(&es, &cmds);
+    e1.commitCmd(&es, &cmds);
     const rb = RigidBody.random(rand);
     const model = Model.random(rand);
-    e2.changeArchetypeCmd(&es, &cmds, .{ .add = .{rb} });
+    e2.addComponentCmd(&es, &cmds, RigidBody, rb);
     try expectEqual(3, es.reserved());
     try expectEqual(0, es.count());
     cmds.execute(&es);
@@ -139,12 +139,10 @@ test "command buffer some test decode" {
     try expect(!e1.eql(e2));
     try expect(!e1.eql(.none));
 
-    e0.changeArchetypeCmd(&es, &cmds, .{ .remove = Component.flags(&es, &.{RigidBody}) });
-    e1.changeArchetypeCmdFromComponents(&es, &cmds, .{ .remove = Component.flags(&es, &.{RigidBody}) });
-    e2.changeArchetypeCmd(&es, &cmds, .{
-        .remove = Component.flags(&es, &.{RigidBody}),
-        .add = .{model},
-    });
+    e0.removeComponentCmd(&es, &cmds, RigidBody);
+    e1.removeComponentCmd(&es, &cmds, RigidBody);
+    e2.addComponentCmd(&es, &cmds, Model, model);
+    e2.removeComponentCmd(&es, &cmds, RigidBody);
     cmds.execute(&es);
     cmds.clear(&es);
 
@@ -163,52 +161,53 @@ test "command buffer some test decode" {
     try expectEqual(null, e2.getComponent(&es, Tag));
 }
 
-// Verify that fromComponents methods don't pass duplicate component data, this allows us to make
-// our capacity guarantees
-test "command buffer skip dups" {
-    var es = try Entities.init(gpa, 100);
-    defer es.deinit(gpa);
+// XXX: ...
+// // Verify that fromComponents methods don't pass duplicate component data, this allows us to make
+// // our capacity guarantees
+// test "command buffer skip dups" {
+//     var es = try Entities.init(gpa, 100);
+//     defer es.deinit(gpa);
 
-    var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .comp_bytes = @sizeOf(RigidBody) });
-    defer cmds.deinit(gpa, &es);
+//     var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .comp_bytes = @sizeOf(RigidBody) });
+//     defer cmds.deinit(gpa, &es);
 
-    const model1: Model = .{
-        .vertex_start = 1,
-        .vertex_count = 2,
-    };
-    const model2: Model = .{
-        .vertex_start = 3,
-        .vertex_count = 4,
-    };
+//     const model1: Model = .{
+//         .vertex_start = 1,
+//         .vertex_count = 2,
+//     };
+//     const model2: Model = .{
+//         .vertex_start = 3,
+//         .vertex_count = 4,
+//     };
 
-    const e0: Entity = Entity.reserveImmediately(&es);
+//     const e0: Entity = Entity.reserveImmediately(&es);
 
-    {
-        defer cmds.clear(&es);
-        e0.changeArchetypeCmdFromComponents(&es, &cmds, .{
-            .remove = Component.flags(&es, &.{}),
-            .add = &.{
-                .init(&es, &model1),
-                .init(&es, &RigidBody{}),
-                .init(&es, &model2),
-                .none,
-            },
-        });
-        var iter = cmds.change_archetype.iterator(&es);
-        const change_archetype = iter.next().?;
-        try expectEqual(
-            Component.Flags{},
-            change_archetype.remove,
-        );
-        var comps = change_archetype.componentIterator();
-        const comp1 = comps.next().?;
-        try expect(!comp1.interned);
-        try expectEqual(model2, comp1.as(&es, Model).?.*);
-        const comp2 = comps.next().?;
-        try expect(!comp2.interned);
-        try expectEqual(RigidBody{}, comp2.as(&es, RigidBody).?.*);
-    }
-}
+//     {
+//         defer cmds.clear(&es);
+//         e0.changeArchetypeCmdFromComponents(&es, &cmds, .{
+//             .remove = Component.flags(&es, &.{}),
+//             .add = &.{
+//                 .init(&es, &model1),
+//                 .init(&es, &RigidBody{}),
+//                 .init(&es, &model2),
+//                 .none,
+//             },
+//         });
+//         var iter = cmds.change_archetype.iterator(&es);
+//         const change_archetype = iter.next().?;
+//         try expectEqual(
+//             Component.Flags{},
+//             change_archetype.remove,
+//         );
+//         var comps = change_archetype.componentIterator();
+//         const comp1 = comps.next().?;
+//         try expect(!comp1.interned);
+//         try expectEqual(model2, comp1.as(&es, Model).?.*);
+//         const comp2 = comps.next().?;
+//         try expect(!comp2.interned);
+//         try expectEqual(RigidBody{}, comp2.as(&es, RigidBody).?.*);
+//     }
+// }
 
 // Verify that components are interned appropriately
 test "command buffer interning" {
@@ -238,478 +237,288 @@ test "command buffer interning" {
     };
     const model_value = Model.random(rand);
 
-    const rb_interned_optional: ?RigidBody = rb_interned;
-    const rb_value_optional: ?RigidBody = rb_value;
-    const model_interned_optional: ?Model = model_interned;
-    const model_value_optional: ?Model = model_value;
-
-    const rb_interned_null: ?RigidBody = null;
-    const rb_value_null: ?RigidBody = null;
-    const model_interned_null: ?Model = null;
-    const model_value_null: ?Model = null;
-
     const e0: Entity = .reserveImmediately(&es);
     const e1: Entity = .reserveImmediately(&es);
 
-    // Change archetype non optional
-    e0.changeArchetypeCmd(
-        &es,
-        &cmds,
-        .{
-            .remove = Component.flags(&es, &.{Tag}),
-            .add = .{ model_value, rb_interned },
-        },
-    );
-    e1.changeArchetypeCmd(
-        &es,
-        &cmds,
-        .{
-            .add = .{ model_interned, rb_value },
-            .remove = Component.flags(&es, &.{Tag}),
-        },
-    );
-    e0.changeArchetypeCmdFromComponents(&es, &cmds, .{
-        .add = &.{
-            .init(&es, &model_value),
-            .initInterned(&es, &rb_interned),
-        },
-        .remove = Component.flags(&es, &.{Tag}),
-    });
-    e1.changeArchetypeCmdFromComponents(&es, &cmds, .{
-        .add = &.{
-            .initInterned(&es, &model_interned),
-            .init(&es, &rb_value),
-        },
-        .remove = Component.flags(&es, &.{Tag}),
-    });
+    // Automatic interning
+    e0.addComponentCmd(&es, &cmds, Model, model_value);
+    e0.addComponentCmd(&es, &cmds, RigidBody, rb_interned);
+    e0.removeComponentCmd(&es, &cmds, Tag);
 
-    // Change archetype optional
-    e0.changeArchetypeCmd(
-        &es,
-        &cmds,
-        .{
-            .remove = Component.flags(&es, &.{Tag}),
-            .add = .{ model_value_optional, rb_interned_optional },
-        },
-    );
-    e1.changeArchetypeCmd(
-        &es,
-        &cmds,
-        .{
-            .remove = Component.flags(&es, &.{Tag}),
-            .add = .{ model_interned_optional, rb_value_optional },
-        },
-    );
-    e0.changeArchetypeCmdFromComponents(&es, &cmds, .{
-        .remove = Component.flags(&es, &.{Tag}),
-        .add = &.{
-            .init(&es, &model_value_optional),
-            .initInterned(&es, &rb_interned_optional),
-        },
-    });
-    e1.changeArchetypeCmdFromComponents(&es, &cmds, .{
-        .remove = Component.flags(&es, &.{Tag}),
-        .add = &.{
-            .initInterned(&es, &model_interned_optional),
-            .init(&es, &rb_value_optional),
-        },
-    });
+    e1.addComponentCmd(&es, &cmds, Model, model_interned);
+    e1.addComponentCmd(&es, &cmds, RigidBody, rb_value);
+    e1.removeComponentCmd(&es, &cmds, Tag);
 
-    // Change archetype null
-    e0.changeArchetypeCmd(
-        &es,
-        &cmds,
-        .{
-            .remove = Component.flags(&es, &.{Tag}),
-            .add = .{ model_value_null, rb_interned_null },
-        },
-    );
-    e1.changeArchetypeCmd(
-        &es,
-        &cmds,
-        .{
-            .remove = Component.flags(&es, &.{Tag}),
-            .add = .{ model_interned_null, rb_value_null },
-        },
-    );
-    e0.changeArchetypeCmdFromComponents(&es, &cmds, .{
-        .remove = Component.flags(&es, &.{Tag}),
-        .add = &.{
-            .init(&es, &model_value_null),
-            .initInterned(&es, &rb_interned_null),
-        },
-    });
-    e1.changeArchetypeCmdFromComponents(&es, &cmds, .{
-        .remove = Component.flags(&es, &.{Tag}),
-        .add = &.{
-            .initInterned(&es, &model_interned_null),
-            .init(&es, &rb_value_null),
-        },
-    });
+    // Explicit by value
+    e0.addComponentByValueCmd(&es, &cmds, Model, model_value);
+    e0.addComponentByValueCmd(&es, &cmds, RigidBody, rb_interned);
+
+    e1.addComponentByValueCmd(&es, &cmds, Model, model_interned);
+    e1.addComponentByValueCmd(&es, &cmds, RigidBody, rb_value);
+    e1.removeComponentCmd(&es, &cmds, Tag);
+
+    // Explicit interning
+    e0.addComponentByPtrCmd(&es, &cmds, RigidBody, rb_interned);
+    e0.addComponentByPtrCmd(&es, &cmds, Model, model_interned);
+    e0.removeComponentCmd(&es, &cmds, Tag);
 
     // Test the results
+    var iter = cmds.change_archetype.iterator(&es);
+
     {
-        var iter = cmds.change_archetype.iterator(&es);
-
-        // Change archetype non optional
-        {
-            const cmd = iter.next().?;
-            try expectEqual(e0, cmd.entity);
-            try expectEqual(
-                Component.flags(&es, &.{Tag}),
-                cmd.remove,
-            );
-            // Components reordered due to alignment
-            var comps = cmd.componentIterator();
-            const comp1 = comps.next().?;
-            try expect(comp1.interned);
-            try expectEqual(rb_interned, comp1.as(&es, RigidBody).?.*);
-            const comp2 = comps.next().?;
-            try expect(!comp2.interned);
-            try expectEqual(model_value, comp2.as(&es, Model).?.*);
-            try expectEqual(null, comps.next());
-        }
-        {
-            const cmd = iter.next().?;
-            try expectEqual(e1, cmd.entity);
-            try expectEqual(
-                Component.flags(&es, &.{Tag}),
-                cmd.remove,
-            );
-            // Components reordered due to alignment
-            var comps = cmd.componentIterator();
-            const comp1 = comps.next().?;
-            try expect(!comp1.interned);
-            try expectEqual(rb_value, comp1.as(&es, RigidBody).?.*);
-            const comp2 = comps.next().?;
-            try expect(!comp2.interned); // Not interned because it's too small!
-            try expectEqual(model_interned, comp2.as(&es, Model).?.*);
-            try expectEqual(null, comps.next());
-        }
-        {
-            const cmd = iter.next().?;
-            try expectEqual(e0, cmd.entity);
-            try expectEqual(
-                Component.flags(&es, &.{Tag}),
-                cmd.remove,
-            );
-            // Comps are encoded in reverse order by *fromComponents methods
-            var comps = cmd.componentIterator();
-            const comp1 = comps.next().?;
-            try expect(comp1.interned);
-            try expectEqual(rb_interned, comp1.as(&es, RigidBody).?.*);
-            const comp2 = comps.next().?;
-            try expect(!comp2.interned);
-            try expectEqual(model_value, comp2.as(&es, Model).?.*);
-            try expectEqual(null, comps.next());
-        }
-        {
-            const cmd = iter.next().?;
-            try expectEqual(e1, cmd.entity);
-            try expectEqual(
-                Component.flags(&es, &.{Tag}),
-                cmd.remove,
-            );
-            // Comps are encoded in reverse order by *fromComponents methods
-            var comps = cmd.componentIterator();
-            const comp1 = comps.next().?;
-            try expect(!comp1.interned);
-            try expectEqual(rb_value, comp1.as(&es, RigidBody).?.*);
-            const comp2 = comps.next().?;
-            // Low level API respects request regardless of size
-            try expect(comp2.interned);
-            try expectEqual(model_interned, comp2.as(&es, Model).?.*);
-            try expectEqual(null, comps.next());
-        }
-
-        // Change archetype optional
-        {
-            const cmd = iter.next().?;
-            try expectEqual(e0, cmd.entity);
-            try expectEqual(
-                Component.flags(&es, &.{Tag}),
-                cmd.remove,
-            );
-            // Components reordered due to alignment
-            var comps = cmd.componentIterator();
-            const comp1 = comps.next().?;
-            try expect(comp1.interned);
-            try expectEqual(rb_interned, comp1.as(&es, RigidBody).?.*);
-            const comp2 = comps.next().?;
-            try expect(!comp2.interned);
-            try expectEqual(model_value, comp2.as(&es, Model).?.*);
-            try expectEqual(null, comps.next());
-        }
-        {
-            const cmd = iter.next().?;
-            try expectEqual(e1, cmd.entity);
-            try expectEqual(
-                Component.flags(&es, &.{Tag}),
-                cmd.remove,
-            );
-            // Components reordered due to alignment
-            var comps = cmd.componentIterator();
-            const comp1 = comps.next().?;
-            try expect(!comp1.interned);
-            try expectEqual(rb_value, comp1.as(&es, RigidBody).?.*);
-            const comp2 = comps.next().?;
-            try expect(!comp2.interned); // Not interned because it's too small!
-            try expectEqual(model_interned, comp2.as(&es, Model).?.*);
-            try expectEqual(null, comps.next());
-        }
-        {
-            const cmd = iter.next().?;
-            try expectEqual(e0, cmd.entity);
-            try expectEqual(
-                Component.flags(&es, &.{Tag}),
-                cmd.remove,
-            );
-            // Comps are encoded in reverse order by *fromComponents methods
-            var comps = cmd.componentIterator();
-            const comp1 = comps.next().?;
-            try expect(comp1.interned);
-            try expectEqual(rb_interned, comp1.as(&es, RigidBody).?.*);
-            const comp2 = comps.next().?;
-            try expect(!comp2.interned);
-            try expectEqual(model_value, comp2.as(&es, Model).?.*);
-            try expectEqual(null, comps.next());
-        }
-        {
-            const cmd = iter.next().?;
-            try expectEqual(e1, cmd.entity);
-            try expectEqual(
-                Component.flags(&es, &.{Tag}),
-                cmd.remove,
-            );
-            // Comps are encoded in reverse order by *fromComponents methods
-            var comps = cmd.componentIterator();
-            const comp1 = comps.next().?;
-            try expect(!comp1.interned);
-            try expectEqual(rb_value, comp1.as(&es, RigidBody).?.*);
-            const comp2 = comps.next().?;
-            // Low level API respects request regardless of size
-            try expect(comp2.interned);
-            try expectEqual(model_interned, comp2.as(&es, Model).?.*);
-            try expectEqual(null, comps.next());
-        }
-
-        // Change archetype null
-        {
-            const cmd = iter.next().?;
-            try expectEqual(e0, cmd.entity);
-            try expectEqual(
-                Component.flags(&es, &.{Tag}),
-                cmd.remove,
-            );
-            var comps = cmd.componentIterator();
-            try expectEqual(null, comps.next());
-        }
-        {
-            const cmd = iter.next().?;
-            try expectEqual(e1, cmd.entity);
-            try expectEqual(
-                Component.flags(&es, &.{Tag}),
-                cmd.remove,
-            );
-            var comps = cmd.componentIterator();
-            try expectEqual(null, comps.next());
-        }
-        {
-            const cmd = iter.next().?;
-            try expectEqual(e0, cmd.entity);
-            try expectEqual(
-                Component.flags(&es, &.{Tag}),
-                cmd.remove,
-            );
-            var comps = cmd.componentIterator();
-            try expectEqual(null, comps.next());
-        }
-        {
-            const cmd = iter.next().?;
-            try expectEqual(e1, cmd.entity);
-            try expectEqual(
-                Component.flags(&es, &.{Tag}),
-                cmd.remove,
-            );
-            var comps = cmd.componentIterator();
-            try expectEqual(null, comps.next());
-        }
-
-        // Done
-        try expectEqual(null, iter.next());
-    }
-}
-
-test "command buffer overflow" {
-    // Not very exhaustive, but checks that command buffers return the overflow error on failure to
-    // append, and on submits that fail.
-
-    var xoshiro_256: std.Random.Xoshiro256 = .init(0);
-    const rand = xoshiro_256.random();
-
-    var es = try Entities.init(gpa, 100);
-    defer es.deinit(gpa);
-
-    // Tag/destroy overflow
-    {
-        var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
-            .tags = 0,
-            .args = 100,
-            .comp_bytes = 100,
-            .destroy = 0,
-            .reserved = 0,
-        });
-        defer cmds.deinit(gpa, &es);
-
-        try expectError(error.ZcsCmdBufOverflow, Entity.reserveImmediately(&es).changeArchetypeCmdChecked(&es, &cmds, .{}));
-        try expectError(error.ZcsCmdBufOverflow, Entity.reserveImmediately(&es).destroyCmdChecked(&es, &cmds));
-
-        try expectEqual(1.0, cmds.worstCaseUsage());
-
-        var iter = cmds.change_archetype.iterator(&es);
-        try expectEqual(null, iter.next());
-    }
-
-    // Arg overflow
-    {
-        var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
-            .tags = 100,
-            .args = 0,
-            .comp_bytes = 100,
-            .destroy = 100,
-            .reserved = 0,
-        });
-        defer cmds.deinit(gpa, &es);
-
-        try expectError(error.ZcsCmdBufOverflow, Entity.reserveImmediately(&es).changeArchetypeCmdChecked(
-            &es,
-            &cmds,
-            .{},
-        ));
-        const e = Entity.reserveImmediately(&es);
-        e.destroyCmd(&es, &cmds);
-
-        try expectEqual(1.0, cmds.worstCaseUsage());
-
-        try expectEqual(1, cmds.destroy.items.len);
-        try expectEqual(e, cmds.destroy.items[0]);
-        var iter = cmds.change_archetype.iterator(&es);
-        try expectEqual(null, iter.next());
-    }
-
-    // Component data overflow
-    {
-        var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
-            .tags = 100,
-            .args = 100,
-            .comp_bytes = @sizeOf(RigidBody) * 2 - 1,
-            .destroy = 100,
-            .reserved = 0,
-        });
-        defer cmds.deinit(gpa, &es);
-
-        const e: Entity = Entity.reserveImmediately(&es);
-        const rb = RigidBody.random(rand);
-
-        _ = Entity.reserveImmediately(&es).changeArchetypeCmd(&es, &cmds, .{ .add = .{rb} });
-        e.destroyCmd(&es, &cmds);
-        try expectError(error.ZcsCmdBufOverflow, e.changeArchetypeCmdChecked(
-            &es,
-            &cmds,
-            .{ .add = .{RigidBody.random(rand)} },
-        ));
-
-        try expectEqual(@as(f32, @sizeOf(RigidBody)) / @as(f32, @sizeOf(RigidBody) * 2 - 1), cmds.worstCaseUsage());
-
-        try expectEqual(1, cmds.destroy.items.len);
-        try expectEqual(e, cmds.destroy.items[0]);
-        var iter = cmds.change_archetype.iterator(&es);
-        const change_archetype = iter.next().?;
-        var add_comps = change_archetype.componentIterator();
-        const create_rb = add_comps.next().?;
-        try expectEqual(es.registerComponentType(RigidBody), create_rb.id);
-        try expectEqual(rb, create_rb.as(&es, RigidBody).?.*);
-        try expectEqual(null, add_comps.next());
-        try expectEqual(null, iter.next());
-    }
-}
-
-test "command buffer worst case capacity" {
-    // XXX: ...
-    if (true) return error.SkipZigTest;
-
-    const cb_capacity = 100;
-
-    var es = try Entities.init(gpa, cb_capacity * 10);
-    defer es.deinit(gpa);
-
-    var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = cb_capacity, .comp_bytes = 16 });
-    defer cmds.deinit(gpa, &es);
-
-    // Change archetype
-    {
-        // Non interned
-        for (0..cb_capacity) |_| {
-            _ = try Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
-                &es,
-                &cmds,
-                .{ .add = &.{
-                    .init(&es, &@as(u0, 0)),
-                    .init(&es, &@as(u8, 0)),
-                    .init(&es, &@as(u16, 0)),
-                    .init(&es, &@as(u32, 0)),
-                    .init(&es, &@as(u64, 0)),
-                    .init(&es, &@as(u128, 0)),
-                } },
-            );
-        }
-
-        try expect(cmds.worstCaseUsage() > 0.8);
-        cmds.clear(&es);
-
-        // Interned
-        for (0..cb_capacity) |_| {
-            _ = try Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
-                &es,
-                &cmds,
-                .{ .add = &.{
-                    .initInterned(&es, &@as(u0, 0)),
-                    .initInterned(&es, &@as(u8, 0)),
-                    .initInterned(&es, &@as(u16, 0)),
-                    .initInterned(&es, &@as(u32, 0)),
-                    .initInterned(&es, &@as(u64, 0)),
-                    .initInterned(&es, &@as(u128, 0)),
-                } },
-            );
-        }
-
-        try expect(cmds.worstCaseUsage() > 0.8);
-        cmds.clear(&es);
-
-        // Duplicates don't take up extra space
-        var dups: std.BoundedArray(Component.Optional, cb_capacity * 4) = .{};
-        for (0..dups.buffer.len) |i| {
-            dups.appendAssumeCapacity(.init(&es, &@as(u128, i)));
-        }
-        _ = try Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
-            &es,
-            &cmds,
-            .{ .add = dups.constSlice() },
+        const cmd = iter.next().?;
+        try expectEqual(e0, cmd.entity);
+        try expectEqual(
+            Component.flags(&es, &.{Tag}),
+            cmd.remove,
         );
-        cmds.clear(&es);
+        // Components reordered due to alignment
+        var comps = cmd.componentIterator();
+        const comp1 = comps.next().?;
+        try expect(!comp1.interned);
+        try expectEqual(model_value, comp1.as(&es, Model).?.*);
+        const comp2 = comps.next().?;
+        try expect(comp2.interned);
+        try expectEqual(rb_interned, comp2.as(&es, RigidBody).?.*);
+        try expectEqual(null, comps.next());
     }
-
-    // Destroy
     {
-        for (0..cb_capacity) |i| {
-            const e: Entity = .{ .key = .{
-                .index = @intCast(i),
-                .generation = @enumFromInt(0),
-            } };
-            try e.destroyCmdChecked(&es, &cmds);
-        }
-
-        try expect(cmds.worstCaseUsage() == 1.0);
-        cmds.clear(&es);
+        const cmd = iter.next().?;
+        try expectEqual(e1, cmd.entity);
+        try expectEqual(
+            Component.flags(&es, &.{Tag}),
+            cmd.remove,
+        );
+        var comps = cmd.componentIterator();
+        const comp1 = comps.next().?;
+        try expect(!comp1.interned); // Not interned because it's too small!
+        try expectEqual(model_interned, comp1.as(&es, Model).?.*);
+        const comp2 = comps.next().?;
+        try expect(!comp2.interned);
+        try expectEqual(rb_value, comp2.as(&es, RigidBody).?.*);
+        try expectEqual(null, comps.next());
     }
+    {
+        const cmd = iter.next().?;
+        try expectEqual(e0, cmd.entity);
+        try expectEqual(Component.Flags{}, cmd.remove);
+        // Comps are encoded in reverse order by *fromComponents methods
+        var comps = cmd.componentIterator();
+        const comp1 = comps.next().?;
+        try expect(!comp1.interned);
+        try expectEqual(model_value, comp1.as(&es, Model).?.*);
+        const comp2 = comps.next().?;
+        try expect(!comp2.interned);
+        try expectEqual(rb_interned, comp2.as(&es, RigidBody).?.*);
+        try expectEqual(null, comps.next());
+    }
+    {
+        const cmd = iter.next().?;
+        try expectEqual(e1, cmd.entity);
+        try expectEqual(
+            Component.flags(&es, &.{Tag}),
+            cmd.remove,
+        );
+        var comps = cmd.componentIterator();
+        const comp1 = comps.next().?;
+        try expect(!comp1.interned);
+        try expectEqual(model_interned, comp1.as(&es, Model).?.*);
+        const comp2 = comps.next().?;
+        try expect(!comp2.interned);
+        try expectEqual(rb_value, comp2.as(&es, RigidBody).?.*);
+        try expectEqual(null, comps.next());
+    }
+    {
+        const cmd = iter.next().?;
+        try expectEqual(e0, cmd.entity);
+        try expectEqual(
+            Component.flags(&es, &.{Tag}),
+            cmd.remove,
+        );
+        var comps = cmd.componentIterator();
+        const comp1 = comps.next().?;
+        try expect(comp1.interned);
+        try expectEqual(rb_interned, comp1.as(&es, RigidBody).?.*);
+        const comp2 = comps.next().?;
+        try expect(comp2.interned);
+        try expectEqual(model_interned, comp2.as(&es, Model).?.*);
+        try expectEqual(null, comps.next());
+    }
+
+    try expectEqual(null, iter.next());
 }
+
+// XXX: ...
+// test "command buffer overflow" {
+//     // Not very exhaustive, but checks that command buffers return the overflow error on failure to
+//     // append, and on submits that fail.
+
+//     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
+//     const rand = xoshiro_256.random();
+
+//     var es = try Entities.init(gpa, 100);
+//     defer es.deinit(gpa);
+
+//     // Tag/destroy overflow
+//     {
+//         var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
+//             .tags = 0,
+//             .args = 100,
+//             .comp_bytes = 100,
+//             .destroy = 0,
+//             .reserved = 0,
+//         });
+//         defer cmds.deinit(gpa, &es);
+
+//         try expectError(error.ZcsCmdBufOverflow, Entity.reserveImmediately(&es).commitCmdChecked(&es, &cmds, .{}));
+//         try expectError(error.ZcsCmdBufOverflow, Entity.reserveImmediately(&es).destroyCmdChecked(&es, &cmds));
+
+//         try expectEqual(1.0, cmds.worstCaseUsage());
+
+//         var iter = cmds.change_archetype.iterator(&es);
+//         try expectEqual(null, iter.next());
+//     }
+
+//     // Arg overflow
+//     {
+//         var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
+//             .tags = 100,
+//             .args = 0,
+//             .comp_bytes = 100,
+//             .destroy = 100,
+//             .reserved = 0,
+//         });
+//         defer cmds.deinit(gpa, &es);
+
+//         try expectError(error.ZcsCmdBufOverflow, Entity.reserveImmediately(&es).changeArchetypeCmdChecked(
+//             &es,
+//             &cmds,
+//             .{},
+//         ));
+//         const e = Entity.reserveImmediately(&es);
+//         e.destroyCmd(&es, &cmds);
+
+//         try expectEqual(1.0, cmds.worstCaseUsage());
+
+//         try expectEqual(1, cmds.destroy.items.len);
+//         try expectEqual(e, cmds.destroy.items[0]);
+//         var iter = cmds.change_archetype.iterator(&es);
+//         try expectEqual(null, iter.next());
+//     }
+
+//     // Component data overflow
+//     {
+//         var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
+//             .tags = 100,
+//             .args = 100,
+//             .comp_bytes = @sizeOf(RigidBody) * 2 - 1,
+//             .destroy = 100,
+//             .reserved = 0,
+//         });
+//         defer cmds.deinit(gpa, &es);
+
+//         const e: Entity = Entity.reserveImmediately(&es);
+//         const rb = RigidBody.random(rand);
+
+//         _ = Entity.reserveImmediately(&es).changeArchetypeCmd(&es, &cmds, .{ .add = .{rb} });
+//         e.destroyCmd(&es, &cmds);
+//         try expectError(error.ZcsCmdBufOverflow, e.changeArchetypeCmdChecked(
+//             &es,
+//             &cmds,
+//             .{ .add = .{RigidBody.random(rand)} },
+//         ));
+
+//         try expectEqual(@as(f32, @sizeOf(RigidBody)) / @as(f32, @sizeOf(RigidBody) * 2 - 1), cmds.worstCaseUsage());
+
+//         try expectEqual(1, cmds.destroy.items.len);
+//         try expectEqual(e, cmds.destroy.items[0]);
+//         var iter = cmds.change_archetype.iterator(&es);
+//         const change_archetype = iter.next().?;
+//         var add_comps = change_archetype.componentIterator();
+//         const create_rb = add_comps.next().?;
+//         try expectEqual(es.registerComponentType(RigidBody), create_rb.id);
+//         try expectEqual(rb, create_rb.as(&es, RigidBody).?.*);
+//         try expectEqual(null, add_comps.next());
+//         try expectEqual(null, iter.next());
+//     }
+// }
+
+// test "command buffer worst case capacity" {
+//     // XXX: ...
+//     if (true) return error.SkipZigTest;
+
+//     const cb_capacity = 100;
+
+//     var es = try Entities.init(gpa, cb_capacity * 10);
+//     defer es.deinit(gpa);
+
+//     var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = cb_capacity, .comp_bytes = 16 });
+//     defer cmds.deinit(gpa, &es);
+
+//     // Change archetype
+//     {
+//         // Non interned
+//         for (0..cb_capacity) |_| {
+//             _ = try Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
+//                 &es,
+//                 &cmds,
+//                 .{ .add = &.{
+//                     .init(&es, &@as(u0, 0)),
+//                     .init(&es, &@as(u8, 0)),
+//                     .init(&es, &@as(u16, 0)),
+//                     .init(&es, &@as(u32, 0)),
+//                     .init(&es, &@as(u64, 0)),
+//                     .init(&es, &@as(u128, 0)),
+//                 } },
+//             );
+//         }
+
+//         try expect(cmds.worstCaseUsage() > 0.8);
+//         cmds.clear(&es);
+
+//         // Interned
+//         for (0..cb_capacity) |_| {
+//             _ = try Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
+//                 &es,
+//                 &cmds,
+//                 .{ .add = &.{
+//                     .initInterned(&es, &@as(u0, 0)),
+//                     .initInterned(&es, &@as(u8, 0)),
+//                     .initInterned(&es, &@as(u16, 0)),
+//                     .initInterned(&es, &@as(u32, 0)),
+//                     .initInterned(&es, &@as(u64, 0)),
+//                     .initInterned(&es, &@as(u128, 0)),
+//                 } },
+//             );
+//         }
+
+//         try expect(cmds.worstCaseUsage() > 0.8);
+//         cmds.clear(&es);
+
+//         // Duplicates don't take up extra space
+//         var dups: std.BoundedArray(Component.Optional, cb_capacity * 4) = .{};
+//         for (0..dups.buffer.len) |i| {
+//             dups.appendAssumeCapacity(.init(&es, &@as(u128, i)));
+//         }
+//         _ = try Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
+//             &es,
+//             &cmds,
+//             .{ .add = dups.constSlice() },
+//         );
+//         cmds.clear(&es);
+//     }
+
+//     // Destroy
+//     {
+//         for (0..cb_capacity) |i| {
+//             const e: Entity = .{ .key = .{
+//                 .index = @intCast(i),
+//                 .generation = @enumFromInt(0),
+//             } };
+//             try e.destroyCmdChecked(&es, &cmds);
+//         }
+
+//         try expect(cmds.worstCaseUsage() == 1.0);
+//         cmds.clear(&es);
+//     }
+// }

@@ -118,3 +118,7 @@ test "ArchetypeChanges" {
     try std.testing.expectEqual(null, DuplicateComponentType(struct { i32, f32, u32 }));
     try std.testing.expectEqual(null, DuplicateComponentType(struct { i32, f32, ?u32 }));
 }
+
+pub inline fn isComptimeKnown(value: anytype) bool {
+    return @typeInfo(@TypeOf(.{value})).@"struct".fields[0].is_comptime;
+}
