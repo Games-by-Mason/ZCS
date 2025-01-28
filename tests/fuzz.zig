@@ -458,6 +458,7 @@ const FuzzCmdBuf = struct {
                     rb,
                     model,
                     tag,
+                    commit,
                 })) {
                     .rb => {
                         entity.removeComponentCmd(&self.es, &self.cmds, RigidBody);
@@ -470,6 +471,9 @@ const FuzzCmdBuf = struct {
                     .tag => {
                         entity.removeComponentCmd(&self.es, &self.cmds, Tag);
                         if (expected) |e| e.tag = null;
+                    },
+                    .commit => {
+                        entity.commitCmd(&self.es, &self.cmds);
                     },
                 }
             }

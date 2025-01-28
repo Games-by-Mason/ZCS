@@ -69,7 +69,7 @@ pub const Entity = packed struct {
 
     /// Queues an entity for destruction.
     ///
-    /// Destroying an entity that has already been destroyed has no effect.
+    /// Destroying an entity that no longer exists has no effect.
     pub fn destroyCmd(self: @This(), es: *const Entities, cmds: *CmdBuf) void {
         self.destroyCmdChecked(es, cmds) catch |err|
             @panic(@errorName(err));
@@ -169,6 +169,12 @@ pub const Entity = packed struct {
         return self.key.eql(other.key);
     }
 
+    /// Queues a component to be added.
+    ///
+    /// Will automatically pass the data by pointer if it's comptime known and larger than pointer
+    /// sized.
+    ///
+    /// Adding components to an entity that no longer exists has no effect.
     pub inline fn addComponentCmd(
         self: @This(),
         es: *Entities,
@@ -180,6 +186,8 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
+    /// Similar to `addComponentCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
+    /// panicking.
     pub inline fn addComponentCmdChecked(
         self: @This(),
         es: *Entities,
@@ -194,6 +202,7 @@ pub const Entity = packed struct {
         }
     }
 
+    /// Similar to `addComponentCmd` but forces the data to be passed by value.
     pub fn addComponentByValueCmd(
         self: @This(),
         es: *Entities,
@@ -205,6 +214,8 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
+    /// Similar to `addComponentByValueCmd`, but returns `error.ZcsCmdBufOverflow` on failure
+    /// instead of panicking.
     pub fn addComponentByValueCmdChecked(
         self: @This(),
         es: *Entities,
@@ -228,6 +239,8 @@ pub const Entity = packed struct {
         } });
     }
 
+    /// Similar to `addComponentCmd` but forces the data to be passed by pointer. Only available for
+    /// comptime known arguments.
     pub fn addComponentByPtrCmd(
         self: @This(),
         es: *Entities,
@@ -239,6 +252,8 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
+    /// Similar to `addComponentByPtrCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead
+    /// of panicking.
     pub fn addComponentByPtrCmdChecked(
         self: @This(),
         es: *Entities,
@@ -265,6 +280,8 @@ pub const Entity = packed struct {
         } });
     }
 
+    /// Queues the given component to be removed. Has no effect if the component is not present, or
+    /// the entity no longer exists.
     pub fn removeComponentCmd(
         self: @This(),
         es: *Entities,
@@ -275,6 +292,8 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
+    /// Similar to `removeComponentCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
+    /// panicking.
     pub fn removeComponentCmdChecked(
         self: @This(),
         es: *Entities,
@@ -295,7 +314,7 @@ pub const Entity = packed struct {
         });
     }
 
-    /// Schedules the entity to be committed. Has no effect if it has already been committed, called
+    /// Queues the entity to be committed. Has no effect if it has already been committed, called
     /// implicitly on add/remove. In practice only necessary when creating an empty entity.
     pub fn commitCmd(self: @This(), es: *Entities, cmds: *CmdBuf) void {
         self.commitCmdChecked(es, cmds) catch |err|
