@@ -3,11 +3,16 @@ const assert = std.debug.assert;
 
 const zcs = @import("root.zig");
 const slot_map = @import("slot_map");
+
+const typeId = zcs.typeId;
+
+const SubCmd = @import("CmdBuf/sub_cmd.zig").SubCmd;
+
 const SlotMap = slot_map.SlotMap;
 const Entities = zcs.Entities;
 const Component = zcs.Component;
 const CmdBuf = zcs.CmdBuf;
-const SubCmd = @import("CmdBuf/sub_cmd.zig").SubCmd;
+const TypeId = zcs.TypeId;
 
 const meta = @import("meta.zig");
 
@@ -153,13 +158,9 @@ pub const Entity = packed struct {
     }
 
     /// Similar to `getComponent`, but operates on component IDs instead of types.
-    pub fn getComponentFromId(
-        self: @This(),
-        es: *const Entities,
-        id: Component.Id,
-    ) ?[]u8 {
+    pub fn getComponentFromId(self: @This(), es: *const Entities, id: TypeId) ?[]u8 {
         const index = es.comp_types.getIndexFromId(id) orelse return null;
-        return self.getComponentFromIndex(index);
+        return self.getComponentFromIndex(es, index);
     }
 
     /// Similar to `getComponent`, but operates on component indices instead of types.
@@ -243,9 +244,9 @@ pub const Entity = packed struct {
         errdefer cmds.* = restore;
 
         // Issue the subcommands
-        try SubCmd.encode(es, &cmds.change_archetype, .{ .bind_entity = self });
-        try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_val = .{
-            .index = es.comp_types.registerIndex(T),
+        try SubCmd.encode(&cmds.change_archetype, .{ .bind_entity = self });
+        try SubCmd.encode(&cmds.change_archetype, .{ .add_component_val = .{
+            .id = typeId(T),
             .bytes = std.mem.asBytes(&comp),
             .interned = false,
         } });
@@ -284,9 +285,9 @@ pub const Entity = packed struct {
         const Interned = struct {
             const value = comp;
         };
-        try SubCmd.encode(es, &cmds.change_archetype, .{ .bind_entity = self });
-        try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_ptr = .{
-            .index = es.comp_types.registerIndex(T),
+        try SubCmd.encode(&cmds.change_archetype, .{ .bind_entity = self });
+        try SubCmd.encode(&cmds.change_archetype, .{ .add_component_ptr = .{
+            .id = typeId(T),
             .bytes = std.mem.asBytes(&Interned.value),
             .interned = true,
         } });
@@ -320,8 +321,8 @@ pub const Entity = packed struct {
         errdefer cmds.* = restore;
 
         // Issue the subcommands
-        try SubCmd.encode(es, &cmds.change_archetype, .{ .bind_entity = self });
-        try SubCmd.encode(es, &cmds.change_archetype, .{
+        try SubCmd.encode(&cmds.change_archetype, .{ .bind_entity = self });
+        try SubCmd.encode(&cmds.change_archetype, .{
             .remove_components = Component.flags(es, &.{T}),
         });
     }
@@ -348,7 +349,7 @@ pub const Entity = packed struct {
         errdefer cmds.* = restore;
 
         // Issue the subcommand
-        try SubCmd.encode(es, &cmds.change_archetype, .{ .bind_entity = self });
+        try SubCmd.encode(&cmds.change_archetype, .{ .bind_entity = self });
     }
 
     pub const ChangeArchetypeFromComponentsOptions = struct {

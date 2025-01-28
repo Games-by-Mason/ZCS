@@ -80,8 +80,8 @@ test "command buffer some test decode" {
     try expect(!Entity.none.exists(&es));
 
     // Make sure we exercise the `toOptional` API and such
-    const comp: Component = .init(&es, &Tag{});
-    const comp_interned: Component = .init(&es, &Tag{});
+    const comp: Component = .init(&Tag{});
+    const comp_interned: Component = .init(&Tag{});
     const comp_optional = comp.toOptional();
     const comp_optional_interned = comp.toOptional();
     try expect(!comp.interned);
@@ -202,10 +202,10 @@ test "command buffer some test decode" {
 //         var comps = change_archetype.componentIterator();
 //         const comp1 = comps.next().?;
 //         try expect(!comp1.interned);
-//         try expectEqual(model2, comp1.as(&es, Model).?.*);
+//         try expectEqual(model2, comp1.as(Model).?.*);
 //         const comp2 = comps.next().?;
 //         try expect(!comp2.interned);
-//         try expectEqual(RigidBody{}, comp2.as(&es, RigidBody).?.*);
+//         try expectEqual(RigidBody{}, comp2.as(RigidBody).?.*);
 //     }
 // }
 
@@ -276,10 +276,10 @@ test "command buffer interning" {
         var comps = cmd.componentIterator();
         const comp1 = comps.next().?;
         try expect(!comp1.interned);
-        try expectEqual(model_value, comp1.as(&es, Model).?.*);
+        try expectEqual(model_value, comp1.as(Model).?.*);
         const comp2 = comps.next().?;
         try expect(comp2.interned);
-        try expectEqual(rb_interned, comp2.as(&es, RigidBody).?.*);
+        try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
         try expectEqual(null, comps.next());
     }
     {
@@ -292,10 +292,10 @@ test "command buffer interning" {
         var comps = cmd.componentIterator();
         const comp1 = comps.next().?;
         try expect(!comp1.interned); // Not interned because it's too small!
-        try expectEqual(model_interned, comp1.as(&es, Model).?.*);
+        try expectEqual(model_interned, comp1.as(Model).?.*);
         const comp2 = comps.next().?;
         try expect(!comp2.interned);
-        try expectEqual(rb_value, comp2.as(&es, RigidBody).?.*);
+        try expectEqual(rb_value, comp2.as(RigidBody).?.*);
         try expectEqual(null, comps.next());
     }
     {
@@ -306,10 +306,10 @@ test "command buffer interning" {
         var comps = cmd.componentIterator();
         const comp1 = comps.next().?;
         try expect(!comp1.interned);
-        try expectEqual(model_value, comp1.as(&es, Model).?.*);
+        try expectEqual(model_value, comp1.as(Model).?.*);
         const comp2 = comps.next().?;
         try expect(!comp2.interned);
-        try expectEqual(rb_interned, comp2.as(&es, RigidBody).?.*);
+        try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
         try expectEqual(null, comps.next());
     }
     {
@@ -322,10 +322,10 @@ test "command buffer interning" {
         var comps = cmd.componentIterator();
         const comp1 = comps.next().?;
         try expect(!comp1.interned);
-        try expectEqual(model_interned, comp1.as(&es, Model).?.*);
+        try expectEqual(model_interned, comp1.as(Model).?.*);
         const comp2 = comps.next().?;
         try expect(!comp2.interned);
-        try expectEqual(rb_value, comp2.as(&es, RigidBody).?.*);
+        try expectEqual(rb_value, comp2.as(RigidBody).?.*);
         try expectEqual(null, comps.next());
     }
     {
@@ -338,10 +338,10 @@ test "command buffer interning" {
         var comps = cmd.componentIterator();
         const comp1 = comps.next().?;
         try expect(comp1.interned);
-        try expectEqual(rb_interned, comp1.as(&es, RigidBody).?.*);
+        try expectEqual(rb_interned, comp1.as(RigidBody).?.*);
         const comp2 = comps.next().?;
         try expect(comp2.interned);
-        try expectEqual(model_interned, comp2.as(&es, Model).?.*);
+        try expectEqual(model_interned, comp2.as(Model).?.*);
         try expectEqual(null, comps.next());
     }
 

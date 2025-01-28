@@ -185,7 +185,7 @@ pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
                 @compileError("view field is not Entity or pointer to a component: " ++ @typeName(field.type));
             };
 
-            const comp_index = self.comp_types.registerIndex(T);
+            const comp_index = self.comp_types.register(T);
             comp_indices[i] = comp_index;
             if (@typeInfo(field.type) != .optional) {
                 required_comps.insert(comp_index);

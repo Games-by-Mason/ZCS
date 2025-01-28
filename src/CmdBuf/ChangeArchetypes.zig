@@ -12,7 +12,7 @@ comp_bytes: std.ArrayListAlignedUnmanaged(u8, Entities.max_align),
 bound: Entity = .none,
 
 /// Returns an iterator over the archetype changes.
-pub fn iterator(self: *const @This(), es: *const Entities) Iterator {
+pub fn iterator(self: *const @This(), es: *Entities) Iterator {
     return .{ .decoder = .{
         .cmds = self,
         .es = es,
@@ -58,13 +58,15 @@ pub const Iterator = struct {
                             .bind_entity => break,
                             .add_component_val => {
                                 const comp = self.decoder.next().?.add_component_val;
-                                add.insert(comp.index);
-                                remove.remove(comp.index);
+                                const index = self.decoder.es.comp_types.registerId(comp.id);
+                                add.insert(index);
+                                remove.remove(index);
                             },
                             .add_component_ptr => {
                                 const comp = self.decoder.next().?.add_component_ptr;
-                                add.insert(comp.index);
-                                remove.remove(comp.index);
+                                const index = self.decoder.es.comp_types.registerId(comp.id);
+                                add.insert(index);
+                                remove.remove(index);
                             },
                             .remove_components => {
                                 const comps = self.decoder.next().?.remove_components;
@@ -114,7 +116,8 @@ pub const ComponentIterator = struct {
                 },
                 .bind_entity => break,
             };
-            if (!self.skip.contains(comp.index)) return comp;
+            const index = self.decoder.es.comp_types.registerId(comp.id);
+            if (!self.skip.contains(index)) return comp;
         }
         return null;
     }

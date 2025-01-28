@@ -7,12 +7,16 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const zcs = @import("root.zig");
+
+const typeId = zcs.typeId;
+
+const TypeId = zcs.TypeId;
 const Entities = zcs.Entities;
 
 const Component = @This();
 
-/// The component type's index.
-index: Index,
+/// The component's type ID.
+id: TypeId,
 /// The component data.
 bytes: []const u8,
 /// If true, `ptr` points to constant. If false, it points to a temporary value.
@@ -21,42 +25,41 @@ interned: bool,
 /// An optional `Component`.
 pub const Optional = struct {
     pub const none: @This() = .{
-        .index_or_undef = undefined,
+        .id_or_undef = undefined,
         .ptr = null,
         .interned_or_undef = undefined,
     };
 
-    index_or_undef: Index,
+    id_or_undef: TypeId,
     bytes: ?[]const u8,
     interned_or_undef: bool,
 
     /// Similar to `Component.init`, but `ptr` may point to an optional.
-    pub fn init(es: *Entities, ptr: anytype) @This() {
-        return @This().initMaybeInterned(es, ptr, false);
+    pub fn init(ptr: anytype) @This() {
+        return @This().initMaybeInterned(ptr, false);
     }
 
     /// Similar to `Component.initInterned`, but `ptr` may point to an optional.
-    pub fn initInterned(es: *Entities, ptr: anytype) @This() {
-        return @This().initMaybeInterned(es, ptr, true);
+    pub fn initInterned(ptr: anytype) @This() {
+        return @This().initMaybeInterned(ptr, true);
     }
 
-    fn initMaybeInterned(es: *Entities, ptr: anytype, interned: bool) @This() {
+    fn initMaybeInterned(ptr: anytype, interned: bool) @This() {
         const pointer = @typeInfo(@TypeOf(ptr)).pointer;
         comptime assert(pointer.size == .one);
         comptime assert(pointer.sentinel_ptr == null);
 
         switch (@typeInfo(pointer.child)) {
             .optional => |opt| {
-                const index = es.registerComponentType(opt.child);
                 const some = if (ptr.*) |*some| some else return .none;
                 return .{
-                    .index_or_undef = index,
+                    .id_or_undef = typeId(opt.child),
                     .ptr = @ptrCast(some),
                     .interned_or_undef = interned,
                 };
             },
             else => return .{
-                .index_or_undef = es.registerComponentType(pointer.child),
+                .id_or_undef = typeId(pointer.child),
                 .ptr = @ptrCast(ptr),
                 .interned_or_undef = interned,
             },
@@ -67,7 +70,7 @@ pub const Optional = struct {
     pub fn unwrap(self: @This()) ?Component {
         if (self.bytes) |bytes| {
             return .{
-                .index = self.index_or_undef,
+                .id = self.id_or_undef,
                 .bytes = bytes,
                 .interned = self.interned_or_undef,
             };
@@ -77,19 +80,19 @@ pub const Optional = struct {
 };
 
 /// Initialize a component from a pointer to a registered component type.
-pub fn init(es: *Entities, value: anytype) @This() {
-    return initMaybeInterned(es, value, false);
+pub fn init(value: anytype) @This() {
+    return initMaybeInterned(value, false);
 }
 
 /// Similar to `init`, but interned is set to true indicating that the pointer is to a constant.
-pub fn initInterned(es: *const Entities, ptr: anytype) @This() {
-    return initMaybeInterned(es, ptr, true);
+pub fn initInterned(ptr: anytype) @This() {
+    return initMaybeInterned(ptr, true);
 }
 
-fn initMaybeInterned(es: *Entities, ptr: anytype, interned: bool) @This() {
+fn initMaybeInterned(ptr: anytype, interned: bool) @This() {
     const T = @typeInfo(@TypeOf(ptr)).pointer.child;
     return .{
-        .index = es.comp_types.registerIndex(T),
+        .id = typeId(T),
         .bytes = std.mem.asBytes(ptr),
         .interned = interned,
     };
@@ -98,15 +101,15 @@ fn initMaybeInterned(es: *Entities, ptr: anytype, interned: bool) @This() {
 /// Returns the component as an optional.
 pub fn toOptional(self: @This()) Optional {
     return .{
-        .index_or_undef = self.index,
+        .id_or_undef = self.id,
         .bytes = self.bytes,
         .interned_or_undef = self.interned,
     };
 }
 
 /// Returns the component as the given type if it matches its ID, or null otherwise.
-pub fn as(self: @This(), es: *const Entities, T: anytype) ?*const T {
-    if (self.index != es.comp_types.getIndex(T)) return null;
+pub fn as(self: @This(), T: anytype) ?*const T {
+    if (self.id != typeId(T)) return null;
     // XXX: does this assert size matches or should we?
     return @alignCast(@ptrCast(self.bytes));
 }
@@ -124,7 +127,7 @@ pub const Flags = std.enums.EnumSet(Index);
 pub fn flags(es: *Entities, types: []const type) Flags {
     var result: Flags = .{};
     inline for (types) |ty| {
-        result.insert(es.comp_types.registerIndex(ty));
+        result.insert(es.comp_types.register(ty));
     }
     return result;
 }

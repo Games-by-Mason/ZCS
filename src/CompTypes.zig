@@ -48,29 +48,39 @@ pub fn getIndexFromId(self: @This(), id: TypeId) ?Component.Index {
 }
 
 /// Registers a new component type. Noop if already present.
-pub fn registerIndex(self: *@This(), T: type) Component.Index {
+pub fn register(self: *@This(), T: type) Component.Index {
     // Check the type
+    // XXX: make sure this is done on add/remove/such since we can't do it in the helper. actually
+    // maybe we can just move this to typeId!
     assertAllowedAsComponentType(T);
+    return self.registerId(typeId(T));
+}
+
+/// Similar to `register`, but doesn't require a comptime type.
+pub fn registerId(self: *@This(), id: TypeId) Component.Index {
+    // Double check the alignment
+    assert(id.alignment <= Entities.max_align);
 
     // Early out if we're already registered
-    if (self.getIndex(T)) |index| return index;
+    if (self.getIndexFromId(id)) |index| return index;
 
     // Check if we've registered too many components
-    const i = self.map.count();
-    if (i == Component.Index.max / 2) {
-        std.log.warn("{} component types registered, you're at 50% the fatal capacity!", .{i});
+    const index = self.map.count();
+    if (index == Component.Index.max / 2) {
+        std.log.warn("{} component types registered, you're at 50% the fatal capacity!", .{index});
     }
-    if (i >= Component.Index.max) {
+    if (index >= Component.Index.max) {
         @panic("component type overflow");
     }
 
+    // XXX: we actually don't need to store this data here anymore since you can just get it from the id right??
     // Register the ID
-    self.map.putAssumeCapacity(typeId(T), .{
-        .size = @sizeOf(T),
-        .alignment = @alignOf(T),
+    self.map.putAssumeCapacity(id, .{
+        .size = id.size,
+        .alignment = id.alignment,
     });
 
-    return @enumFromInt(i);
+    return @enumFromInt(index);
 }
 
 /// Returns the size of the component type with the given ID.
