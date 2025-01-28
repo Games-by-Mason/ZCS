@@ -8,7 +8,7 @@ const Component = zcs.Component;
 
 tags: std.ArrayListUnmanaged(SubCmd.Tag),
 args: std.ArrayListUnmanaged(u64),
-comp_bytes: std.ArrayListAlignedUnmanaged(u8, Entities.max_align),
+comp_bytes: std.ArrayListAlignedUnmanaged(u8, Component.max_align),
 bound: Entity = .none,
 
 /// Returns an iterator over the archetype changes.
@@ -83,11 +83,13 @@ pub const Iterator = struct {
                     };
                 },
                 .add_component_val, .add_component_ptr, .remove_components => {
-                    // Add/remove encoded without binding! This shouldn't be possible. Add/remove
-                    // always attempts to do a bind first. This can only be skipped if the given
-                    // entity is already bound. Add/remove to entities that don't exist are already
-                    // skipped so binding `.none` isn't an issue.
-                    unreachable;
+                    // Add/remove commands with no entity bound. This can occur if the first entity
+                    // we bind is `.none`. Since it is none, and the default cached binding is none,
+                    // the binding is omitted.
+                    //
+                    // Adding/removing components from entities that don't exist, such as `.none`,
+                    // is a noop, so we just skip these commands.
+                    continue;
                 },
             }
         }

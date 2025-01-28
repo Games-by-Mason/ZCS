@@ -29,7 +29,6 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
 
 /// Gets the index associated with the given component type, or null if it is not registered.
 pub fn getIndex(self: @This(), T: type) ?Component.Index {
-    assertAllowedAsComponentType(T);
     return self.getIndexFromId(typeId(T));
 }
 
@@ -43,17 +42,13 @@ pub fn getIndexFromId(self: @This(), id: TypeId) ?Component.Index {
 
 /// Registers a new component type. Noop if already present.
 pub fn register(self: *@This(), T: type) Component.Index {
-    // Check the type
-    // XXX: make sure this is done on add/remove/such since we can't do it in the helper. actually
-    // maybe we can just move this to typeId!
-    assertAllowedAsComponentType(T);
     return self.registerId(typeId(T));
 }
 
 /// Similar to `register`, but doesn't require a comptime type.
 pub fn registerId(self: *@This(), id: TypeId) Component.Index {
     // Double check the alignment
-    assert(id.alignment <= Entities.max_align);
+    assert(id.alignment <= Component.max_align);
 
     // Early out if we're already registered
     if (self.getIndexFromId(id)) |index| return index;
@@ -71,21 +66,4 @@ pub fn registerId(self: *@This(), id: TypeId) Component.Index {
     self.map.putAssumeCapacity(id, {});
 
     return @enumFromInt(index);
-}
-
-/// Comptime asserts that the given type is allowed to be registered as a component.
-fn assertAllowedAsComponentType(T: type) void {
-    if (@typeInfo(T) == .optional) {
-        // There's nothing technically wrong with this, but if we allowed it then the change arch
-        // functions couldn't use optionals to allow deciding at runtime whether or not to create a
-        // component.
-        //
-        // Furthermore, it would be difficult to distinguish syntactically whether an
-        // optional component was missing or null.
-        //
-        // Instead, optional components should be represented by a struct with an optional
-        // field, or a tagged union.
-        @compileError("component types may not be optional: " ++ @typeName(T));
-    }
-    comptime assert(@alignOf(T) <= Entities.max_align);
 }

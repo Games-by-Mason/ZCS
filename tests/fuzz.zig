@@ -439,17 +439,17 @@ const FuzzCmdBuf = struct {
                 })) {
                     .rb => {
                         const rb = self.parser.next(RigidBody);
-                        entity.addComponentCmd(&self.es, &self.cmds, RigidBody, rb);
+                        entity.addComponentCmd(&self.cmds, RigidBody, rb);
                         if (expected) |e| e.rb = rb;
                     },
                     .model => {
                         const model = self.parser.next(Model);
-                        entity.addComponentCmd(&self.es, &self.cmds, Model, model);
+                        entity.addComponentCmd(&self.cmds, Model, model);
                         if (expected) |e| e.model = model;
                     },
                     .tag => {
                         const tag = self.parser.next(Tag);
-                        entity.addComponentCmd(&self.es, &self.cmds, Tag, tag);
+                        entity.addComponentCmd(&self.cmds, Tag, tag);
                         if (expected) |e| e.tag = tag;
                     },
                 }

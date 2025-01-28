@@ -189,14 +189,8 @@ pub const Entity = packed struct {
     /// sized.
     ///
     /// Adding components to an entity that no longer exists has no effect.
-    pub inline fn addComponentCmd(
-        self: @This(),
-        es: *Entities,
-        cmds: *CmdBuf,
-        T: type,
-        comp: T,
-    ) void {
-        self.addComponentCmdChecked(es, cmds, T, comp) catch |err|
+    pub inline fn addComponentCmd(self: @This(), cmds: *CmdBuf, T: type, comp: T) void {
+        self.addComponentCmdChecked(cmds, T, comp) catch |err|
             @panic(@errorName(err));
     }
 
@@ -204,27 +198,20 @@ pub const Entity = packed struct {
     /// panicking.
     pub inline fn addComponentCmdChecked(
         self: @This(),
-        es: *Entities,
         cmds: *CmdBuf,
         T: type,
         comp: T,
     ) error{ZcsCmdBufOverflow}!void {
         if (@sizeOf(T) > @sizeOf(*T) and meta.isComptimeKnown(comp)) {
-            try self.addComponentByPtrCmdChecked(es, cmds, T, comp);
+            try self.addComponentByPtrCmdChecked(cmds, T, comp);
         } else {
-            try self.addComponentByValueCmdChecked(es, cmds, T, comp);
+            try self.addComponentByValueCmdChecked(cmds, T, comp);
         }
     }
 
     /// Similar to `addComponentCmd` but forces the data to be passed by value.
-    pub fn addComponentByValueCmd(
-        self: @This(),
-        es: *Entities,
-        cmds: *CmdBuf,
-        T: type,
-        comp: T,
-    ) void {
-        self.addComponentByValueCmdChecked(es, cmds, T, comp) catch |err|
+    pub fn addComponentByValueCmd(self: @This(), cmds: *CmdBuf, T: type, comp: T) void {
+        self.addComponentByValueCmdChecked(cmds, T, comp) catch |err|
             @panic(@errorName(err));
     }
 
@@ -232,14 +219,10 @@ pub const Entity = packed struct {
     /// instead of panicking.
     pub fn addComponentByValueCmdChecked(
         self: @This(),
-        es: *Entities,
         cmds: *CmdBuf,
         T: type,
         comp: T,
     ) error{ZcsCmdBufOverflow}!void {
-        // Early out if destroyed, also checks some assertions
-        if (!self.exists(es)) return;
-
         // Restore the state on failure
         const restore = cmds.*;
         errdefer cmds.* = restore;
@@ -255,14 +238,8 @@ pub const Entity = packed struct {
 
     /// Similar to `addComponentCmd` but forces the data to be passed by pointer. Only available for
     /// comptime known arguments.
-    pub fn addComponentByPtrCmd(
-        self: @This(),
-        es: *Entities,
-        cmds: *CmdBuf,
-        T: type,
-        comptime comp: T,
-    ) void {
-        self.addComponentByPtrCmdChecked(es, cmds, T, comp) catch |err|
+    pub fn addComponentByPtrCmd(self: @This(), cmds: *CmdBuf, T: type, comptime comp: T) void {
+        self.addComponentByPtrCmdChecked(cmds, T, comp) catch |err|
             @panic(@errorName(err));
     }
 
@@ -270,14 +247,10 @@ pub const Entity = packed struct {
     /// of panicking.
     pub fn addComponentByPtrCmdChecked(
         self: @This(),
-        es: *Entities,
         cmds: *CmdBuf,
         T: type,
         comptime comp: T,
     ) error{ZcsCmdBufOverflow}!void {
-        // Early out if destroyed, also checks some assertions
-        if (!self.exists(es)) return;
-
         // Restore the state on failure
         const restore = cmds.*;
         errdefer cmds.* = restore;
@@ -458,7 +431,7 @@ pub const Entity = packed struct {
                 const optional: ?meta.Unwrapped(@TypeOf(value)) = value;
                 if (optional) |some| {
                     const comp_index = comp_indices[i];
-                    const untyped = self.getComponentFromIndex(es, comp_index).?;
+                    const untyped = self.getComponentFromIndex(es, comp_index, @sizeOf(some)).?;
                     const typed: *@TypeOf(some) = @alignCast(@ptrCast(untyped));
                     typed.* = some;
                 }
@@ -526,8 +499,8 @@ pub const Entity = packed struct {
             if (comp.unwrap()) |some| {
                 if (!skip.contains(some.id)) {
                     skip.insert(some.id);
-                    const src = some.bytes();
-                    const dest = self.getComponentFromIndex(es, some.id).?;
+                    const src = some.bytes;
+                    const dest = self.getComponentFromIndex(es, some.id, src.bytes.len).?;
                     @memcpy(dest, src);
                 }
             }

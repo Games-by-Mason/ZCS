@@ -22,6 +22,9 @@ bytes: []const u8,
 /// If true, `ptr` points to constant. If false, it points to a temporary value.
 interned: bool,
 
+/// The maximum alignment a component is allowed to require.
+pub const max_align = 16;
+
 /// An optional `Component`.
 pub const Optional = struct {
     pub const none: @This() = .{

@@ -54,7 +54,7 @@ pub fn initGranularCapacity(
     var args: std.ArrayListUnmanaged(u64) = try .initCapacity(gpa, capacity.args);
     errdefer args.deinit(gpa);
 
-    var comp_bytes: std.ArrayListAlignedUnmanaged(u8, Entities.max_align) = try .initCapacity(
+    var comp_bytes: std.ArrayListAlignedUnmanaged(u8, Component.max_align) = try .initCapacity(
         gpa,
         capacity.comp_bytes,
     );
@@ -199,7 +199,7 @@ pub const GranularCapacity = struct {
         _ = SubCmd.rename_when_changing_encoding;
 
         // Each command can have at most one component's worth of component data.
-        const comp_bytes_cap = (cap.comp_bytes + Entities.max_align) * cap.cmds;
+        const comp_bytes_cap = (cap.comp_bytes + Component.max_align) * cap.cmds;
 
         // The command with the most subcommands is change archetype
         var change_archetype_tags: usize = 0;

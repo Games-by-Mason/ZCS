@@ -106,7 +106,7 @@ test "command buffer some test decode" {
     e1.commitCmd(&es, &cmds);
     const rb = RigidBody.random(rand);
     const model = Model.random(rand);
-    e2.addComponentCmd(&es, &cmds, RigidBody, rb);
+    e2.addComponentCmd(&cmds, RigidBody, rb);
     try expectEqual(3, es.reserved());
     try expectEqual(0, es.count());
     cmds.execute(&es);
@@ -141,7 +141,7 @@ test "command buffer some test decode" {
 
     e0.removeComponentCmd(&es, &cmds, RigidBody);
     e1.removeComponentCmd(&es, &cmds, RigidBody);
-    e2.addComponentCmd(&es, &cmds, Model, model);
+    e2.addComponentCmd(&cmds, Model, model);
     e2.removeComponentCmd(&es, &cmds, RigidBody);
     cmds.execute(&es);
     cmds.clear(&es);
@@ -241,25 +241,25 @@ test "command buffer interning" {
     const e1: Entity = .reserveImmediately(&es);
 
     // Automatic interning
-    e0.addComponentCmd(&es, &cmds, Model, model_value);
-    e0.addComponentCmd(&es, &cmds, RigidBody, rb_interned);
+    e0.addComponentCmd(&cmds, Model, model_value);
+    e0.addComponentCmd(&cmds, RigidBody, rb_interned);
     e0.removeComponentCmd(&es, &cmds, Tag);
 
-    e1.addComponentCmd(&es, &cmds, Model, model_interned);
-    e1.addComponentCmd(&es, &cmds, RigidBody, rb_value);
+    e1.addComponentCmd(&cmds, Model, model_interned);
+    e1.addComponentCmd(&cmds, RigidBody, rb_value);
     e1.removeComponentCmd(&es, &cmds, Tag);
 
     // Explicit by value
-    e0.addComponentByValueCmd(&es, &cmds, Model, model_value);
-    e0.addComponentByValueCmd(&es, &cmds, RigidBody, rb_interned);
+    e0.addComponentByValueCmd(&cmds, Model, model_value);
+    e0.addComponentByValueCmd(&cmds, RigidBody, rb_interned);
 
-    e1.addComponentByValueCmd(&es, &cmds, Model, model_interned);
-    e1.addComponentByValueCmd(&es, &cmds, RigidBody, rb_value);
+    e1.addComponentByValueCmd(&cmds, Model, model_interned);
+    e1.addComponentByValueCmd(&cmds, RigidBody, rb_value);
     e1.removeComponentCmd(&es, &cmds, Tag);
 
     // Explicit interning
-    e0.addComponentByPtrCmd(&es, &cmds, RigidBody, rb_interned);
-    e0.addComponentByPtrCmd(&es, &cmds, Model, model_interned);
+    e0.addComponentByPtrCmd(&cmds, RigidBody, rb_interned);
+    e0.addComponentByPtrCmd(&cmds, Model, model_interned);
     e0.removeComponentCmd(&es, &cmds, Tag);
 
     // Test the results

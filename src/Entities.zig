@@ -20,9 +20,6 @@ const Entities = @This();
 
 const IteratorGeneration = if (std.debug.runtime_safety) u64 else u0;
 
-/// The maximum alignment a component is allowed to have.
-pub const max_align = 16;
-
 const Slot = struct {
     archetype: Component.Flags,
     committed: bool,
@@ -30,7 +27,7 @@ const Slot = struct {
 
 comp_types: CompTypes,
 slots: SlotMap(Slot, .{}),
-comps: *[Component.Index.max][]align(max_align) u8,
+comps: *[Component.Index.max][]align(Component.max_align) u8,
 live: std.DynamicBitSetUnmanaged,
 iterator_generation: IteratorGeneration = 0,
 reserved_entities: usize = 0,
@@ -43,13 +40,13 @@ pub fn init(gpa: Allocator, capacity: usize) Allocator.Error!@This() {
     var comp_types: CompTypes = try .init(gpa);
     errdefer comp_types.deinit(gpa);
 
-    const comps = try gpa.create([Component.Index.max][]align(max_align) u8);
+    const comps = try gpa.create([Component.Index.max][]align(Component.max_align) u8);
     errdefer gpa.destroy(comps);
 
     comptime var comps_init = 0;
     errdefer for (0..comps_init) |i| gpa.free(comps[i]);
     inline for (comps) |*comp| {
-        comp.* = try gpa.alignedAlloc(u8, max_align, capacity);
+        comp.* = try gpa.alignedAlloc(u8, Component.max_align, capacity);
         comps_init += 1;
     }
 
