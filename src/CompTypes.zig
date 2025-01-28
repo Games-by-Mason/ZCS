@@ -8,8 +8,10 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Component = zcs.Component;
 const Entities = zcs.Entities;
+const TypeId = zcs.TypeId;
+const typeId = zcs.typeId;
 
-map: std.AutoArrayHashMapUnmanaged(Component.Id, Info),
+map: std.AutoArrayHashMapUnmanaged(TypeId, Info),
 
 /// Meta information on a registered type.
 pub const Info = struct {
@@ -19,7 +21,7 @@ pub const Info = struct {
 
 /// Initializes an empty set of component types.
 pub fn init(gpa: Allocator) Allocator.Error!@This() {
-    var map: std.AutoArrayHashMapUnmanaged(Component.Id, Info) = .empty;
+    var map: std.AutoArrayHashMapUnmanaged(TypeId, Info) = .empty;
     errdefer map.deinit(gpa);
     try map.ensureTotalCapacity(gpa, Component.Index.max);
 
@@ -34,12 +36,13 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
 /// Gets the index associated with the given component type, or null if it is not registered.
 pub fn getIndex(self: @This(), T: type) ?Component.Index {
     assertAllowedAsComponentType(T);
-    return self.getIndexFromId(Component.id(T));
+    return self.getIndexFromId(typeId(T));
 }
 
-// XXX: naming?
+// XXX: naming? or maybe JUST expose this and expect the user to call typeid idk kinda annoying to do that? but actually
+// if you expose the typed version and that version the in between one is not really needed right?
 /// Gets the index associated with the given component ID, or null if it is not registered.
-pub fn getIndexFromId(self: @This(), id: Component.Id) ?Component.Index {
+pub fn getIndexFromId(self: @This(), id: TypeId) ?Component.Index {
     const index = self.map.getIndex(id) orelse return null;
     return @enumFromInt(index);
 }
@@ -62,7 +65,7 @@ pub fn registerIndex(self: *@This(), T: type) Component.Index {
     }
 
     // Register the ID
-    self.map.putAssumeCapacity(Component.id(T), .{
+    self.map.putAssumeCapacity(typeId(T), .{
         .size = @sizeOf(T),
         .alignment = @alignOf(T),
     });

@@ -132,16 +132,3 @@ pub fn flags(es: *Entities, types: []const type) Flags {
     }
     return result;
 }
-
-/// An unspecified but unique value per type.
-pub const Id = *const struct { _: u8 };
-
-/// Returns the type ID of the given type.
-pub inline fn id(comptime T: type) Id {
-    return &struct {
-        comptime {
-            _ = T;
-        }
-        var id: @typeInfo(Id).pointer.child = undefined;
-    }.id;
-}
