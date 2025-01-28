@@ -58,13 +58,13 @@ pub const Iterator = struct {
                             .bind_entity => break,
                             .add_component_val => {
                                 const comp = self.decoder.next().?.add_component_val;
-                                add.insert(comp.id);
-                                remove.remove(comp.id);
+                                add.insert(comp.index);
+                                remove.remove(comp.index);
                             },
                             .add_component_ptr => {
                                 const comp = self.decoder.next().?.add_component_ptr;
-                                add.insert(comp.id);
-                                remove.remove(comp.id);
+                                add.insert(comp.index);
+                                remove.remove(comp.index);
                             },
                             .remove_components => {
                                 const comps = self.decoder.next().?.remove_components;
@@ -114,7 +114,7 @@ pub const ComponentIterator = struct {
                 },
                 .bind_entity => break,
             };
-            if (!self.skip.contains(comp.id)) return comp;
+            if (!self.skip.contains(comp.index)) return comp;
         }
         return null;
     }

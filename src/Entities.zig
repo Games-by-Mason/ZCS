@@ -30,7 +30,7 @@ const Slot = struct {
 
 comp_types: CompTypes,
 slots: SlotMap(Slot, .{}),
-comps: *[Component.Id.max][]align(max_align) u8,
+comps: *[Component.Index.max][]align(max_align) u8,
 live: std.DynamicBitSetUnmanaged,
 iterator_generation: IteratorGeneration = 0,
 reserved_entities: usize = 0,
@@ -43,7 +43,7 @@ pub fn init(gpa: Allocator, capacity: usize) Allocator.Error!@This() {
     var comp_types: CompTypes = try .init(gpa);
     errdefer comp_types.deinit(gpa);
 
-    const comps = try gpa.create([Component.Id.max][]align(max_align) u8);
+    const comps = try gpa.create([Component.Index.max][]align(max_align) u8);
     errdefer gpa.destroy(comps);
 
     comptime var comps_init = 0;
@@ -176,7 +176,7 @@ pub const Iterator = struct {
 pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
     var base: View = undefined;
     var required_comps: Component.Flags = .{};
-    var comp_ids: [@typeInfo(View).@"struct".fields.len]Component.Id = undefined;
+    var comp_indices: [@typeInfo(View).@"struct".fields.len]Component.Index = undefined;
     inline for (@typeInfo(View).@"struct".fields, 0..) |field, i| {
         if (field.type == Entity) {
             @field(base, field.name).key.index = 0;
@@ -185,12 +185,12 @@ pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
                 @compileError("view field is not Entity or pointer to a component: " ++ @typeName(field.type));
             };
 
-            const comp_id = self.comp_types.register(T);
-            comp_ids[i] = comp_id;
+            const comp_index = self.comp_types.registerIndex(T);
+            comp_indices[i] = comp_index;
             if (@typeInfo(field.type) != .optional) {
-                required_comps.insert(comp_id);
+                required_comps.insert(comp_index);
             }
-            @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(comp_id)]);
+            @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(comp_index)]);
         }
     }
 
@@ -203,7 +203,7 @@ pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
             .generation = self.iterator_generation,
         },
         .base = base,
-        .comp_ids = comp_ids,
+        .comp_indices = comp_indices,
     };
 }
 
@@ -212,7 +212,7 @@ pub fn ViewIterator(View: type) type {
     return struct {
         es: *const Entities,
         entity_iterator: Iterator,
-        comp_ids: [@typeInfo(View).@"struct".fields.len]Component.Id,
+        comp_indices: [@typeInfo(View).@"struct".fields.len]Component.Index,
         base: View,
 
         /// Advances the iterator, returning the next view.
@@ -230,7 +230,7 @@ pub fn ViewIterator(View: type) type {
                         assert(slot.committed);
                         const archetype = slot.archetype;
                         if (@typeInfo(field.type) != .optional or
-                            archetype.contains(self.comp_ids[i]))
+                            archetype.contains(self.comp_indices[i]))
                         {
                             const base = @intFromPtr(@field(view, field.name));
                             const offset = entity.key.index * @sizeOf(T);

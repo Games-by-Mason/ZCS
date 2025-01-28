@@ -46,7 +46,7 @@ pub fn initGranularCapacity(
     es: *Entities,
     capacity: GranularCapacity,
 ) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
-    comptime assert(Component.Id.max < std.math.maxInt(u64));
+    comptime assert(Component.Index.max < std.math.maxInt(u64));
 
     var tags: std.ArrayListUnmanaged(SubCmd.Tag) = try .initCapacity(gpa, capacity.tags);
     errdefer tags.deinit(gpa);
@@ -168,7 +168,7 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
             var comps = change.componentIterator();
             while (comps.next()) |comp| {
                 const src = comp.bytes();
-                const dest = change.entity.getComponentFromId(es, comp.id).?;
+                const dest = change.entity.getComponentFromIndex(es, comp.index).?;
                 @memcpy(dest, src);
             }
         }

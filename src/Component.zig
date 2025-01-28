@@ -11,8 +11,8 @@ const Entities = zcs.Entities;
 
 const Component = @This();
 
-/// The component type's ID.
-id: Id,
+/// The component type's index.
+index: Index,
 /// A pointer to the component data.
 ptr: *const anyopaque,
 /// If true, `ptr` points to constant. If false, it points to a temporary value.
@@ -21,12 +21,12 @@ interned: bool,
 /// An optional `Component`.
 pub const Optional = struct {
     pub const none: @This() = .{
-        .id_or_undef = undefined,
+        .index_or_undef = undefined,
         .ptr = null,
         .interned_or_undef = undefined,
     };
 
-    id_or_undef: Id,
+    index_or_undef: Index,
     ptr: ?*const anyopaque,
     interned_or_undef: bool,
 
@@ -47,16 +47,16 @@ pub const Optional = struct {
 
         switch (@typeInfo(pointer.child)) {
             .optional => |opt| {
-                const id = es.registerComponentType(opt.child);
+                const index = es.registerComponentType(opt.child);
                 const some = if (ptr.*) |*some| some else return .none;
                 return .{
-                    .id_or_undef = id,
+                    .index_or_undef = index,
                     .ptr = @ptrCast(some),
                     .interned_or_undef = interned,
                 };
             },
             else => return .{
-                .id_or_undef = es.registerComponentType(pointer.child),
+                .index_or_undef = es.registerComponentType(pointer.child),
                 .ptr = @ptrCast(ptr),
                 .interned_or_undef = interned,
             },
@@ -67,7 +67,7 @@ pub const Optional = struct {
     pub fn unwrap(self: @This()) ?Component {
         if (self.ptr) |ptr| {
             return .{
-                .id = self.id_or_undef,
+                .index = self.index_or_undef,
                 .ptr = ptr,
                 .interned = self.interned_or_undef,
             };
@@ -89,7 +89,7 @@ pub fn initInterned(es: *const Entities, ptr: anytype) @This() {
 fn initMaybeInterned(es: *Entities, ptr: anytype, interned: bool) @This() {
     const T = @typeInfo(@TypeOf(ptr)).pointer.child;
     return .{
-        .id = es.comp_types.register(T),
+        .index = es.comp_types.registerIndex(T),
         .ptr = std.mem.asBytes(ptr),
         .interned = interned,
     };
@@ -98,37 +98,50 @@ fn initMaybeInterned(es: *Entities, ptr: anytype, interned: bool) @This() {
 /// Returns the component as an optional.
 pub fn toOptional(self: @This()) Optional {
     return .{
-        .id_or_undef = self.id,
+        .index_or_undef = self.index,
         .ptr = self.ptr,
         .interned_or_undef = self.interned,
     };
 }
 
-/// Returns the component's bytes. Size can be retrieved from `Entities` given the ID if necessary.
+/// Returns the component's bytes.
 pub fn bytes(self: @This()) [*]const u8 {
     return @ptrCast(self.ptr);
 }
 
 /// Returns the component as the given type if it matches its ID, or null otherwise.
 pub fn as(self: @This(), es: *const Entities, T: anytype) ?*const T {
-    if (self.id != es.comp_types.getId(T)) return null;
+    if (self.index != es.comp_types.getIndex(T)) return null;
     return @alignCast(@ptrCast(self.ptr));
 }
 
-/// An ID for a registered component type.
-pub const Id = enum(u6) {
+/// The index of a registered component type.
+pub const Index = enum(u6) {
     pub const max = std.math.maxInt(@typeInfo(@This()).@"enum".tag_type);
     _,
 };
 
-/// A set of component IDs.
-pub const Flags = std.enums.EnumSet(Id);
+/// A set of component types.
+pub const Flags = std.enums.EnumSet(Index);
 
-/// Initialize a set of component IDs from a list of component types.
+/// Initialize a set of component types from a list of component types.
 pub fn flags(es: *Entities, types: []const type) Flags {
     var result: Flags = .{};
     inline for (types) |ty| {
-        result.insert(es.comp_types.register(ty));
+        result.insert(es.comp_types.registerIndex(ty));
     }
     return result;
+}
+
+/// An unspecified but unique value per type.
+pub const Id = *const struct { _: u8 };
+
+/// Returns the type ID of the given type.
+pub inline fn id(comptime T: type) Id {
+    return &struct {
+        comptime {
+            _ = T;
+        }
+        var id: @typeInfo(Id).pointer.child = undefined;
+    }.id;
 }

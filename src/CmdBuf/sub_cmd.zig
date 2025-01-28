@@ -48,20 +48,20 @@ pub const SubCmd = union(enum) {
                         return .{ .bind_entity = entity };
                     },
                     .add_component_val => {
-                        const id: Component.Id = @enumFromInt(self.nextArg().?);
-                        const ptr = self.nextComponentData(id);
+                        const index: Component.Index = @enumFromInt(self.nextArg().?);
+                        const ptr = self.nextComponentData(index);
                         const comp: Component = .{
-                            .id = id,
+                            .index = index,
                             .ptr = ptr,
                             .interned = false,
                         };
                         return .{ .add_component_val = comp };
                     },
                     .add_component_ptr => {
-                        const id: Component.Id = @enumFromInt(self.nextArg().?);
+                        const index: Component.Index = @enumFromInt(self.nextArg().?);
                         const ptr: [*]u8 = @ptrFromInt(self.nextArg().?);
                         const comp: Component = .{
-                            .id = id,
+                            .index = index,
                             .ptr = ptr,
                             .interned = true,
                         };
@@ -107,9 +107,9 @@ pub const SubCmd = union(enum) {
             }
         }
 
-        pub inline fn nextComponentData(self: *@This(), id: Component.Id) [*]const u8 {
-            const size = self.es.comp_types.getSize(id);
-            const alignment = self.es.comp_types.getAlignment(id);
+        pub inline fn nextComponentData(self: *@This(), index: Component.Index) [*]const u8 {
+            const size = self.es.comp_types.getSize(index);
+            const alignment = self.es.comp_types.getAlignment(index);
             self.component_bytes_index = std.mem.alignForward(
                 usize,
                 self.component_bytes_index,
@@ -139,8 +139,8 @@ pub const SubCmd = union(enum) {
                 changes.args.appendAssumeCapacity(@bitCast(entity));
             },
             .add_component_val => |comp| {
-                const size = es.comp_types.getSize(comp.id);
-                const alignment = es.comp_types.getAlignment(comp.id);
+                const size = es.comp_types.getSize(comp.index);
+                const alignment = es.comp_types.getAlignment(comp.index);
                 const aligned = std.mem.alignForward(usize, changes.comp_bytes.items.len, alignment);
                 if (changes.tags.items.len >= changes.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (changes.args.items.len + 1 > changes.args.capacity) return error.ZcsCmdBufOverflow;
@@ -148,7 +148,7 @@ pub const SubCmd = union(enum) {
                     return error.ZcsCmdBufOverflow;
                 }
                 changes.tags.appendAssumeCapacity(.add_component_val);
-                changes.args.appendAssumeCapacity(@intFromEnum(comp.id));
+                changes.args.appendAssumeCapacity(@intFromEnum(comp.index));
                 const bytes = comp.bytes();
                 changes.comp_bytes.items.len = aligned;
                 changes.comp_bytes.appendSliceAssumeCapacity(bytes[0..size]);
@@ -158,7 +158,7 @@ pub const SubCmd = union(enum) {
                 if (changes.tags.items.len >= changes.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (changes.args.items.len + 2 > changes.args.capacity) return error.ZcsCmdBufOverflow;
                 changes.tags.appendAssumeCapacity(.add_component_ptr);
-                changes.args.appendAssumeCapacity(@intFromEnum(comp.id));
+                changes.args.appendAssumeCapacity(@intFromEnum(comp.index));
                 changes.args.appendAssumeCapacity(@intFromPtr(comp.ptr));
             },
             .remove_components => |comps| {
