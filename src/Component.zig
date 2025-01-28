@@ -127,10 +127,12 @@ pub const Index = enum(u6) {
 pub const Flags = std.enums.EnumSet(Index);
 
 /// Initialize a set of component types from a list of component types.
-pub fn flags(es: *Entities, types: []const type) Flags {
+pub fn flags(types: []const type) Flags {
     var result: Flags = .{};
     inline for (types) |ty| {
-        result.insert(es.comp_types.register(ty));
+        // XXX: sus!! wanna be able to make flags on bg threads lol. i mean we could just make it lock
+        // or be atomic or something idk.
+        result.insert(typeId(ty).register());
     }
     return result;
 }

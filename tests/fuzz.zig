@@ -12,6 +12,7 @@ const Entities = zcs.Entities;
 const CmdBuf = zcs.CmdBuf;
 const Entity = zcs.Entity;
 const Component = zcs.Component;
+const typeId = zcs.typeId;
 
 test "fuzz cmdbuf" {
     try std.testing.fuzz(FuzzCmdBuf.run, .{ .corpus = &.{} });
@@ -239,7 +240,7 @@ const FuzzCmdBuf = struct {
 
             // Compare them
             try expectEqual(
-                self.expectedOfArchetype(Component.flags(&self.es, &.{RigidBody})),
+                self.expectedOfArchetype(Component.flags(&.{RigidBody})),
                 count,
             );
         }
@@ -256,7 +257,7 @@ const FuzzCmdBuf = struct {
 
             // Compare them
             try expectEqual(
-                self.expectedOfArchetype(Component.flags(&self.es, &.{RigidBody})),
+                self.expectedOfArchetype(Component.flags(&.{RigidBody})),
                 self.found_buf.count(),
             );
         }
@@ -273,7 +274,7 @@ const FuzzCmdBuf = struct {
 
             // Compare to the expected count
             try expectEqual(
-                self.expectedOfArchetype(Component.flags(&self.es, &.{Model})),
+                self.expectedOfArchetype(Component.flags(&.{Model})),
                 self.found_buf.count(),
             );
         }
@@ -290,7 +291,7 @@ const FuzzCmdBuf = struct {
 
             // Compare to the expected count
             try expectEqual(
-                self.expectedOfArchetype(Component.flags(&self.es, &.{Tag})),
+                self.expectedOfArchetype(Component.flags(&.{Tag})),
                 self.found_buf.count(),
             );
         }
@@ -314,7 +315,7 @@ const FuzzCmdBuf = struct {
 
             // Compare to the expected count
             try expectEqual(
-                self.expectedOfArchetype(Component.flags(&self.es, &.{ RigidBody, Model, Tag })),
+                self.expectedOfArchetype(Component.flags(&.{ RigidBody, Model, Tag })),
                 self.found_buf.count(),
             );
         }
@@ -359,7 +360,7 @@ const FuzzCmdBuf = struct {
 
             // Compare to the expected count
             try expectEqual(
-                self.expectedOfArchetype(Component.flags(&self.es, &.{ RigidBody, Tag })),
+                self.expectedOfArchetype(Component.flags(&.{ RigidBody, Tag })),
                 self.found_buf.count(),
             );
         }
@@ -369,13 +370,13 @@ const FuzzCmdBuf = struct {
         var count: usize = 0;
         var iter = self.committed.iterator();
         while (iter.next()) |entry| {
-            if (archetype.contains(self.es.comp_types.register(RigidBody))) {
+            if (archetype.contains(typeId(RigidBody).register())) {
                 if (entry.value_ptr.rb == null) continue;
             }
-            if (archetype.contains(self.es.comp_types.register(Model))) {
+            if (archetype.contains(typeId(Model).register())) {
                 if (entry.value_ptr.model == null) continue;
             }
-            if (archetype.contains(self.es.comp_types.register(Tag))) {
+            if (archetype.contains(typeId(Tag).register())) {
                 if (entry.value_ptr.tag == null) continue;
             }
             count += 1;

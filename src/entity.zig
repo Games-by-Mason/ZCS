@@ -152,14 +152,14 @@ pub const Entity = packed struct {
     ///
     /// `Component` must be a registered component type.
     pub fn getComponent(self: @This(), es: *const Entities, T: type) ?*T {
-        const comp_index = es.comp_types.getIndex(T) orelse return null;
+        const comp_index = typeId(T).index orelse return null;
         const untyped = self.getComponentFromIndex(es, comp_index, @sizeOf(T)) orelse return null;
         return @alignCast(@ptrCast(untyped));
     }
 
     /// Similar to `getComponent`, but operates on component IDs instead of types.
     pub fn getComponentFromId(self: @This(), es: *const Entities, id: TypeId) ?[]u8 {
-        const index = es.comp_types.getIndexFromId(id) orelse return null;
+        const index = id.index orelse return null;
         return self.getComponentFromIndex(es, index, id.size);
     }
 
@@ -297,7 +297,7 @@ pub const Entity = packed struct {
         // Issue the subcommands
         try SubCmd.encode(&cmds.change_archetype, .{ .bind_entity = self });
         try SubCmd.encode(&cmds.change_archetype, .{
-            .remove_components = Component.flags(es, &.{T}),
+            .remove_components = Component.flags(&.{T}),
         });
     }
 

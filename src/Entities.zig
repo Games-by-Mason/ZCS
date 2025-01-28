@@ -10,11 +10,11 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const zcs = @import("root.zig");
+const typeId = zcs.typeId;
 const Component = zcs.Component;
 const slot_map = @import("slot_map");
 const SlotMap = slot_map.SlotMap;
 const Entity = zcs.Entity;
-const CompTypes = zcs.CompTypes;
 
 const Entities = @This();
 
@@ -25,7 +25,6 @@ const Slot = struct {
     committed: bool,
 };
 
-comp_types: CompTypes,
 slots: SlotMap(Slot, .{}),
 comps: *[Component.Index.max][]align(Component.max_align) u8,
 live: std.DynamicBitSetUnmanaged,
@@ -36,9 +35,6 @@ reserved_entities: usize = 0,
 pub fn init(gpa: Allocator, capacity: usize) Allocator.Error!@This() {
     var slots = try SlotMap(Slot, .{}).init(gpa, capacity);
     errdefer slots.deinit(gpa);
-
-    var comp_types: CompTypes = try .init(gpa);
-    errdefer comp_types.deinit(gpa);
 
     const comps = try gpa.create([Component.Index.max][]align(Component.max_align) u8);
     errdefer gpa.destroy(comps);
@@ -55,7 +51,6 @@ pub fn init(gpa: Allocator, capacity: usize) Allocator.Error!@This() {
 
     return .{
         .slots = slots,
-        .comp_types = comp_types,
         .comps = comps,
         .live = live,
     };
@@ -67,7 +62,6 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
     for (self.comps) |comp| {
         gpa.free(comp);
     }
-    self.comp_types.deinit(gpa);
     gpa.destroy(self.comps);
     self.slots.deinit(gpa);
     self.* = undefined;
@@ -173,8 +167,7 @@ pub const Iterator = struct {
 pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
     var base: View = undefined;
     var required_comps: Component.Flags = .{};
-    var comp_indices: [@typeInfo(View).@"struct".fields.len]Component.Index = undefined;
-    inline for (@typeInfo(View).@"struct".fields, 0..) |field, i| {
+    inline for (@typeInfo(View).@"struct".fields) |field| {
         if (field.type == Entity) {
             @field(base, field.name).key.index = 0;
         } else {
@@ -182,8 +175,8 @@ pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
                 @compileError("view field is not Entity or pointer to a component: " ++ @typeName(field.type));
             };
 
-            const comp_index = self.comp_types.register(T);
-            comp_indices[i] = comp_index;
+            // XXX: this shouldn't register the comp
+            const comp_index = typeId(T).register();
             if (@typeInfo(field.type) != .optional) {
                 required_comps.insert(comp_index);
             }
@@ -200,7 +193,6 @@ pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
             .generation = self.iterator_generation,
         },
         .base = base,
-        .comp_indices = comp_indices,
     };
 }
 
@@ -209,25 +201,26 @@ pub fn ViewIterator(View: type) type {
     return struct {
         es: *const Entities,
         entity_iterator: Iterator,
-        comp_indices: [@typeInfo(View).@"struct".fields.len]Component.Index,
         base: View,
 
         /// Advances the iterator, returning the next view.
         pub fn next(self: *@This()) ?View {
             while (self.entity_iterator.next()) |entity| {
                 var view: View = self.base;
-                inline for (@typeInfo(View).@"struct".fields, 0..) |field, i| {
+                inline for (@typeInfo(View).@"struct".fields) |field| {
                     if (field.type == Entity) {
                         @field(view, field.name) = entity;
                     } else {
+                        // XXX: is this checked?
                         const T = ComponentFromPointer(field.type) orelse {
                             unreachable; // Checked in init
                         };
                         const slot = self.es.slots.values[entity.key.index];
                         assert(slot.committed);
                         const archetype = slot.archetype;
+                        // XXX: document why this unwrap is okay
                         if (@typeInfo(field.type) != .optional or
-                            archetype.contains(self.comp_indices[i]))
+                            archetype.contains(typeId(T).index.?))
                         {
                             const base = @intFromPtr(@field(view, field.name));
                             const offset = entity.key.index * @sizeOf(T);

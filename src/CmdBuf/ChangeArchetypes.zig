@@ -58,13 +58,13 @@ pub const Iterator = struct {
                             .bind_entity => break,
                             .add_component_val => {
                                 const comp = self.decoder.next().?.add_component_val;
-                                const index = self.decoder.es.comp_types.registerId(comp.id);
+                                const index = comp.id.register();
                                 add.insert(index);
                                 remove.remove(index);
                             },
                             .add_component_ptr => {
                                 const comp = self.decoder.next().?.add_component_ptr;
-                                const index = self.decoder.es.comp_types.registerId(comp.id);
+                                const index = comp.id.register();
                                 add.insert(index);
                                 remove.remove(index);
                             },
@@ -118,7 +118,8 @@ pub const ComponentIterator = struct {
                 },
                 .bind_entity => break,
             };
-            const index = self.decoder.es.comp_types.registerId(comp.id);
+            // XXX: need to document that iterating registers stuff and therefore shouldn't be done on bg...
+            const index = comp.id.register();
             if (!self.skip.contains(index)) return comp;
         }
         return null;

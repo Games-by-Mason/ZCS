@@ -185,7 +185,7 @@ test "command buffer some test decode" {
 //     {
 //         defer cmds.clear(&es);
 //         e0.changeArchetypeCmdFromComponents(&es, &cmds, .{
-//             .remove = Component.flags(&es, &.{}),
+//             .remove = Component.flags(&.{}),
 //             .add = &.{
 //                 .init(&es, &model1),
 //                 .init(&es, &RigidBody{}),
@@ -269,7 +269,7 @@ test "command buffer interning" {
         const cmd = iter.next().?;
         try expectEqual(e0, cmd.entity);
         try expectEqual(
-            Component.flags(&es, &.{Tag}),
+            Component.flags(&.{Tag}),
             cmd.remove,
         );
         // Components reordered due to alignment
@@ -286,7 +286,7 @@ test "command buffer interning" {
         const cmd = iter.next().?;
         try expectEqual(e1, cmd.entity);
         try expectEqual(
-            Component.flags(&es, &.{Tag}),
+            Component.flags(&.{Tag}),
             cmd.remove,
         );
         var comps = cmd.componentIterator();
@@ -316,7 +316,7 @@ test "command buffer interning" {
         const cmd = iter.next().?;
         try expectEqual(e1, cmd.entity);
         try expectEqual(
-            Component.flags(&es, &.{Tag}),
+            Component.flags(&.{Tag}),
             cmd.remove,
         );
         var comps = cmd.componentIterator();
@@ -332,7 +332,7 @@ test "command buffer interning" {
         const cmd = iter.next().?;
         try expectEqual(e0, cmd.entity);
         try expectEqual(
-            Component.flags(&es, &.{Tag}),
+            Component.flags(&.{Tag}),
             cmd.remove,
         );
         var comps = cmd.componentIterator();
