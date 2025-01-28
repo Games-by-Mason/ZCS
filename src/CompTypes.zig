@@ -11,17 +11,11 @@ const Entities = zcs.Entities;
 const TypeId = zcs.TypeId;
 const typeId = zcs.typeId;
 
-map: std.AutoArrayHashMapUnmanaged(TypeId, Info),
-
-/// Meta information on a registered type.
-pub const Info = struct {
-    size: usize,
-    alignment: u8,
-};
+map: std.AutoArrayHashMapUnmanaged(TypeId, void),
 
 /// Initializes an empty set of component types.
 pub fn init(gpa: Allocator) Allocator.Error!@This() {
-    var map: std.AutoArrayHashMapUnmanaged(TypeId, Info) = .empty;
+    var map: std.AutoArrayHashMapUnmanaged(TypeId, void) = .empty;
     errdefer map.deinit(gpa);
     try map.ensureTotalCapacity(gpa, Component.Index.max);
 
@@ -73,24 +67,10 @@ pub fn registerId(self: *@This(), id: TypeId) Component.Index {
         @panic("component type overflow");
     }
 
-    // XXX: we actually don't need to store this data here anymore since you can just get it from the id right??
     // Register the ID
-    self.map.putAssumeCapacity(id, .{
-        .size = id.size,
-        .alignment = id.alignment,
-    });
+    self.map.putAssumeCapacity(id, {});
 
     return @enumFromInt(index);
-}
-
-/// Returns the size of the component type with the given ID.
-pub fn getSize(self: @This(), id: Component.Index) usize {
-    return self.map.values()[@intFromEnum(id)].size;
-}
-
-/// Returns the alignment of the component type with the given ID.
-pub fn getAlignment(self: @This(), id: Component.Index) u8 {
-    return self.map.values()[@intFromEnum(id)].alignment;
 }
 
 /// Comptime asserts that the given type is allowed to be registered as a component.

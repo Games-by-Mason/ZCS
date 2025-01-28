@@ -50,8 +50,7 @@ pub const SubCmd = union(enum) {
                     },
                     .add_component_val => {
                         const id: TypeId = @ptrFromInt(self.nextArg().?);
-                        const index = self.es.comp_types.registerId(id);
-                        const bytes = self.nextComponentData(index);
+                        const bytes = self.nextComponentData(id);
                         const comp: Component = .{
                             .id = id,
                             .bytes = bytes,
@@ -110,16 +109,14 @@ pub const SubCmd = union(enum) {
             }
         }
 
-        pub inline fn nextComponentData(self: *@This(), index: Component.Index) []const u8 {
-            const size = self.es.comp_types.getSize(index);
-            const alignment = self.es.comp_types.getAlignment(index);
+        pub inline fn nextComponentData(self: *@This(), id: TypeId) []const u8 {
             self.component_bytes_index = std.mem.alignForward(
                 usize,
                 self.component_bytes_index,
-                alignment,
+                id.alignment,
             );
-            const result = self.cmds.comp_bytes.items[self.component_bytes_index..][0..size];
-            self.component_bytes_index += size;
+            const result = self.cmds.comp_bytes.items[self.component_bytes_index..][0..id.size];
+            self.component_bytes_index += id.size;
             return result;
         }
     };

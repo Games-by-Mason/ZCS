@@ -153,24 +153,25 @@ pub const Entity = packed struct {
     /// `Component` must be a registered component type.
     pub fn getComponent(self: @This(), es: *const Entities, T: type) ?*T {
         const comp_index = es.comp_types.getIndex(T) orelse return null;
-        const untyped = self.getComponentFromIndex(es, comp_index) orelse return null;
+        const untyped = self.getComponentFromIndex(es, comp_index, @sizeOf(T)) orelse return null;
         return @alignCast(@ptrCast(untyped));
     }
 
     /// Similar to `getComponent`, but operates on component IDs instead of types.
     pub fn getComponentFromId(self: @This(), es: *const Entities, id: TypeId) ?[]u8 {
         const index = es.comp_types.getIndexFromId(id) orelse return null;
-        return self.getComponentFromIndex(es, index);
+        return self.getComponentFromIndex(es, index, id.size);
     }
 
+    // XXX: still useful?
     /// Similar to `getComponent`, but operates on component indices instead of types.
     pub fn getComponentFromIndex(
         self: @This(),
         es: *const Entities,
         index: Component.Index,
+        size: usize,
     ) ?[]u8 {
         if (!self.hasComponentIndex(es, index)) return null;
-        const size = es.comp_types.getSize(index);
         const comp_buffer = es.comps[@intFromEnum(index)];
         const comp_offset = self.key.index * size;
         const bytes = comp_buffer.ptr + comp_offset;
