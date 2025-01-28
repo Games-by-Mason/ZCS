@@ -100,6 +100,7 @@ pub fn clearChecked(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void
     self.change_archetype.comp_bytes.clearRetainingCapacity();
     self.change_archetype.args.clearRetainingCapacity();
     self.change_archetype.tags.clearRetainingCapacity();
+    self.change_archetype.bound = .none;
     while (self.reserved.items.len < self.reserved.capacity) {
         self.reserved.appendAssumeCapacity(try Entity.reserveImmediatelyChecked(es));
     }

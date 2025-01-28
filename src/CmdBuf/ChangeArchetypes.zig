@@ -9,6 +9,7 @@ const Component = zcs.Component;
 tags: std.ArrayListUnmanaged(SubCmd.Tag),
 args: std.ArrayListUnmanaged(u64),
 comp_bytes: std.ArrayListAlignedUnmanaged(u8, Entities.max_align),
+bound: Entity = .none,
 
 /// Returns an iterator over the archetype changes.
 pub fn iterator(self: *const @This(), es: *const Entities) Iterator {
@@ -37,13 +38,16 @@ pub const Iterator = struct {
 
         /// An iterator over the added components.
         pub fn componentIterator(self: @This()) ComponentIterator {
-            return .{ .decoder = self.decoder };
+            return .{
+                .decoder = self.decoder,
+                .skip = self.remove,
+            };
         }
     };
 
     /// Returns the next archetype changed command, or `null` if there is none.
     pub fn next(self: *@This()) ?Item {
-        if (self.decoder.next()) |cmd| {
+        while (self.decoder.next()) |cmd| {
             switch (cmd) {
                 .bind_entity => |entity| {
                     const comp_decoder = self.decoder;
@@ -77,7 +81,11 @@ pub const Iterator = struct {
                     };
                 },
                 .add_component_val, .add_component_ptr, .remove_components => {
-                    unreachable; // Add/remove encoded without binding!
+                    // Add/remove encoded without binding! This shouldn't be possible. Add/remove
+                    // always attempts to do a bind first. This can only be skipped if the given
+                    // entity is already bound. Add/remove to entities that don't exist are already
+                    // skipped so binding `.none` isn't an issue.
+                    unreachable;
                 },
             }
         }
@@ -92,16 +100,21 @@ pub const Iterator = struct {
 /// logically equivalent.
 pub const ComponentIterator = struct {
     decoder: SubCmd.Decoder,
+    skip: Component.Flags,
 
     /// Returns the next added component, or `null` if there are none.
     pub fn next(self: *@This()) ?Component {
         while (self.decoder.peekTag()) |tag| {
-            switch (tag) {
-                .add_component_val => return self.decoder.next().?.add_component_val,
-                .add_component_ptr => return self.decoder.next().?.add_component_ptr,
-                .remove_components => _ = self.decoder.next().?.remove_components,
+            const comp = switch (tag) {
+                .add_component_val => self.decoder.next().?.add_component_val,
+                .add_component_ptr => self.decoder.next().?.add_component_ptr,
+                .remove_components => {
+                    _ = self.decoder.next().?.remove_components;
+                    continue;
+                },
                 .bind_entity => break,
-            }
+            };
+            if (!self.skip.contains(comp.id)) return comp;
         }
         return null;
     }
