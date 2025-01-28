@@ -369,13 +369,13 @@ const FuzzCmdBuf = struct {
         var count: usize = 0;
         var iter = self.committed.iterator();
         while (iter.next()) |entry| {
-            if (archetype.contains(self.es.registerComponentType(RigidBody))) {
+            if (archetype.contains(self.es.comp_types.register(RigidBody))) {
                 if (entry.value_ptr.rb == null) continue;
             }
-            if (archetype.contains(self.es.registerComponentType(Model))) {
+            if (archetype.contains(self.es.comp_types.register(Model))) {
                 if (entry.value_ptr.model == null) continue;
             }
-            if (archetype.contains(self.es.registerComponentType(Tag))) {
+            if (archetype.contains(self.es.comp_types.register(Tag))) {
                 if (entry.value_ptr.tag == null) continue;
             }
             count += 1;

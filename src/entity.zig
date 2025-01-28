@@ -145,7 +145,7 @@ pub const Entity = packed struct {
     ///
     /// `Component` must be a registered component type.
     pub fn getComponent(self: @This(), es: *const Entities, T: type) ?*T {
-        const comp_id = es.getComponentId(T) orelse return null;
+        const comp_id = es.comp_types.getId(T) orelse return null;
         const untyped = self.getComponentFromId(es, comp_id) orelse return null;
         return @alignCast(@ptrCast(untyped));
     }
@@ -157,7 +157,7 @@ pub const Entity = packed struct {
         id: Component.Id,
     ) ?[]u8 {
         if (!self.hasComponentId(es, id)) return null;
-        const size = es.getComponentSize(id);
+        const size = es.comp_types.getSize(id);
         const comp_buffer = es.comps[@intFromEnum(id)];
         const comp_offset = self.key.index * size;
         const bytes = comp_buffer.ptr + comp_offset;
@@ -233,7 +233,7 @@ pub const Entity = packed struct {
         // Issue the subcommands
         try SubCmd.encode(es, &cmds.change_archetype, .{ .bind_entity = self });
         try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_val = .{
-            .id = es.registerComponentType(T),
+            .id = es.comp_types.register(T),
             .ptr = @ptrCast(&comp),
             .interned = false,
         } });
@@ -274,7 +274,7 @@ pub const Entity = packed struct {
         };
         try SubCmd.encode(es, &cmds.change_archetype, .{ .bind_entity = self });
         try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_ptr = .{
-            .id = es.registerComponentType(T),
+            .id = es.comp_types.register(T),
             .ptr = @ptrCast(&Interned.value),
             .interned = true,
         } });

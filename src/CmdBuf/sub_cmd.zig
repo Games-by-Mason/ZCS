@@ -108,8 +108,8 @@ pub const SubCmd = union(enum) {
         }
 
         pub inline fn nextComponentData(self: *@This(), id: Component.Id) [*]const u8 {
-            const size = self.es.getComponentSize(id);
-            const alignment = self.es.getComponentAlignment(id);
+            const size = self.es.comp_types.getSize(id);
+            const alignment = self.es.comp_types.getAlignment(id);
             self.component_bytes_index = std.mem.alignForward(
                 usize,
                 self.component_bytes_index,
@@ -139,8 +139,8 @@ pub const SubCmd = union(enum) {
                 changes.args.appendAssumeCapacity(@bitCast(entity));
             },
             .add_component_val => |comp| {
-                const size = es.getComponentSize(comp.id);
-                const alignment = es.getComponentAlignment(comp.id);
+                const size = es.comp_types.getSize(comp.id);
+                const alignment = es.comp_types.getAlignment(comp.id);
                 const aligned = std.mem.alignForward(usize, changes.comp_bytes.items.len, alignment);
                 if (changes.tags.items.len >= changes.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (changes.args.items.len + 1 > changes.args.capacity) return error.ZcsCmdBufOverflow;

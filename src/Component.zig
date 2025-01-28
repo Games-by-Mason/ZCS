@@ -89,7 +89,7 @@ pub fn initInterned(es: *const Entities, ptr: anytype) @This() {
 fn initMaybeInterned(es: *Entities, ptr: anytype, interned: bool) @This() {
     const T = @typeInfo(@TypeOf(ptr)).pointer.child;
     return .{
-        .id = es.registerComponentType(T),
+        .id = es.comp_types.register(T),
         .ptr = std.mem.asBytes(ptr),
         .interned = interned,
     };
@@ -111,7 +111,7 @@ pub fn bytes(self: @This()) [*]const u8 {
 
 /// Returns the component as the given type if it matches its ID, or null otherwise.
 pub fn as(self: @This(), es: *const Entities, T: anytype) ?*const T {
-    if (self.id != es.getComponentId(T)) return null;
+    if (self.id != es.comp_types.getId(T)) return null;
     return @alignCast(@ptrCast(self.ptr));
 }
 
@@ -128,7 +128,7 @@ pub const Flags = std.enums.EnumSet(Id);
 pub fn flags(es: *Entities, types: []const type) Flags {
     var result: Flags = .{};
     inline for (types) |ty| {
-        result.insert(es.registerComponentType(ty));
+        result.insert(es.comp_types.register(ty));
     }
     return result;
 }

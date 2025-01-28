@@ -11,6 +11,7 @@ pub const Entities = @import("Entities.zig");
 pub const Entity = @import("entity.zig").Entity;
 pub const Component = @import("Component.zig");
 pub const CmdBuf = @import("CmdBuf.zig");
+pub const CompTypes = @import("CompTypes.zig");
 
 test {
     _ = @import("meta.zig");

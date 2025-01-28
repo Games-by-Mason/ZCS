@@ -14,39 +14,21 @@ const Component = zcs.Component;
 const slot_map = @import("slot_map");
 const SlotMap = slot_map.SlotMap;
 const Entity = zcs.Entity;
+const CompTypes = zcs.CompTypes;
 
 const Entities = @This();
-
-/// An unspecified but unique value per type.
-const TypeId = *const struct { _: u8 };
-
-/// Returns the type ID of the given type.
-inline fn typeId(comptime T: type) TypeId {
-    return &struct {
-        comptime {
-            _ = T;
-        }
-        var id: @typeInfo(TypeId).pointer.child = undefined;
-    }.id;
-}
 
 const IteratorGeneration = if (std.debug.runtime_safety) u64 else u0;
 
 /// The maximum alignment a component is allowed to have.
 pub const max_align = 16;
 
-const ComponentInfo = struct {
-    size: usize,
-    alignment: u8,
-};
-
 const Slot = struct {
     archetype: Component.Flags,
     committed: bool,
 };
 
-comp_types: std.AutoArrayHashMapUnmanaged(TypeId, void),
-comp_info: []ComponentInfo,
+comp_types: CompTypes,
 slots: SlotMap(Slot, .{}),
 comps: *[Component.Id.max][]align(max_align) u8,
 live: std.DynamicBitSetUnmanaged,
@@ -55,17 +37,11 @@ reserved_entities: usize = 0,
 
 /// Initializes the entity storage with the given capacity.
 pub fn init(gpa: Allocator, capacity: usize) Allocator.Error!@This() {
-    // Reserve space for the map from component type IDs to component IDs
-    var comp_types: std.AutoArrayHashMapUnmanaged(TypeId, void) = .empty;
-    errdefer comp_types.deinit(gpa);
-    try comp_types.ensureTotalCapacity(gpa, Component.Id.max);
-
-    // Register the component sizes
-    const comp_info = try gpa.alloc(ComponentInfo, Component.Id.max);
-    errdefer gpa.free(comp_info);
-
     var slots = try SlotMap(Slot, .{}).init(gpa, capacity);
     errdefer slots.deinit(gpa);
+
+    var comp_types: CompTypes = try .init(gpa);
+    errdefer comp_types.deinit(gpa);
 
     const comps = try gpa.create([Component.Id.max][]align(max_align) u8);
     errdefer gpa.destroy(comps);
@@ -83,7 +59,6 @@ pub fn init(gpa: Allocator, capacity: usize) Allocator.Error!@This() {
     return .{
         .slots = slots,
         .comp_types = comp_types,
-        .comp_info = comp_info,
         .comps = comps,
         .live = live,
     };
@@ -96,38 +71,9 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
         gpa.free(comp);
     }
     self.comp_types.deinit(gpa);
-    gpa.free(self.comp_info);
     gpa.destroy(self.comps);
     self.slots.deinit(gpa);
     self.* = undefined;
-}
-
-pub fn registerComponentType(self: *@This(), T: type) Component.Id {
-    // Check the type
-    assertAllowedAsComponentType(T);
-
-    // Early out if we're already registered
-    if (self.comp_types.getIndex(typeId(T))) |i| return @enumFromInt(i);
-
-    // Check if we've registered too many components
-    const i = self.comp_types.count();
-    if (i == Component.Id.max / 2) {
-        std.log.warn("{} component types registered, you're at 50% the fatal capacity!", .{i});
-    }
-    if (i >= Component.Id.max) {
-        @panic("component type overflow");
-    }
-
-    // Register the ID
-    self.comp_types.putAssumeCapacity(typeId(T), {});
-
-    // Register the component size and alignment
-    self.comp_info[i] = .{
-        .size = @sizeOf(T),
-        .alignment = @alignOf(T),
-    };
-
-    return @enumFromInt(i);
 }
 
 /// Invalidates all entities, leaving all `Entity`s dangling and all generations reset. This cannot
@@ -135,23 +81,6 @@ pub fn registerComponentType(self: *@This(), T: type) Component.Id {
 pub fn reset(self: *@This()) void {
     self.slots.reset();
     self.reserved_entities = 0;
-}
-
-/// Gets the ID of the given component type, or null if it hasn't been registered.
-pub fn getComponentId(self: @This(), T: type) ?Component.Id {
-    assertAllowedAsComponentType(T);
-    const id = self.comp_types.getIndex(typeId(T)) orelse return null;
-    return @enumFromInt(id);
-}
-
-/// Returns the size of the component type with the given ID.
-pub fn getComponentSize(self: @This(), id: Component.Id) usize {
-    return self.comp_info[@intFromEnum(id)].size;
-}
-
-/// Returns the alignment of the component type with the given ID.
-pub fn getComponentAlignment(self: @This(), id: Component.Id) u8 {
-    return self.comp_info[@intFromEnum(id)].alignment;
 }
 
 /// Returns the current number of entities.
@@ -256,7 +185,7 @@ pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
                 @compileError("view field is not Entity or pointer to a component: " ++ @typeName(field.type));
             };
 
-            const comp_id = self.registerComponentType(T);
+            const comp_id = self.comp_types.register(T);
             comp_ids[i] = comp_id;
             if (@typeInfo(field.type) != .optional) {
                 required_comps.insert(comp_id);
@@ -323,21 +252,4 @@ pub fn ViewIterator(View: type) type {
             self.entity_iterator.destroyCurrentImmediately(es);
         }
     };
-}
-
-/// Comptime asserts that the given type is allowed to be registered as a component.
-fn assertAllowedAsComponentType(T: type) void {
-    if (@typeInfo(T) == .optional) {
-        // There's nothing technically wrong with this, but if we allowed it then the change arch
-        // functions couldn't use optionals to allow deciding at runtime whether or not to create a
-        // component.
-        //
-        // Furthermore, it would be difficult to distinguish syntactically whether an
-        // optional component was missing or null.
-        //
-        // Instead, optional components should be represented by a struct with an optional
-        // field, or a tagged union.
-        @compileError("component types may not be optional: " ++ @typeName(T));
-    }
-    comptime assert(@alignOf(T) <= max_align);
 }
