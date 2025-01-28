@@ -218,7 +218,7 @@ pub const Entity = packed struct {
     /// * `add` is a tuple of components to add
     /// * `remove` is a `Component.Flags` instance specifying which components to remove
     ///
-    /// `remove` is applied before `add`.
+    /// `add` is applied before `remove`.
     ///
     /// Added components:
     /// * Must be registered component types
@@ -383,15 +383,16 @@ pub const Entity = packed struct {
             .add = comp_flags,
         });
 
-        // Initialize the components
+        // Initialize each added non-null component that hasn't been removed
         inline for (add, 0..) |value, i| {
-            // Store the component value if it's non-null
-            const optional: ?meta.Unwrapped(@TypeOf(value)) = value;
-            if (optional) |some| {
-                const comp_id = comp_ids[i];
-                const untyped = self.getComponentFromId(es, comp_id).?;
-                const typed: *@TypeOf(some) = @alignCast(@ptrCast(untyped));
-                typed.* = some;
+            if (!remove.containsKey(value)) {
+                const optional: ?meta.Unwrapped(@TypeOf(value)) = value;
+                if (optional) |some| {
+                    const comp_id = comp_ids[i];
+                    const untyped = self.getComponentFromId(es, comp_id).?;
+                    const typed: *@TypeOf(some) = @alignCast(@ptrCast(untyped));
+                    typed.* = some;
+                }
             }
         }
     }
@@ -450,12 +451,12 @@ pub const Entity = packed struct {
             },
         );
 
-        var added: Component.Flags = .{};
+        var skip = changes.remove;
         for (0..changes.add.len) |i| {
             const comp = changes.add[changes.add.len - i - 1];
             if (comp.unwrap()) |some| {
-                if (!added.contains(some.id)) {
-                    added.insert(some.id);
+                if (!skip.contains(some.id)) {
+                    skip.insert(some.id);
                     const src = some.bytes();
                     const dest = self.getComponentFromId(es, some.id).?;
                     @memcpy(dest, src);
@@ -477,8 +478,8 @@ pub const Entity = packed struct {
             es.reserved_entities -= 1;
             slot.committed = true;
         }
-        slot.archetype = slot.archetype.differenceWith(options.remove);
         slot.archetype = slot.archetype.unionWith(options.add);
+        slot.archetype = slot.archetype.differenceWith(options.remove);
     }
 
     /// Default formatting for `Entity`.
