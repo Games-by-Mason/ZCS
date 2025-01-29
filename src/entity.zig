@@ -311,27 +311,27 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    pub const ChangeArchetypeFromCompsImmediatelyOptions = struct {
+    pub const ChangeArchetypeImmediatelyOptions = struct {
         add: []const Comp.Optional = &.{},
         remove: CompFlag.Set = .{},
     };
 
     /// Similar to `changeArchetypeImmediately`, but does not require compile time types.
-    pub fn changeArchetypeFromCompsImmediately(
+    pub fn changeArchetypeImmediately(
         self: @This(),
         es: *Entities,
-        changes: ChangeArchetypeFromCompsImmediatelyOptions,
+        changes: ChangeArchetypeImmediatelyOptions,
     ) void {
-        self.changeArchetypeFromCompsImmediatelyChecked(es, changes) catch |err|
+        self.changeArchetypeImmediatelyChecked(es, changes) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `changeArchetypeFromCompsImmediately`, but returns `error.ZcsEntityOverflow`
+    /// Similar to `changeArchetypeImmediately`, but returns `error.ZcsEntityOverflow`
     /// on failure instead of panicking.
-    pub fn changeArchetypeFromCompsImmediatelyChecked(
+    pub fn changeArchetypeImmediatelyChecked(
         self: @This(),
         es: *Entities,
-        changes: ChangeArchetypeFromCompsImmediatelyOptions,
+        changes: ChangeArchetypeImmediatelyOptions,
     ) error{ZcsEntityOverflow}!void {
         // Early out if the entity does not exist, also checks some assertions
         if (!self.exists(es)) return;

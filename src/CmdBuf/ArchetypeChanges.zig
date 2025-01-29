@@ -14,11 +14,8 @@ comp_bytes: std.ArrayListAlignedUnmanaged(u8, Comp.max_align),
 bound: Entity = .none,
 
 /// Returns an iterator over the archetype changes.
-pub fn iterator(self: *const @This(), es: *Entities) Iterator {
-    return .{ .decoder = .{
-        .cmds = self,
-        .es = es,
-    } };
+pub fn iterator(self: *const @This()) Iterator {
+    return .{ .decoder = .{ .cmds = self } };
 }
 
 /// A single archetype change, encoded as a sequence of archetype change operations. Change

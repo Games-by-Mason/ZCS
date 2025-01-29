@@ -57,7 +57,7 @@ pub fn unregisterAll() void {
 }
 
 /// Metadata for a component type.
-pub const Metadata = struct {
+pub const Meta = struct {
     /// The component's type name.
     name: []const u8,
     /// The component type's size.
@@ -95,4 +95,4 @@ pub const Metadata = struct {
 };
 
 /// This pointer can be used as a unique ID identifying a component type.
-pub const Id = *Metadata;
+pub const Id = *Meta;

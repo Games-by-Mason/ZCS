@@ -12,6 +12,7 @@ const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const CmdBuf = zcs.CmdBuf;
 const Comp = zcs.Comp;
+const compId = zcs.compId;
 
 const RigidBody = struct {
     position: [2]f32 = .{ 1.0, 2.0 },
@@ -212,7 +213,7 @@ test "command buffer interning" {
     e0.addCompPtrCmd(&cmds, Model, model_interned);
 
     // Test the results
-    var iter = cmds.archetype_changes.iterator(&es);
+    var iter = cmds.archetype_changes.iterator();
 
     {
         const cmd = iter.next().?;
@@ -277,179 +278,231 @@ test "command buffer interning" {
     try expectEqual(null, iter.next());
 }
 
-// XXX: ...
-// test "command buffer overflow" {
-//     defer Comp.unregisterAll();
-//     // Not very exhaustive, but checks that command buffers return the overflow error on failure to
-//     // append, and on submits that fail.
+test "command buffer overflow" {
+    defer Comp.unregisterAll();
+    // Not very exhaustive, but checks that command buffers return the overflow error on failure to
+    // append, and on submits that fail.
 
-//     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
-//     const rand = xoshiro_256.random();
+    var xoshiro_256: std.Random.Xoshiro256 = .init(0);
+    const rand = xoshiro_256.random();
 
-//     var es = try Entities.init(gpa, 100);
-//     defer es.deinit(gpa);
+    var es = try Entities.init(gpa, 100);
+    defer es.deinit(gpa);
 
-//     // Tag/destroy overflow
-//     {
-//         var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
-//             .tags = 0,
-//             .args = 100,
-//             .comp_bytes = 100,
-//             .destroy = 0,
-//             .reserved = 0,
-//         });
-//         defer cmds.deinit(gpa, &es);
+    // Tag/destroy overflow
+    {
+        var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
+            .tags = 0,
+            .args = 100,
+            .comp_bytes = 100,
+            .destroy = 0,
+            .reserved = 0,
+        });
+        defer cmds.deinit(gpa, &es);
 
-//         try expectError(error.ZcsCmdBufOverflow, Entity.reserveImmediately(&es).commitCmdChecked(&es, &cmds, .{}));
-//         try expectError(error.ZcsCmdBufOverflow, Entity.reserveImmediately(&es).destroyCmdChecked(&es, &cmds));
+        try expectError(
+            error.ZcsCmdBufOverflow,
+            Entity.reserveImmediately(&es).commitCmdChecked(&cmds),
+        );
+        try expectError(
+            error.ZcsCmdBufOverflow,
+            Entity.reserveImmediately(&es).destroyCmdChecked(&cmds),
+        );
 
-//         try expectEqual(1.0, cmds.worstCaseUsage());
+        try expectEqual(1.0, cmds.worstCaseUsage());
 
-//         var iter = cmds.change_archetype.iterator(&es);
-//         try expectEqual(null, iter.next());
-//     }
+        var iter = cmds.archetype_changes.iterator();
+        try expectEqual(null, iter.next());
+    }
 
-//     // Arg overflow
-//     {
-//         var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
-//             .tags = 100,
-//             .args = 0,
-//             .comp_bytes = 100,
-//             .destroy = 100,
-//             .reserved = 0,
-//         });
-//         defer cmds.deinit(gpa, &es);
+    // Arg overflow
+    {
+        var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
+            .tags = 100,
+            .args = 0,
+            .comp_bytes = 100,
+            .destroy = 100,
+            .reserved = 0,
+        });
+        defer cmds.deinit(gpa, &es);
 
-//         try expectError(error.ZcsCmdBufOverflow, Entity.reserveImmediately(&es).changeArchetypeCmdChecked(
-//             &es,
-//             &cmds,
-//             .{},
-//         ));
-//         const e = Entity.reserveImmediately(&es);
-//         e.destroyCmd(&es, &cmds);
+        try expectError(
+            error.ZcsCmdBufOverflow,
+            Entity.reserveImmediately(&es).commitCmdChecked(&cmds),
+        );
+        const e = Entity.reserveImmediately(&es);
+        e.destroyCmd(&cmds);
 
-//         try expectEqual(1.0, cmds.worstCaseUsage());
+        try expectEqual(1.0, cmds.worstCaseUsage());
 
-//         try expectEqual(1, cmds.destroy.items.len);
-//         try expectEqual(e, cmds.destroy.items[0]);
-//         var iter = cmds.change_archetype.iterator(&es);
-//         try expectEqual(null, iter.next());
-//     }
+        try expectEqual(1, cmds.destroy.items.len);
+        try expectEqual(e, cmds.destroy.items[0]);
+        var iter = cmds.archetype_changes.iterator();
+        try expectEqual(null, iter.next());
+    }
 
-//     // Comp data overflow
-//     {
-//         var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
-//             .tags = 100,
-//             .args = 100,
-//             .comp_bytes = @sizeOf(RigidBody) * 2 - 1,
-//             .destroy = 100,
-//             .reserved = 0,
-//         });
-//         defer cmds.deinit(gpa, &es);
+    // Comp data overflow
+    {
+        var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
+            .tags = 100,
+            .args = 100,
+            .comp_bytes = @sizeOf(RigidBody) * 2 - 1,
+            .destroy = 100,
+            .reserved = 0,
+        });
+        defer cmds.deinit(gpa, &es);
 
-//         const e: Entity = Entity.reserveImmediately(&es);
-//         const rb = RigidBody.random(rand);
+        const e: Entity = Entity.reserveImmediately(&es);
+        const rb = RigidBody.random(rand);
 
-//         _ = Entity.reserveImmediately(&es).changeArchetypeCmd(&es, &cmds, .{ .add = .{rb} });
-//         e.destroyCmd(&es, &cmds);
-//         try expectError(error.ZcsCmdBufOverflow, e.changeArchetypeCmdChecked(
-//             &es,
-//             &cmds,
-//             .{ .add = .{RigidBody.random(rand)} },
-//         ));
+        _ = Entity.reserveImmediately(&es).addCompCmd(&cmds, RigidBody, rb);
+        e.destroyCmd(&cmds);
+        try expectError(error.ZcsCmdBufOverflow, e.addCompCmdChecked(
+            &cmds,
+            RigidBody,
+            RigidBody.random(rand),
+        ));
 
-//         try expectEqual(@as(f32, @sizeOf(RigidBody)) / @as(f32, @sizeOf(RigidBody) * 2 - 1), cmds.worstCaseUsage());
+        try expectEqual(@as(f32, @sizeOf(RigidBody)) / @as(f32, @sizeOf(RigidBody) * 2 - 1), cmds.worstCaseUsage());
 
-//         try expectEqual(1, cmds.destroy.items.len);
-//         try expectEqual(e, cmds.destroy.items[0]);
-//         var iter = cmds.change_archetype.iterator(&es);
-//         const change_archetype = iter.next().?;
-//         var add_comps = change_archetype.componentIterator();
-//         const create_rb = add_comps.next().?;
-//         try expectEqual(es.registerComponentType(RigidBody), create_rb.id);
-//         try expectEqual(rb, create_rb.as(&es, RigidBody).?.*);
-//         try expectEqual(null, add_comps.next());
-//         try expectEqual(null, iter.next());
-//     }
-// }
+        try expectEqual(1, cmds.destroy.items.len);
+        try expectEqual(e, cmds.destroy.items[0]);
+        var iter = cmds.archetype_changes.iterator();
+        const archetype_change = iter.next().?;
+        var ops = archetype_change.iterator();
+        const create_rb = ops.next().?.add;
+        try expectEqual(compId(RigidBody), create_rb.id);
+        try expectEqual(rb, create_rb.as(RigidBody).?.*);
+        try expectEqual(null, ops.next());
+        try expectEqual(null, iter.next());
+    }
+}
 
-// test "command buffer worst case capacity" {
-//     defer Comp.unregisterAll();
-//     // XXX: ...
-//     if (true) return error.SkipZigTest;
+// Verify that command buffers don't overflow before their estimated capacity
+test "command buffer worst case capacity" {
+    defer Comp.unregisterAll();
 
-//     const cb_capacity = 100;
+    const cb_capacity = 600;
 
-//     var es = try Entities.init(gpa, cb_capacity * 10);
-//     defer es.deinit(gpa);
+    var es = try Entities.init(gpa, cb_capacity * 10);
+    defer es.deinit(gpa);
 
-//     var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = cb_capacity, .comp_bytes = 16 });
-//     defer cmds.deinit(gpa, &es);
+    var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = cb_capacity, .comp_bytes = 22 });
+    defer cmds.deinit(gpa, &es);
 
-//     // Change archetype
-//     {
-//         // Non interned
-//         for (0..cb_capacity) |_| {
-//             _ = try Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
-//                 &es,
-//                 &cmds,
-//                 .{ .add = &.{
-//                     .init(&es, &@as(u0, 0)),
-//                     .init(&es, &@as(u8, 0)),
-//                     .init(&es, &@as(u16, 0)),
-//                     .init(&es, &@as(u32, 0)),
-//                     .init(&es, &@as(u64, 0)),
-//                     .init(&es, &@as(u128, 0)),
-//                 } },
-//             );
-//         }
+    // Change archetype
+    {
+        // Add val
+        const e0 = Entity.reserveImmediately(&es);
+        const e1 = Entity.reserveImmediately(&es);
 
-//         try expect(cmds.worstCaseUsage() > 0.8);
-//         cmds.clear(&es);
+        for (0..cb_capacity / 12) |_| {
+            e0.addCompValCmd(&cmds, u0, 0);
+            e1.addCompValCmd(&cmds, u8, 0);
+            e0.addCompValCmd(&cmds, u16, 0);
+            e1.addCompValCmd(&cmds, u32, 0);
+            e0.addCompValCmd(&cmds, u64, 0);
+            e1.addCompValCmd(&cmds, u128, 0);
+        }
 
-//         // Interned
-//         for (0..cb_capacity) |_| {
-//             _ = try Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
-//                 &es,
-//                 &cmds,
-//                 .{ .add = &.{
-//                     .initInterned(&es, &@as(u0, 0)),
-//                     .initInterned(&es, &@as(u8, 0)),
-//                     .initInterned(&es, &@as(u16, 0)),
-//                     .initInterned(&es, &@as(u32, 0)),
-//                     .initInterned(&es, &@as(u64, 0)),
-//                     .initInterned(&es, &@as(u128, 0)),
-//                 } },
-//             );
-//         }
+        try expect(cmds.worstCaseUsage() < 1.0);
+        cmds.clear(&es);
 
-//         try expect(cmds.worstCaseUsage() > 0.8);
-//         cmds.clear(&es);
+        for (0..cb_capacity / 6) |_| {
+            e0.addCompValCmd(&cmds, u0, 0);
+            e1.addCompValCmd(&cmds, u8, 0);
+            e0.addCompValCmd(&cmds, u16, 0);
+            e1.addCompValCmd(&cmds, u32, 0);
+            e0.addCompValCmd(&cmds, u64, 0);
+            e1.addCompValCmd(&cmds, u128, 0);
+        }
 
-//         // Duplicates don't take up extra space
-//         var dups: std.BoundedArray(Comp.Optional, cb_capacity * 4) = .{};
-//         for (0..dups.buffer.len) |i| {
-//             dups.appendAssumeCapacity(.init(&es, &@as(u128, i)));
-//         }
-//         _ = try Entity.reserveImmediately(&es).changeArchetypeCmdFromComponentsChecked(
-//             &es,
-//             &cmds,
-//             .{ .add = dups.constSlice() },
-//         );
-//         cmds.clear(&es);
-//     }
+        try expectEqual(1.0, cmds.worstCaseUsage());
+        cmds.clear(&es);
 
-//     // Destroy
-//     {
-//         for (0..cb_capacity) |i| {
-//             const e: Entity = .{ .key = .{
-//                 .index = @intCast(i),
-//                 .generation = @enumFromInt(0),
-//             } };
-//             try e.destroyCmdChecked(&es, &cmds);
-//         }
+        // Add ptr
+        for (0..cb_capacity / 12) |_| {
+            e0.addCompPtrCmd(&cmds, u0, 0);
+            e1.addCompPtrCmd(&cmds, u8, 0);
+            e0.addCompPtrCmd(&cmds, u16, 0);
+            e1.addCompPtrCmd(&cmds, u32, 0);
+            e0.addCompPtrCmd(&cmds, u64, 0);
+            e1.addCompPtrCmd(&cmds, u128, 0);
+        }
 
-//         try expect(cmds.worstCaseUsage() == 1.0);
-//         cmds.clear(&es);
-//     }
-// }
+        try expect(cmds.worstCaseUsage() < 1.0);
+        cmds.clear(&es);
+
+        for (0..cb_capacity / 6) |_| {
+            e0.addCompPtrCmd(&cmds, u0, 0);
+            e1.addCompPtrCmd(&cmds, u8, 0);
+            e0.addCompPtrCmd(&cmds, u16, 0);
+            e1.addCompPtrCmd(&cmds, u32, 0);
+            e0.addCompPtrCmd(&cmds, u64, 0);
+            e1.addCompPtrCmd(&cmds, u128, 0);
+        }
+
+        try expectEqual(1.0, cmds.worstCaseUsage());
+        cmds.clear(&es);
+
+        // Remove
+        for (0..cb_capacity / 12) |_| {
+            e0.removeCompCmd(&cmds, u0);
+            e1.removeCompCmd(&cmds, u8);
+            e0.removeCompCmd(&cmds, u16);
+            e1.removeCompCmd(&cmds, u32);
+            e0.removeCompCmd(&cmds, u64);
+            e1.removeCompCmd(&cmds, u128);
+        }
+
+        try expect(cmds.worstCaseUsage() < 1.0);
+        cmds.clear(&es);
+
+        for (0..cb_capacity / 6) |_| {
+            e0.removeCompCmd(&cmds, u0);
+            e1.removeCompCmd(&cmds, u8);
+            e0.removeCompCmd(&cmds, u16);
+            e1.removeCompCmd(&cmds, u32);
+            e0.removeCompCmd(&cmds, u64);
+            e1.removeCompCmd(&cmds, u128);
+        }
+
+        try expectEqual(1.0, cmds.worstCaseUsage());
+        cmds.clear(&es);
+    }
+
+    // Destroy
+    {
+        for (0..cb_capacity / 2) |i| {
+            const e: Entity = .{ .key = .{
+                .index = @intCast(i),
+                .generation = @enumFromInt(0),
+            } };
+            try e.destroyCmdChecked(&cmds);
+        }
+
+        try expect(cmds.worstCaseUsage() < 1.0);
+        cmds.clear(&es);
+
+        for (0..cb_capacity) |i| {
+            const e: Entity = .{ .key = .{
+                .index = @intCast(i),
+                .generation = @enumFromInt(0),
+            } };
+            try e.destroyCmdChecked(&cmds);
+        }
+
+        try expectEqual(1.0, cmds.worstCaseUsage());
+        cmds.clear(&es);
+    }
+
+    // Destroy
+    {
+        for (0..cb_capacity) |_| {
+            _ = try Entity.nextReservedChecked(&cmds);
+        }
+
+        try expectEqual(1.0, cmds.worstCaseUsage());
+        cmds.clear(&es);
+    }
+}

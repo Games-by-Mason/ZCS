@@ -31,7 +31,6 @@ pub const SubCmd = union(enum) {
     /// Decodes encoded subcommands.
     pub const Decoder = struct {
         cmds: *const CmdBuf.ArchetypeChanges,
-        es: *Entities,
         tag_index: usize = 0,
         arg_index: usize = 0,
         comp_bytes_index: usize = 0,

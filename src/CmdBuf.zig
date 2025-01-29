@@ -111,11 +111,17 @@ pub fn clearChecked(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void
 /// Returns the ratio of length to capacity for the internal buffer that is the nearest to being
 /// full.
 pub fn worstCaseUsage(self: @This()) f32 {
+    const reserved_used: f32 = @floatFromInt(self.reserved.capacity - self.reserved.items.len);
+    const reserved_usage = if (self.reserved.capacity == 0)
+        0.0
+    else
+        reserved_used / @as(f32, @floatFromInt(self.reserved.capacity));
     return @max(
         usage(self.destroy),
         usage(self.archetype_changes.comp_bytes),
         usage(self.archetype_changes.args),
         usage(self.archetype_changes.tags),
+        reserved_usage,
     );
 }
 
@@ -151,7 +157,7 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
     }
 
     // Execute the archetype changes
-    var changes = self.archetype_changes.iterator(es);
+    var changes = self.archetype_changes.iterator();
     while (changes.next()) |change| {
         if (change.entity.exists(es)) {
             var add: CompFlag.Set = .{};
@@ -225,18 +231,13 @@ pub const GranularCapacity = struct {
         // Each command can have at most one component's worth of component data.
         const comp_bytes_cap = (cap.comp_bytes + Comp.max_align) * cap.cmds;
 
-        // The command with the most subcommands is change archetype
-        var change_archetype_tags: usize = 0;
-        change_archetype_tags += 1; // Bind
-        change_archetype_tags += 1; // Remove components
-        change_archetype_tags += 1; // Add component
-        const tags_cap = change_archetype_tags * cap.cmds;
+        // Each command can have at most two tags
+        const tags_cap = cap.cmds * 2;
 
-        // The command with the most args is change archetype with by pointer components
-        var change_archetype_args: usize = 0;
-        change_archetype_args += 1; // Bind
-        change_archetype_args += 2; // comps * (id + ptr)
-        const args_cap = change_archetype_args * cap.cmds;
+        // Each command can have at most 3 args (the add ptr subcommand does a bind which has one
+        // arg if it's not skipped, and then it also passes the component ID and pointer as args as
+        // well.
+        const args_cap = cap.cmds * 3;
 
         // The most destroys we could do is the number of commands.
         const destroy_cap = cap.cmds;
