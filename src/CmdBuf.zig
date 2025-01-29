@@ -154,9 +154,6 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
     var changes = self.change_archetype.iterator(es);
     while (changes.next()) |change| {
         if (change.entity.exists(es)) {
-            // XXX: maybe change arch SHOULD just take the new arch, since that's easier to calculate
-            // anyway! at least the uninit version? idk maybe depends on if we expose a nicer one that
-            // takes comps or not, we DO expose those in the iterator either way
             var add: CompFlag.Set = .{};
             var remove: CompFlag.Set = .{};
 
@@ -164,9 +161,9 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
                 var ops = change.iterator();
                 while (ops.next()) |op| {
                     switch (op) {
-                        .remove => |id| {
-                            add.remove(id.flag);
-                            remove.insert(id.flag);
+                        .remove => |id| if (id.flag) |flag| {
+                            add.remove(flag);
+                            remove.insert(flag);
                         },
                         .add => |comp| {
                             const flag = types.register(comp.id);
@@ -176,7 +173,6 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
                     }
                 }
 
-                // XXX: assert in change arch that we don't try to add unregistered? removing it is fine
                 change.entity.changeArchetypeUninitializedImmediatelyChecked(es, .{
                     .add = add,
                     .remove = remove,
@@ -192,7 +188,6 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
                 var ops = change.iterator();
                 while (ops.next()) |op| {
                     switch (op) {
-                        // XXX: this will do it every time even if we re-add, but like.. imean why do that lol
                         .add => |comp| if (change.entity.getComponentFromId(es, comp.id)) |dest| {
                             @memcpy(dest, comp.bytes);
                         },

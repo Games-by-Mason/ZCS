@@ -223,7 +223,7 @@ pub fn ViewIterator(View: type) type {
                         const archetype = slot.archetype;
                         // XXX: document why this unwrap is okay
                         if (@typeInfo(field.type) != .optional or
-                            archetype.contains(compId(T).flag))
+                            archetype.contains(compId(T).flag.?))
                         {
                             const base = @intFromPtr(@field(view, field.name));
                             const offset = entity.key.index * @sizeOf(T);

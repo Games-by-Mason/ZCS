@@ -126,7 +126,7 @@ pub const Id = *struct {
     size: usize,
     /// The component type's alignment.
     alignment: u8,
-    flag: CompFlag = .unregistered,
+    flag: ?CompFlag = null,
 
     /// Returns the type ID of the given type.
     pub inline fn init(comptime T: type) *@This() {
