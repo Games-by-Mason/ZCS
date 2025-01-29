@@ -6,7 +6,6 @@ const Entity = zcs.Entity;
 const Component = zcs.Component;
 const CmdBuf = zcs.CmdBuf;
 const Entities = zcs.Entities;
-const TypeId = zcs.TypeId;
 
 /// Implementation detail of `CmdBuf`. Archetype change commands are composed of a sequence of one
 /// or more subcommands which are then encoded in a compact form.
@@ -20,7 +19,7 @@ pub const SubCmd = union(enum) {
     /// as arguments.
     add_component_ptr: Component,
     /// Queues a component to be removed.
-    remove_component: TypeId,
+    remove_component: Component.Id,
 
     /// If a new worst case command is introduced, also update the tests!
     pub const rename_when_changing_encoding = {};
@@ -46,7 +45,7 @@ pub const SubCmd = union(enum) {
                         return .{ .bind_entity = entity };
                     },
                     .add_component_val => {
-                        const id: TypeId = @ptrFromInt(self.nextArg().?);
+                        const id: Component.Id = @ptrFromInt(self.nextArg().?);
                         const bytes = self.nextComponentData(id);
                         const comp: Component = .{
                             .id = id,
@@ -56,7 +55,7 @@ pub const SubCmd = union(enum) {
                         return .{ .add_component_val = comp };
                     },
                     .add_component_ptr => {
-                        const id: TypeId = @ptrFromInt(self.nextArg().?);
+                        const id: Component.Id = @ptrFromInt(self.nextArg().?);
                         const bytes_unsized: [*]const u8 = @ptrFromInt(self.nextArg().?);
                         const bytes = bytes_unsized[0..id.size];
                         const comp: Component = .{
@@ -67,7 +66,7 @@ pub const SubCmd = union(enum) {
                         return .{ .add_component_ptr = comp };
                     },
                     .remove_component => {
-                        const id: TypeId = @ptrFromInt(self.nextArg().?);
+                        const id: Component.Id = @ptrFromInt(self.nextArg().?);
                         return .{ .remove_component = id };
                     },
                 }
@@ -104,7 +103,7 @@ pub const SubCmd = union(enum) {
             }
         }
 
-        pub inline fn nextComponentData(self: *@This(), id: TypeId) []const u8 {
+        pub inline fn nextComponentData(self: *@This(), id: Component.Id) []const u8 {
             self.component_bytes_index = std.mem.alignForward(
                 usize,
                 self.component_bytes_index,

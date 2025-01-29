@@ -4,15 +4,17 @@ const assert = std.debug.assert;
 const zcs = @import("root.zig");
 const slot_map = @import("slot_map");
 
-const typeId = zcs.typeId;
+const compId = zcs.compId;
 
 const SubCmd = @import("CmdBuf/sub_cmd.zig").SubCmd;
+
+const types = @import("types.zig");
+const CompFlag = types.CompFlag;
 
 const SlotMap = slot_map.SlotMap;
 const Entities = zcs.Entities;
 const Component = zcs.Component;
 const CmdBuf = zcs.CmdBuf;
-const TypeId = zcs.TypeId;
 
 const meta = @import("meta.zig");
 
@@ -30,7 +32,7 @@ pub const Entity = packed struct {
     /// An entity that has never existed, and never will.
     pub const none: @This() = .{ .key = .none };
 
-    key: SlotMap(Component.Flags, .{}).Key,
+    key: SlotMap(CompFlag.Set, .{}).Key,
 
     /// Pops a reserved entity.
     ///
@@ -120,7 +122,7 @@ pub const Entity = packed struct {
 
     /// Returns the archetype of the entity. If it has been destroyed or is not yet committed, the
     /// empty archetype will be returned.
-    pub fn getArchetype(self: @This(), es: *const Entities) Component.Flags {
+    pub fn getArchetype(self: @This(), es: *const Entities) CompFlag.Set {
         const slot = es.slots.get(self.key) orelse return .{};
         if (!slot.committed) assert(slot.archetype.eql(.{}));
         return slot.archetype;
@@ -144,7 +146,7 @@ pub const Entity = packed struct {
     }
 
     /// Similar to `hasComponent`, but operates on component flags instead of types.
-    pub fn hasComponentFlag(self: @This(), es: *const Entities, flag: Component.Flag) bool {
+    pub fn hasComponentFlag(self: @This(), es: *const Entities, flag: CompFlag) bool {
         return self.getArchetype(es).contains(flag);
     }
 
@@ -153,12 +155,12 @@ pub const Entity = packed struct {
     ///
     /// `Component` must be a registered component type.
     pub fn getComponent(self: @This(), es: *const Entities, T: type) ?*T {
-        const untyped = self.getComponentFromFlag(es, typeId(T).flag, @sizeOf(T)) orelse return null;
+        const untyped = self.getComponentFromFlag(es, compId(T).flag, @sizeOf(T)) orelse return null;
         return @alignCast(@ptrCast(untyped));
     }
 
     /// Similar to `getComponent`, but operates on component IDs instead of types.
-    pub fn getComponentFromId(self: @This(), es: *const Entities, id: TypeId) ?[]u8 {
+    pub fn getComponentFromId(self: @This(), es: *const Entities, id: Component.Id) ?[]u8 {
         return self.getComponentFromFlag(es, id.flag, id.size);
     }
 
@@ -167,7 +169,7 @@ pub const Entity = packed struct {
     pub fn getComponentFromFlag(
         self: @This(),
         es: *const Entities,
-        flag: Component.Flag,
+        flag: CompFlag,
         size: usize,
     ) ?[]u8 {
         if (!self.hasComponentFlag(es, flag)) return null;
@@ -229,7 +231,7 @@ pub const Entity = packed struct {
         // Issue the subcommands
         try SubCmd.encode(&cmds.change_archetype, .{ .bind_entity = self });
         try SubCmd.encode(&cmds.change_archetype, .{ .add_component_val = .{
-            .id = typeId(T),
+            .id = compId(T),
             .bytes = std.mem.asBytes(&comp),
             .interned = false,
         } });
@@ -260,7 +262,7 @@ pub const Entity = packed struct {
         };
         try SubCmd.encode(&cmds.change_archetype, .{ .bind_entity = self });
         try SubCmd.encode(&cmds.change_archetype, .{ .add_component_ptr = .{
-            .id = typeId(T),
+            .id = compId(T),
             .bytes = std.mem.asBytes(&Interned.value),
             .interned = true,
         } });
@@ -296,7 +298,7 @@ pub const Entity = packed struct {
         // Issue the subcommands
         try SubCmd.encode(&cmds.change_archetype, .{ .bind_entity = self });
         try SubCmd.encode(&cmds.change_archetype, .{
-            .remove_component = typeId(T),
+            .remove_component = compId(T),
         });
     }
 
@@ -327,7 +329,7 @@ pub const Entity = packed struct {
 
     pub const ChangeArchetypeFromComponentsOptions = struct {
         add: []const Component.Optional = &.{},
-        remove: Component.Flags = .{},
+        remove: CompFlag.Set = .{},
     };
 
     /// Similar to `changeArchetypeCmd` but does not require compile time types.
@@ -364,7 +366,7 @@ pub const Entity = packed struct {
 
         // Issue subcommands to add the listed components. Issued in reverse order, duplicates are
         // skipped.
-        var added: Component.Flags = .{};
+        var added: CompFlag.Set = .{};
         for (0..changes.add.len) |i| {
             const comp = changes.add[changes.add.len - i - 1];
             if (comp.unwrap()) |some| {
@@ -407,7 +409,7 @@ pub const Entity = packed struct {
         if (!self.exists(es)) return;
 
         // Get the component type indices and determine the archetype.
-        var comp_flags: Component.Flags = .{};
+        var comp_flags: CompFlag.Set = .{};
         inline for (add) |comp| {
             if (@typeInfo(@TypeOf(comp)) != .optional or comp != null) {
                 const T = meta.Unwrapped(@TypeOf(comp));
@@ -439,9 +441,9 @@ pub const Entity = packed struct {
     /// Options for the uninitialized variants of change archetype.
     pub const ChangeArchetypeUninitializedImmediatelyOptions = struct {
         /// Component types to remove.
-        remove: Component.Flags = .{},
+        remove: CompFlag.Set = .{},
         /// Component types to add.
-        add: Component.Flags = .{},
+        add: CompFlag.Set = .{},
     };
 
     /// Similar to `changeArchetypeImmediately`, but does not initialize any added components.
@@ -476,7 +478,7 @@ pub const Entity = packed struct {
         // Early out if the entity does not exist, also checks some assertions
         if (!self.exists(es)) return;
 
-        var add_flags: Component.Flags = .{};
+        var add_flags: CompFlag.Set = .{};
         for (changes.add) |comp| {
             if (comp.unwrap()) |some| {
                 add_flags.insert(some.id);

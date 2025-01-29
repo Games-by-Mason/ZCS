@@ -7,10 +7,13 @@
 
 const std = @import("std");
 const assert = std.debug.assert;
+
 const Allocator = std.mem.Allocator;
 
 const zcs = @import("root.zig");
-const typeId = zcs.typeId;
+const types = @import("types.zig");
+const CompFlag = types.CompFlag;
+const compId = zcs.compId;
 const Component = zcs.Component;
 const slot_map = @import("slot_map");
 const SlotMap = slot_map.SlotMap;
@@ -21,12 +24,12 @@ const Entities = @This();
 const IteratorGeneration = if (std.debug.runtime_safety) u64 else u0;
 
 const Slot = struct {
-    archetype: Component.Flags,
+    archetype: CompFlag.Set,
     committed: bool,
 };
 
 slots: SlotMap(Slot, .{}),
-comps: *[Component.Flag.max][]align(Component.max_align) u8,
+comps: *[CompFlag.max][]align(Component.max_align) u8,
 live: std.DynamicBitSetUnmanaged,
 iterator_generation: IteratorGeneration = 0,
 reserved_entities: usize = 0,
@@ -36,7 +39,7 @@ pub fn init(gpa: Allocator, capacity: usize) Allocator.Error!@This() {
     var slots = try SlotMap(Slot, .{}).init(gpa, capacity);
     errdefer slots.deinit(gpa);
 
-    const comps = try gpa.create([Component.Flag.max][]align(Component.max_align) u8);
+    const comps = try gpa.create([CompFlag.max][]align(Component.max_align) u8);
     errdefer gpa.destroy(comps);
 
     comptime var comps_init = 0;
@@ -107,7 +110,7 @@ fn ComponentFromPointer(T: type) ?type {
 /// an implementation defined order.
 pub fn iterator(
     self: *const @This(),
-    required_comps: Component.Flags,
+    required_comps: CompFlag.Set,
 ) Iterator {
     return .{
         .es = self,
@@ -120,7 +123,7 @@ pub fn iterator(
 /// See `iterator`.
 pub const Iterator = struct {
     es: *const Entities,
-    required_comps: Component.Flags,
+    required_comps: CompFlag.Set,
     index: u32,
     generation: IteratorGeneration,
 
@@ -166,7 +169,7 @@ pub const Iterator = struct {
 /// component types. Pointers can be set to optional to make a component type optional.
 pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
     var base: View = undefined;
-    var required_comps: Component.Flags = .{};
+    var required_comps: CompFlag.Set = .{};
     inline for (@typeInfo(View).@"struct".fields) |field| {
         if (field.type == Entity) {
             @field(base, field.name).key.index = 0;
@@ -176,7 +179,7 @@ pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
             };
 
             // XXX: this shouldn't register the comp
-            const flag = typeId(T).register();
+            const flag = types.register(compId(T));
             if (@typeInfo(field.type) != .optional) {
                 required_comps.insert(flag);
             }
@@ -220,7 +223,7 @@ pub fn ViewIterator(View: type) type {
                         const archetype = slot.archetype;
                         // XXX: document why this unwrap is okay
                         if (@typeInfo(field.type) != .optional or
-                            archetype.contains(typeId(T).flag))
+                            archetype.contains(compId(T).flag))
                         {
                             const base = @intFromPtr(@field(view, field.name));
                             const offset = entity.key.index * @sizeOf(T);

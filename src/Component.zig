@@ -8,15 +8,17 @@ const assert = std.debug.assert;
 
 const zcs = @import("root.zig");
 
-const typeId = zcs.typeId;
+const compId = zcs.compId;
+const types = @import("types.zig");
+const CompFlag = types.CompFlag;
 
-const TypeId = zcs.TypeId;
 const Entities = zcs.Entities;
 
+// XXX: consider renaming this file to Comp
 const Component = @This();
 
 /// The component's type ID.
-id: TypeId,
+id: Id,
 /// The component data.
 bytes: []const u8,
 /// If true, `ptr` points to constant. If false, it points to a temporary value.
@@ -25,6 +27,7 @@ interned: bool,
 /// The maximum alignment a component is allowed to require.
 pub const max_align = 16;
 
+// XXX: remove?
 /// An optional `Component`.
 pub const Optional = struct {
     pub const none: @This() = .{
@@ -33,7 +36,7 @@ pub const Optional = struct {
         .interned_or_undef = undefined,
     };
 
-    id_or_undef: TypeId,
+    id_or_undef: Id,
     bytes: ?[]const u8,
     interned_or_undef: bool,
 
@@ -56,13 +59,13 @@ pub const Optional = struct {
             .optional => |opt| {
                 const some = if (ptr.*) |*some| some else return .none;
                 return .{
-                    .id_or_undef = typeId(opt.child),
+                    .id_or_undef = compId(opt.child),
                     .ptr = @ptrCast(some),
                     .interned_or_undef = interned,
                 };
             },
             else => return .{
-                .id_or_undef = typeId(pointer.child),
+                .id_or_undef = compId(pointer.child),
                 .ptr = @ptrCast(ptr),
                 .interned_or_undef = interned,
             },
@@ -95,7 +98,7 @@ pub fn initInterned(ptr: anytype) @This() {
 fn initMaybeInterned(ptr: anytype, interned: bool) @This() {
     const T = @typeInfo(@TypeOf(ptr)).pointer.child;
     return .{
-        .id = typeId(T),
+        .id = compId(T),
         .bytes = std.mem.asBytes(ptr),
         .interned = interned,
     };
@@ -112,38 +115,41 @@ pub fn toOptional(self: @This()) Optional {
 
 /// Returns the component as the given type if it matches its ID, or null otherwise.
 pub fn as(self: @This(), T: anytype) ?*const T {
-    if (self.id != typeId(T)) return null;
+    if (self.id != compId(T)) return null;
     // XXX: does this assert size matches or should we?
     return @alignCast(@ptrCast(self.bytes));
 }
 
-/// The flag for a registered component type.
-const FlagInt = u6;
-pub const Flag = enum(FlagInt) {
-    pub const max = std.math.maxInt(FlagInt) - 1;
-    // XXX: make a toUsize function that returns null if unregistered?
-    unregistered = std.math.maxInt(FlagInt),
-    _,
+/// A unique ID for each component type alongside metadata on the type.
+pub const Id = *struct {
+    /// The component type's size.
+    size: usize,
+    /// The component type's alignment.
+    alignment: u8,
+    flag: CompFlag = .unregistered,
 
-    // XXX: name the type optional?
-    pub fn unwrap(self: @This()) ?FlagInt {
-        return switch (self) {
-            .unregistered => null,
-            else => @intFromEnum(self),
-        };
+    /// Returns the type ID of the given type.
+    pub inline fn init(comptime T: type) *@This() {
+        if (@typeInfo(T) == .optional) {
+            // There's nothing technically wrong with this, but if we allowed it then the change arch
+            // functions couldn't use optionals to allow deciding at runtime whether or not to create a
+            // component.
+            //
+            // Furthermore, it would be difficult to distinguish syntactically whether an
+            // optional component was missing or null.
+            //
+            // Instead, optional components should be represented by a struct with an optional
+            // field, or a tagged union.
+            @compileError("component types may not be optional: " ++ @typeName(T));
+        }
+
+        comptime assert(@alignOf(T) <= Component.max_align);
+
+        return &struct {
+            var id: @typeInfo(Component.Id).pointer.child = .{
+                .size = @sizeOf(T),
+                .alignment = @alignOf(T),
+            };
+        }.id;
     }
 };
-
-/// A set of component types.
-pub const Flags = std.enums.EnumSet(Flag);
-
-/// Initialize a set of component types from a list of component types.
-pub fn flags(types: []const type) Flags {
-    var result: Flags = .{};
-    inline for (types) |ty| {
-        // XXX: sus!! wanna be able to make flags on bg threads lol. i mean we could just make it lock
-        // or be atomic or something idk.
-        result.insert(typeId(ty).register());
-    }
-    return result;
-}

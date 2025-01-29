@@ -19,68 +19,50 @@ pub fn iterator(self: *const @This(), es: *Entities) Iterator {
     } };
 }
 
+/// A change archetype command.
+pub const ChangeArchetype = struct {
+    /// The bound entity.
+    entity: Entity,
+    decoder: SubCmd.Decoder,
+
+    /// An iterator over the operations that make up this archetype change.
+    pub fn iterator(self: @This()) OperationIterator {
+        return .{ .decoder = self.decoder };
+    }
+};
+
+// XXX: document why they're grouped like this so it makes more sense
+/// An individual operation that's part of an archetype change.
+pub const Operation = union(enum) {
+    add: Component,
+    remove: Component.Id,
+};
+
 /// An iterator over archetype change commands.
-///
-/// The command encoder is allowed to modify, reorder or skip commands so long as the result is
-/// logically equivalent.
 pub const Iterator = struct {
     decoder: SubCmd.Decoder,
 
-    /// A change archetype command.
-    pub const Item = struct {
-        /// The changed entity.
-        entity: Entity,
-        /// The removed component types.
-        remove: Component.Flags,
-        /// The added component types.
-        add: Component.Flags,
-        decoder: SubCmd.Decoder,
-
-        /// An iterator over the added components.
-        pub fn componentIterator(self: @This()) ComponentIterator {
-            return .{
-                .decoder = self.decoder,
-                .skip = self.remove,
-            };
-        }
-    };
-
     /// Returns the next archetype changed command, or `null` if there is none.
-    pub fn next(self: *@This()) ?Item {
+    pub fn next(self: *@This()) ?ChangeArchetype {
         while (self.decoder.next()) |cmd| {
             switch (cmd) {
                 .bind_entity => |entity| {
-                    const comp_decoder = self.decoder;
-                    var remove: Component.Flags = .{};
-                    var add: Component.Flags = .{};
+                    const op_decoder = self.decoder;
+                    // XXX: any way to avoid this? i mean we COULD just have you iterate over the
+                    // ops but imo that's kinda annoying? or is it? it may only be OUR code that cares
+                    // about grouping them! having to track the bound entity is annoying, but...our
+                    // iterator could actually do that for us.
                     while (self.decoder.peekTag()) |subcmd| {
                         switch (subcmd) {
                             .bind_entity => break,
-                            .add_component_val => {
-                                const comp = self.decoder.next().?.add_component_val;
-                                const flag = comp.id.register();
-                                add.insert(flag);
-                                remove.remove(flag);
-                            },
-                            .add_component_ptr => {
-                                const comp = self.decoder.next().?.add_component_ptr;
-                                const flag = comp.id.register();
-                                add.insert(flag);
-                                remove.remove(flag);
-                            },
-                            .remove_component => {
-                                const id = self.decoder.next().?.remove_component;
-                                const flag = id.register();
-                                remove.insert(flag);
-                                add.remove(flag);
-                            },
+                            .add_component_val => _ = self.decoder.next().?.add_component_val,
+                            .add_component_ptr => _ = self.decoder.next().?.add_component_ptr,
+                            .remove_component => _ = self.decoder.next().?.remove_component,
                         }
                     }
                     return .{
-                        .remove = remove,
-                        .add = add,
                         .entity = entity,
-                        .decoder = comp_decoder,
+                        .decoder = op_decoder,
                     };
                 },
                 .add_component_val, .add_component_ptr, .remove_component => {
@@ -99,29 +81,19 @@ pub const Iterator = struct {
     }
 };
 
-/// An iterator over an archetype change command's added components.
-///
-/// The command encoder is allowed to modify, reorder or skip components so long as the result is
-/// logically equivalent.
-pub const ComponentIterator = struct {
+/// An iterator over an archetype change command's operations.
+pub const OperationIterator = struct {
     decoder: SubCmd.Decoder,
-    skip: Component.Flags,
 
-    /// Returns the next added component, or `null` if there are none.
-    pub fn next(self: *@This()) ?Component {
+    /// Returns the next operation, or `null` if there are none.
+    pub fn next(self: *@This()) ?Operation {
         while (self.decoder.peekTag()) |tag| {
-            const comp = switch (tag) {
-                .add_component_val => self.decoder.next().?.add_component_val,
-                .add_component_ptr => self.decoder.next().?.add_component_ptr,
-                .remove_component => {
-                    _ = self.decoder.next().?.remove_component;
-                    continue;
-                },
+            return switch (tag) {
+                .add_component_val => .{ .add = self.decoder.next().?.add_component_val },
+                .add_component_ptr => .{ .add = self.decoder.next().?.add_component_ptr },
+                .remove_component => .{ .remove = self.decoder.next().?.remove_component },
                 .bind_entity => break,
             };
-            // XXX: need to document that iterating registers stuff and therefore shouldn't be done on bg...
-            const flag = comp.id.register();
-            if (!self.skip.contains(flag)) return comp;
         }
         return null;
     }

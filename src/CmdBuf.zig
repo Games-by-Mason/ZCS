@@ -12,6 +12,8 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const zcs = @import("root.zig");
+const types = @import("types.zig");
+const CompFlag = types.CompFlag;
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const Component = zcs.Component;
@@ -42,7 +44,7 @@ pub fn initGranularCapacity(
     es: *Entities,
     capacity: GranularCapacity,
 ) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
-    comptime assert(Component.Flag.max < std.math.maxInt(u64));
+    comptime assert(CompFlag.max < std.math.maxInt(u64));
 
     var tags: std.ArrayListUnmanaged(SubCmd.Tag) = try .initCapacity(gpa, capacity.tags);
     errdefer tags.deinit(gpa);
@@ -149,23 +151,54 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
     }
 
     // Execute the archetype changes
-    var iter = self.change_archetype.iterator(es);
-    while (iter.next()) |change| {
+    var changes = self.change_archetype.iterator(es);
+    while (changes.next()) |change| {
         if (change.entity.exists(es)) {
-            change.entity.changeArchetypeUninitializedImmediatelyChecked(es, .{
-                .remove = change.remove,
-                .add = change.add,
-            }) catch |err| switch (err) {
-                error.ZcsEntityOverflow => {
-                    overflow = true;
-                    continue;
-                },
-            };
-            var comps = change.componentIterator();
-            while (comps.next()) |comp| {
-                const src = comp.bytes;
-                const dest = change.entity.getComponentFromId(es, comp.id).?;
-                @memcpy(dest, src);
+            // XXX: maybe change arch SHOULD just take the new arch, since that's easier to calculate
+            // anyway! at least the uninit version? idk maybe depends on if we expose a nicer one that
+            // takes comps or not, we DO expose those in the iterator either way
+            var add: CompFlag.Set = .{};
+            var remove: CompFlag.Set = .{};
+
+            {
+                var ops = change.iterator();
+                while (ops.next()) |op| {
+                    switch (op) {
+                        .remove => |id| {
+                            add.remove(id.flag);
+                            remove.insert(id.flag);
+                        },
+                        .add => |comp| {
+                            const flag = types.register(comp.id);
+                            add.insert(flag);
+                            remove.remove(flag);
+                        },
+                    }
+                }
+
+                // XXX: assert in change arch that we don't try to add unregistered? removing it is fine
+                change.entity.changeArchetypeUninitializedImmediatelyChecked(es, .{
+                    .add = add,
+                    .remove = remove,
+                }) catch |err| switch (err) {
+                    error.ZcsEntityOverflow => {
+                        overflow = true;
+                        continue;
+                    },
+                };
+            }
+
+            {
+                var ops = change.iterator();
+                while (ops.next()) |op| {
+                    switch (op) {
+                        // XXX: this will do it every time even if we re-add, but like.. imean why do that lol
+                        .add => |comp| if (change.entity.getComponentFromId(es, comp.id)) |dest| {
+                            @memcpy(dest, comp.bytes);
+                        },
+                        .remove => {},
+                    }
+                }
             }
         }
     }
