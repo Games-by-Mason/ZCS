@@ -13,17 +13,14 @@ const TypeId = zcs.TypeId;
 pub const SubCmd = union(enum) {
     /// Binds an existing entity.
     bind_entity: Entity,
-    /// Schedules components to be added by value. Always executes after `remove_components`
-    /// commands on the current binding, regardless of submission order. ID is passed as an
-    /// argument, component data is passed via component data.
+    /// Queues components to be added by value. ID is passed as an argument, component data is
+    /// passed via component data.
     add_component_val: Component,
-    /// Schedules components to be added bye value. Always executes after `remove_components`
-    /// commands on the current binding, regardless of submission order. ID and a pointer to the
-    /// component data are passed as arguments.
+    /// Queues components to be added bye value. ID and a pointer to the component data are passed
+    /// as arguments.
     add_component_ptr: Component,
-    /// Schedules components to be removed. Always executes before any `add_component_val` commands on
-    /// current binding, regardless of submission order.
-    remove_components: Component.Flags,
+    /// Queues a component to be removed.
+    remove_component: TypeId,
 
     /// If a new worst case command is introduced, also update the tests!
     pub const rename_when_changing_encoding = {};
@@ -69,11 +66,9 @@ pub const SubCmd = union(enum) {
                         };
                         return .{ .add_component_ptr = comp };
                     },
-                    .remove_components => {
-                        const comps: Component.Flags = .{ .bits = .{
-                            .mask = @intCast(self.nextArg().?),
-                        } };
-                        return .{ .remove_components = comps };
+                    .remove_component => {
+                        const id: TypeId = @ptrFromInt(self.nextArg().?);
+                        return .{ .remove_component = id };
                     },
                 }
             }
@@ -161,11 +156,11 @@ pub const SubCmd = union(enum) {
                 changes.args.appendAssumeCapacity(@intFromPtr(comp.id));
                 changes.args.appendAssumeCapacity(@intFromPtr(comp.bytes.ptr));
             },
-            .remove_components => |comps| {
+            .remove_component => |id| {
                 if (changes.tags.items.len >= changes.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (changes.args.items.len >= changes.args.capacity) return error.ZcsCmdBufOverflow;
-                changes.tags.appendAssumeCapacity(.remove_components);
-                changes.args.appendAssumeCapacity(comps.bits.mask);
+                changes.tags.appendAssumeCapacity(.remove_component);
+                changes.args.appendAssumeCapacity(@intFromPtr(id));
             },
         }
     }

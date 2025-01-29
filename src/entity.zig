@@ -296,7 +296,7 @@ pub const Entity = packed struct {
         // Issue the subcommands
         try SubCmd.encode(&cmds.change_archetype, .{ .bind_entity = self });
         try SubCmd.encode(&cmds.change_archetype, .{
-            .remove_components = Component.flags(&.{T}),
+            .remove_component = typeId(T),
         });
     }
 

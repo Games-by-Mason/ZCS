@@ -68,10 +68,11 @@ pub const Iterator = struct {
                                 add.insert(flag);
                                 remove.remove(flag);
                             },
-                            .remove_components => {
-                                const comps = self.decoder.next().?.remove_components;
-                                remove.setUnion(comps);
-                                add = add.differenceWith(comps);
+                            .remove_component => {
+                                const id = self.decoder.next().?.remove_component;
+                                const flag = id.register();
+                                remove.insert(flag);
+                                add.remove(flag);
                             },
                         }
                     }
@@ -82,7 +83,7 @@ pub const Iterator = struct {
                         .decoder = comp_decoder,
                     };
                 },
-                .add_component_val, .add_component_ptr, .remove_components => {
+                .add_component_val, .add_component_ptr, .remove_component => {
                     // Add/remove commands with no entity bound. This can occur if the first entity
                     // we bind is `.none`. Since it is none, and the default cached binding is none,
                     // the binding is omitted.
@@ -112,8 +113,8 @@ pub const ComponentIterator = struct {
             const comp = switch (tag) {
                 .add_component_val => self.decoder.next().?.add_component_val,
                 .add_component_ptr => self.decoder.next().?.add_component_ptr,
-                .remove_components => {
-                    _ = self.decoder.next().?.remove_components;
+                .remove_component => {
+                    _ = self.decoder.next().?.remove_component;
                     continue;
                 },
                 .bind_entity => break,
