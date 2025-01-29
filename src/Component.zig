@@ -117,14 +117,25 @@ pub fn as(self: @This(), T: anytype) ?*const T {
     return @alignCast(@ptrCast(self.bytes));
 }
 
-/// The index of a registered component type.
-pub const Index = enum(u6) {
-    pub const max = std.math.maxInt(@typeInfo(@This()).@"enum".tag_type);
+/// The flag for a registered component type.
+const FlagInt = u6;
+pub const Flag = enum(FlagInt) {
+    pub const max = std.math.maxInt(FlagInt) - 1;
+    // XXX: make a toUsize function that returns null if unregistered?
+    unregistered = std.math.maxInt(FlagInt),
     _,
+
+    // XXX: name the type optional?
+    pub fn unwrap(self: @This()) ?FlagInt {
+        return switch (self) {
+            .unregistered => null,
+            else => @intFromEnum(self),
+        };
+    }
 };
 
 /// A set of component types.
-pub const Flags = std.enums.EnumSet(Index);
+pub const Flags = std.enums.EnumSet(Flag);
 
 /// Initialize a set of component types from a list of component types.
 pub fn flags(types: []const type) Flags {

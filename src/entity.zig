@@ -131,20 +131,21 @@ pub const Entity = packed struct {
     ///
     /// `Component` must be a registered component type.
     pub fn hasComponent(self: @This(), es: *const Entities, T: type) bool {
-        const comp_index = es.getComponentIndex(T) orelse return false;
-        return self.hasComponentIndex(es, comp_index);
+        const comp_flag = es.getComponentFlag(T) orelse return false;
+        return self.hasComponentFlag(es, comp_flag);
     }
 
+    // XXX: ...
     /// Similar to `hasComponent`, but operates on component IDs instead of types.
     pub fn hasComponentId(self: @This(), es: *const Entities, id: Component.Id) bool {
-        const index = es.comp_types.getIndexFromId(id);
+        const flag = es.comp_types.getFlagFromId(id);
         const archetype = self.getArchetype(es);
-        return archetype.contains(index);
+        return archetype.contains(flag);
     }
 
-    /// Similar to `hasComponent`, but operates on component indices instead of types.
-    pub fn hasComponentIndex(self: @This(), es: *const Entities, index: Component.Index) bool {
-        return self.getArchetype(es).contains(index);
+    /// Similar to `hasComponent`, but operates on component flags instead of types.
+    pub fn hasComponentFlag(self: @This(), es: *const Entities, flag: Component.Flag) bool {
+        return self.getArchetype(es).contains(flag);
     }
 
     /// Retrieves the given component type. Returns null if the entity does not have this component
@@ -152,27 +153,25 @@ pub const Entity = packed struct {
     ///
     /// `Component` must be a registered component type.
     pub fn getComponent(self: @This(), es: *const Entities, T: type) ?*T {
-        const comp_index = typeId(T).index orelse return null;
-        const untyped = self.getComponentFromIndex(es, comp_index, @sizeOf(T)) orelse return null;
+        const untyped = self.getComponentFromFlag(es, typeId(T).flag, @sizeOf(T)) orelse return null;
         return @alignCast(@ptrCast(untyped));
     }
 
     /// Similar to `getComponent`, but operates on component IDs instead of types.
     pub fn getComponentFromId(self: @This(), es: *const Entities, id: TypeId) ?[]u8 {
-        const index = id.index orelse return null;
-        return self.getComponentFromIndex(es, index, id.size);
+        return self.getComponentFromFlag(es, id.flag, id.size);
     }
 
     // XXX: still useful?
     /// Similar to `getComponent`, but operates on component indices instead of types.
-    pub fn getComponentFromIndex(
+    pub fn getComponentFromFlag(
         self: @This(),
         es: *const Entities,
-        index: Component.Index,
+        flag: Component.Flag,
         size: usize,
     ) ?[]u8 {
-        if (!self.hasComponentIndex(es, index)) return null;
-        const comp_buffer = es.comps[@intFromEnum(index)];
+        if (!self.hasComponentFlag(es, flag)) return null;
+        const comp_buffer = es.comps[flag.unwrap().?];
         const comp_offset = self.key.index * size;
         const bytes = comp_buffer.ptr + comp_offset;
         return bytes[0..size];
@@ -407,16 +406,14 @@ pub const Entity = packed struct {
         // Early out if the entity does not exist, also checks some assertions
         if (!self.exists(es)) return;
 
-        // Get the component type indices and determine the archetype. We store the type index list
-        // to avoid looking up the same values in the map multiple times.
+        // Get the component type indices and determine the archetype.
         var comp_flags: Component.Flags = .{};
-        var comp_indices: [add.len]Component.Index = undefined;
-        inline for (add, 0..) |comp, i| {
+        inline for (add) |comp| {
             if (@typeInfo(@TypeOf(comp)) != .optional or comp != null) {
                 const T = meta.Unwrapped(@TypeOf(comp));
-                const comp_index = es.getComponentIndex(T);
-                comp_flags.insert(comp_index);
-                comp_indices[i] = comp_index;
+                // XXX: ...
+                const flag = es.getComponentFlag(T);
+                comp_flags.insert(flag);
             }
         }
 
@@ -430,8 +427,8 @@ pub const Entity = packed struct {
             if (!remove.containsKey(value)) {
                 const optional: ?meta.Unwrapped(@TypeOf(value)) = value;
                 if (optional) |some| {
-                    const comp_index = comp_indices[i];
-                    const untyped = self.getComponentFromIndex(es, comp_index, @sizeOf(some)).?;
+                    const flag = comp_flags[i];
+                    const untyped = self.getComponentFromFlag(es, flag, @sizeOf(some)).?;
                     const typed: *@TypeOf(some) = @alignCast(@ptrCast(untyped));
                     typed.* = some;
                 }
@@ -500,7 +497,7 @@ pub const Entity = packed struct {
                 if (!skip.contains(some.id)) {
                     skip.insert(some.id);
                     const src = some.bytes;
-                    const dest = self.getComponentFromIndex(es, some.id, src.bytes.len).?;
+                    const dest = self.getComponentFromFlag(es, some.id, src.bytes.len).?;
                     @memcpy(dest, src);
                 }
             }

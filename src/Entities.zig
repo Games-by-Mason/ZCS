@@ -26,7 +26,7 @@ const Slot = struct {
 };
 
 slots: SlotMap(Slot, .{}),
-comps: *[Component.Index.max][]align(Component.max_align) u8,
+comps: *[Component.Flag.max][]align(Component.max_align) u8,
 live: std.DynamicBitSetUnmanaged,
 iterator_generation: IteratorGeneration = 0,
 reserved_entities: usize = 0,
@@ -36,7 +36,7 @@ pub fn init(gpa: Allocator, capacity: usize) Allocator.Error!@This() {
     var slots = try SlotMap(Slot, .{}).init(gpa, capacity);
     errdefer slots.deinit(gpa);
 
-    const comps = try gpa.create([Component.Index.max][]align(Component.max_align) u8);
+    const comps = try gpa.create([Component.Flag.max][]align(Component.max_align) u8);
     errdefer gpa.destroy(comps);
 
     comptime var comps_init = 0;
@@ -176,11 +176,11 @@ pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
             };
 
             // XXX: this shouldn't register the comp
-            const comp_index = typeId(T).register();
+            const flag = typeId(T).register();
             if (@typeInfo(field.type) != .optional) {
-                required_comps.insert(comp_index);
+                required_comps.insert(flag);
             }
-            @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(comp_index)]);
+            @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(flag)]);
         }
     }
 
@@ -220,7 +220,7 @@ pub fn ViewIterator(View: type) type {
                         const archetype = slot.archetype;
                         // XXX: document why this unwrap is okay
                         if (@typeInfo(field.type) != .optional or
-                            archetype.contains(typeId(T).index.?))
+                            archetype.contains(typeId(T).flag))
                         {
                             const base = @intFromPtr(@field(view, field.name));
                             const offset = entity.key.index * @sizeOf(T);

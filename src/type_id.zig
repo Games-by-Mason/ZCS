@@ -10,29 +10,28 @@ var registered: usize = 0;
 pub const TypeId = *struct {
     size: usize,
     alignment: u8,
-    index: ?Component.Index = null,
+    flag: Component.Flag = .unregistered,
 
     // XXX: document...
-    pub fn register(self: *@This()) Component.Index {
+    pub fn register(self: *@This()) Component.Flag {
         // Early out if we're already registered
-        if (self.index) |index| return index;
+        if (self.flag != .unregistered) return self.flag;
 
-        // XXX: move index type onto type id? move both onto component or no? remember weird naming conflict and not wanting init etc, can always alias but idk
+        // XXX: move flag type onto type id? move both onto component or no? remember weird naming conflict and not wanting init etc, can always alias but idk
         // Check if we've registered too many components
-        const index = registered;
-        if (index == Component.Index.max / 2) {
-            std.log.warn("{} component types registered, you're at 50% the fatal capacity!", .{index});
+        if (registered == Component.Flag.max / 2) {
+            std.log.warn("{} component types registered, you're at 50% the fatal capacity!", .{registered});
         }
-        if (index >= Component.Index.max) {
+        if (registered >= Component.Flag.max) {
             @panic("component type overflow");
         }
 
         // Register the ID
+        const flag: Component.Flag = @enumFromInt(registered);
         registered += 1;
-
-        self.index = @enumFromInt(index);
-
-        return @enumFromInt(index);
+        // @atomicStore(Component.Flag, &self.flag, flag, .unordered);
+        self.flag = flag;
+        return flag;
     }
 };
 

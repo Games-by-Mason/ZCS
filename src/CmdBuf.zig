@@ -26,10 +26,6 @@ destroy: std.ArrayListUnmanaged(Entity),
 change_archetype: ChangeArchetypes,
 /// Reserved entities.
 reserved: std.ArrayListUnmanaged(Entity),
-// XXX: unimplemented
-// /// Local IDs for component types. New types can be registered here without modifying `Entities`,
-// /// however the IDs need to be remapped on execute.
-// comp_types: std.AutoArrayHashMapUnmanaged(TypeId, void),
 
 /// Initializes a command buffer.
 pub fn init(
@@ -46,7 +42,7 @@ pub fn initGranularCapacity(
     es: *Entities,
     capacity: GranularCapacity,
 ) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
-    comptime assert(Component.Index.max < std.math.maxInt(u64));
+    comptime assert(Component.Flag.max < std.math.maxInt(u64));
 
     var tags: std.ArrayListUnmanaged(SubCmd.Tag) = try .initCapacity(gpa, capacity.tags);
     errdefer tags.deinit(gpa);
