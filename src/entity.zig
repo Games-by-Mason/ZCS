@@ -206,7 +206,6 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    // XXX: was the fuzz test not executing this??
     /// Similar to `addCompPtrCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead
     /// of panicking.
     pub fn addCompPtrCmdChecked(

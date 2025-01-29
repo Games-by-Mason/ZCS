@@ -57,7 +57,7 @@ pub const SubCmd = union(enum) {
                     },
                     .add_comp_ptr => {
                         const id: Comp.Id = @ptrFromInt(self.nextArg().?);
-                        const ptr: [*]const u8 = @ptrFromInt(self.nextArg().?);
+                        const ptr: *const anyopaque = @ptrFromInt(self.nextArg().?);
                         const comp: Comp = .{
                             .id = id,
                             .ptr = ptr,
@@ -103,14 +103,19 @@ pub const SubCmd = union(enum) {
         }
 
         pub inline fn nextComponentData(self: *@This(), id: Comp.Id) *const anyopaque {
+            // Align the read
             self.comp_bytes_index = std.mem.alignForward(
                 usize,
                 self.comp_bytes_index,
                 id.alignment,
             );
-            const ptr = &self.cmds.comp_bytes.items[self.comp_bytes_index];
+
+            // Get the pointer as a slice, this way we don't fail on zero sized types
+            const bytes = &self.cmds.comp_bytes.items[self.comp_bytes_index..][0..id.size];
+
+            // Update the offset and return the pointer
             self.comp_bytes_index += id.size;
-            return ptr;
+            return bytes.ptr;
         }
     };
 

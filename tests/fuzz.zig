@@ -28,11 +28,10 @@ test "rand cmdbuf" {
 }
 
 const RigidBody = struct {
-    const interned: [4]?@This() = .{
+    const interned: [3]@This() = .{
         .{},
         .{ .position = .{ 2.0, 3.0 }, .velocity = .{ 4.0, 5.0 }, .mass = 10.0 },
         .{ .position = .{ 24.0, 32.0 }, .velocity = .{ 42.0, 55.0 }, .mass = 103.0 },
-        null,
     };
     position: [2]f32 = .{ 1.0, 2.0 },
     velocity: [2]f32 = .{ 3.0, 4.0 },
@@ -40,20 +39,19 @@ const RigidBody = struct {
 };
 
 const Model = struct {
-    const interned: [4]?@This() = .{
+    const interned: [3]@This() = .{
         .{},
         .{ .vertex_start = 1, .vertex_count = 2 },
         .{ .vertex_start = 10, .vertex_count = 20 },
-        null,
     };
     vertex_start: u16 = 6,
     vertex_count: u16 = 7,
 };
 
 pub const Tag = struct {
-    const interned: [2]?@This() = .{
+    const interned: [2]@This() = .{
         .{},
-        null,
+        .{},
     };
 };
 
@@ -447,18 +445,15 @@ const FuzzCmdBuf = struct {
                     tag,
                 })) {
                     .rb => {
-                        const rb = self.parser.next(RigidBody);
-                        entity.addCompCmd(&self.cmds, RigidBody, rb);
+                        const rb = self.addRandomComp(entity, RigidBody);
                         if (expected) |e| e.rb = rb;
                     },
                     .model => {
-                        const model = self.parser.next(Model);
-                        entity.addCompCmd(&self.cmds, Model, model);
+                        const model = self.addRandomComp(entity, Model);
                         if (expected) |e| e.model = model;
                     },
                     .tag => {
-                        const tag = self.parser.next(Tag);
-                        entity.addCompCmd(&self.cmds, Tag, tag);
+                        const tag = self.addRandomComp(entity, Tag);
                         if (expected) |e| e.tag = tag;
                     },
                 }
@@ -538,49 +533,24 @@ const FuzzCmdBuf = struct {
         }
     }
 
-    // XXX: this is dead code, and our normal one doesn't ever add interned!
-    fn addComponent(
-        self: *@This(),
-        T: type,
-        buf: *std.BoundedArray(?T, change_cap),
-        add: *std.BoundedArray(Comp.Optional, change_cap),
-    ) *const ?T {
-        // Either get an interned component, or generate a random one
+    /// Adds a random value for the given component by value, or a random value from it's interned
+    /// list by pointer. Returns the value.
+    fn addRandomComp(self: *@This(), e: Entity, T: type) T {
         const i = self.parser.next(u8);
-        const interned = i < 40;
-        const comp = if (interned) b: {
-            break :b &T.interned[i % T.interned.len];
-        } else b: {
-            const comp = buf.addOneAssumeCapacity();
-            comp.* = self.parser.next(?T);
-            break :b comp;
-        };
-
-        // Randomly add it to the command, as either an optional or
-        // unwrapped
-        if (comp.*) |*some| {
-            if (self.parser.next(bool)) {
-                if (interned) {
-                    add.appendAssumeCapacity(.initInterned(&self.es, some));
-                } else {
-                    add.appendAssumeCapacity(.init(&self.es, some));
-                }
-            } else {
-                if (interned) {
-                    add.appendAssumeCapacity(.initInterned(&self.es, comp));
-                } else {
-                    add.appendAssumeCapacity(.init(&self.es, comp));
-                }
+        const by_ptr = i < 40;
+        if (by_ptr) {
+            switch (i % T.interned.len) {
+                inline 0...(T.interned.len - 1) => |n| {
+                    const val = T.interned[n];
+                    e.addCompPtrCmd(&self.cmds, T, val);
+                    return val;
+                },
+                else => unreachable,
             }
         } else {
-            if (interned) {
-                add.appendAssumeCapacity(.initInterned(&self.es, comp));
-            } else {
-                add.appendAssumeCapacity(.init(&self.es, comp));
-            }
+            const val = self.parser.next(T);
+            e.addCompCmd(&self.cmds, T, val);
+            return val;
         }
-
-        // Return the component
-        return comp;
     }
 };
