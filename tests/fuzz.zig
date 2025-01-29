@@ -11,7 +11,7 @@ const FuzzParser = @import("FuzzParser.zig");
 const Entities = zcs.Entities;
 const CmdBuf = zcs.CmdBuf;
 const Entity = zcs.Entity;
-const Component = zcs.Component;
+const Comp = zcs.Comp;
 const typeId = zcs.typeId;
 
 test "fuzz cmdbuf" {
@@ -126,6 +126,8 @@ const FuzzCmdBuf = struct {
     }
 
     fn run(input: []const u8) !void {
+        defer Comp.unregisterAll();
+
         var self: @This() = try init(input);
         defer self.deinit();
 
@@ -182,9 +184,9 @@ const FuzzCmdBuf = struct {
             const expected = entry.value_ptr;
             try expect(entity.exists(&self.es));
             try expect(entity.committed(&self.es));
-            try expectEqual(expected.rb, if (entity.getComponent(&self.es, RigidBody)) |v| v.* else null);
-            try expectEqual(expected.model, if (entity.getComponent(&self.es, Model)) |v| v.* else null);
-            try expectEqual(expected.tag, if (entity.getComponent(&self.es, Tag)) |v| v.* else null);
+            try expectEqual(expected.rb, if (entity.getComp(&self.es, RigidBody)) |v| v.* else null);
+            try expectEqual(expected.model, if (entity.getComp(&self.es, Model)) |v| v.* else null);
+            try expectEqual(expected.tag, if (entity.getComp(&self.es, Tag)) |v| v.* else null);
         }
 
         // Check the tracked deleted entities
@@ -193,9 +195,9 @@ const FuzzCmdBuf = struct {
             const entity = entry.key_ptr.*;
             try expect(!entity.exists(&self.es));
             try expect(!entity.committed(&self.es));
-            try expectEqual(null, if (entity.getComponent(&self.es, RigidBody)) |v| v.* else null);
-            try expectEqual(null, if (entity.getComponent(&self.es, Model)) |v| v.* else null);
-            try expectEqual(null, if (entity.getComponent(&self.es, Tag)) |v| v.* else null);
+            try expectEqual(null, if (entity.getComp(&self.es, RigidBody)) |v| v.* else null);
+            try expectEqual(null, if (entity.getComp(&self.es, Model)) |v| v.* else null);
+            try expectEqual(null, if (entity.getComp(&self.es, Tag)) |v| v.* else null);
         }
 
         // Check the iterators
@@ -238,12 +240,11 @@ const FuzzCmdBuf = struct {
                 count += 1;
             }
 
-            // XXX: ...
-            // // Compare them
-            // try expectEqual(
-            //     self.expectedOfArchetype(Component.flags(&.{RigidBody})),
-            //     count,
-            // );
+            // Compare them
+            try expectEqual(
+                self.expectedOfArchetype(.{ .rb = true }),
+                count,
+            );
         }
 
         // Rigid bodies, with handle
@@ -252,16 +253,15 @@ const FuzzCmdBuf = struct {
             defer self.found_buf.clearRetainingCapacity();
             var iter = self.es.viewIterator(struct { rb: *RigidBody, e: Entity });
             while (iter.next()) |vw| {
-                try expectEqual(vw.rb, vw.e.getComponent(&self.es, RigidBody).?);
+                try expectEqual(vw.rb, vw.e.getComp(&self.es, RigidBody).?);
                 try self.found_buf.putNoClobber(gpa, vw.e, {});
             }
 
-            // XXX: ...
-            // // Compare them
-            // try expectEqual(
-            //     self.expectedOfArchetype(Component.flags(&.{RigidBody})),
-            //     self.found_buf.count(),
-            // );
+            // Compare them
+            try expectEqual(
+                self.expectedOfArchetype(.{ .rb = true }),
+                self.found_buf.count(),
+            );
         }
 
         // Models, with handle
@@ -270,16 +270,15 @@ const FuzzCmdBuf = struct {
             defer self.found_buf.clearRetainingCapacity();
             var iter = self.es.viewIterator(struct { model: *Model, e: Entity });
             while (iter.next()) |vw| {
-                try expectEqual(vw.model, vw.e.getComponent(&self.es, Model).?);
+                try expectEqual(vw.model, vw.e.getComp(&self.es, Model).?);
                 try self.found_buf.putNoClobber(gpa, vw.e, {});
             }
 
-            // XXX: ...
-            // // Compare to the expected count
-            // try expectEqual(
-            //     self.expectedOfArchetype(Component.flags(&.{Model})),
-            //     self.found_buf.count(),
-            // );
+            // Compare to the expected count
+            try expectEqual(
+                self.expectedOfArchetype(.{ .model = true }),
+                self.found_buf.count(),
+            );
         }
 
         // Tags, with handle
@@ -288,16 +287,15 @@ const FuzzCmdBuf = struct {
             defer self.found_buf.clearRetainingCapacity();
             var iter = self.es.viewIterator(struct { tag: *const Tag, e: Entity });
             while (iter.next()) |vw| {
-                try expectEqual(vw.tag, vw.e.getComponent(&self.es, Tag).?);
+                try expectEqual(vw.tag, vw.e.getComp(&self.es, Tag).?);
                 try self.found_buf.putNoClobber(gpa, vw.e, {});
             }
 
-            // XXX: ...
-            // // Compare to the expected count
-            // try expectEqual(
-            //     self.expectedOfArchetype(Component.flags(&.{Tag})),
-            //     self.found_buf.count(),
-            // );
+            // Compare to the expected count
+            try expectEqual(
+                self.expectedOfArchetype(.{ .tag = true }),
+                self.found_buf.count(),
+            );
         }
 
         // All three, with handle
@@ -311,18 +309,17 @@ const FuzzCmdBuf = struct {
                 e: Entity,
             });
             while (iter.next()) |vw| {
-                try expectEqual(vw.rb, vw.e.getComponent(&self.es, RigidBody).?);
-                try expectEqual(vw.model, vw.e.getComponent(&self.es, Model).?);
-                try expectEqual(vw.tag, vw.e.getComponent(&self.es, Tag).?);
+                try expectEqual(vw.rb, vw.e.getComp(&self.es, RigidBody).?);
+                try expectEqual(vw.model, vw.e.getComp(&self.es, Model).?);
+                try expectEqual(vw.tag, vw.e.getComp(&self.es, Tag).?);
                 try self.found_buf.putNoClobber(gpa, vw.e, {});
             }
 
-            // XXX: ...
-            // // Compare to the expected count
-            // try expectEqual(
-            //     self.expectedOfArchetype(Component.flags(&.{ RigidBody, Model, Tag })),
-            //     self.found_buf.count(),
-            // );
+            // Compare to the expected count
+            try expectEqual(
+                self.expectedOfArchetype(.{ .rb = true, .model = true, .tag = true }),
+                self.found_buf.count(),
+            );
         }
 
         // All optional
@@ -336,9 +333,9 @@ const FuzzCmdBuf = struct {
                 e: Entity,
             });
             while (iter.next()) |vw| {
-                try expectEqual(vw.rb, vw.e.getComponent(&self.es, RigidBody));
-                try expectEqual(vw.model, vw.e.getComponent(&self.es, Model));
-                try expectEqual(vw.tag, vw.e.getComponent(&self.es, Tag));
+                try expectEqual(vw.rb, vw.e.getComp(&self.es, RigidBody));
+                try expectEqual(vw.model, vw.e.getComp(&self.es, Model));
+                try expectEqual(vw.tag, vw.e.getComp(&self.es, Tag));
                 try self.found_buf.putNoClobber(gpa, vw.e, {});
             }
 
@@ -357,38 +354,43 @@ const FuzzCmdBuf = struct {
                 e: Entity,
             });
             while (iter.next()) |vw| {
-                try expectEqual(vw.rb, vw.e.getComponent(&self.es, RigidBody));
-                try expectEqual(vw.model, vw.e.getComponent(&self.es, Model));
-                try expectEqual(vw.tag, vw.e.getComponent(&self.es, Tag));
+                try expectEqual(vw.rb, vw.e.getComp(&self.es, RigidBody));
+                try expectEqual(vw.model, vw.e.getComp(&self.es, Model));
+                try expectEqual(vw.tag, vw.e.getComp(&self.es, Tag));
                 try self.found_buf.putNoClobber(gpa, vw.e, {});
             }
 
-            // XXX: rewrite this some other way since we don't expose flags...
-            // // Compare to the expected count
-            // try expectEqual(
-            //     self.expectedOfArchetype(Component.flags(&.{ RigidBody, Tag })),
-            //     self.found_buf.count(),
-            // );
+            // Compare to the expected count
+            try expectEqual(
+                self.expectedOfArchetype(.{ .rb = true, .tag = true }),
+                self.found_buf.count(),
+            );
         }
     }
 
-    // fn expectedOfArchetype(self: *@This(), archetype: Component.Flags) usize {
-    //     var count: usize = 0;
-    //     var iter = self.committed.iterator();
-    //     while (iter.next()) |entry| {
-    //         if (archetype.contains(typeId(RigidBody).register())) {
-    //             if (entry.value_ptr.rb == null) continue;
-    //         }
-    //         if (archetype.contains(typeId(Model).register())) {
-    //             if (entry.value_ptr.model == null) continue;
-    //         }
-    //         if (archetype.contains(typeId(Tag).register())) {
-    //             if (entry.value_ptr.tag == null) continue;
-    //         }
-    //         count += 1;
-    //     }
-    //     return count;
-    // }
+    const Archetype = packed struct {
+        rb: bool = false,
+        model: bool = false,
+        tag: bool = false,
+    };
+
+    fn expectedOfArchetype(self: *@This(), archetype: Archetype) usize {
+        var count: usize = 0;
+        var iter = self.committed.iterator();
+        while (iter.next()) |entry| {
+            if (archetype.rb) {
+                if (entry.value_ptr.rb == null) continue;
+            }
+            if (archetype.model) {
+                if (entry.value_ptr.model == null) continue;
+            }
+            if (archetype.tag) {
+                if (entry.value_ptr.tag == null) continue;
+            }
+            count += 1;
+        }
+        return count;
+    }
 
     fn reserve(self: *@This()) !void {
         // Skip reserve if we already have a lot of entities to avoid overflowing
@@ -412,7 +414,7 @@ const FuzzCmdBuf = struct {
 
         // Destroy a random entity
         const entity = self.randomEntity();
-        entity.destroyCmd(&self.es, &self.cmds);
+        entity.destroyCmd(&self.cmds);
 
         // Destroy the entity in the oracle as well, displacing an existing
         // destroyed entity if there are already too many to prevent the destroyed
@@ -446,17 +448,17 @@ const FuzzCmdBuf = struct {
                 })) {
                     .rb => {
                         const rb = self.parser.next(RigidBody);
-                        entity.addComponentCmd(&self.cmds, RigidBody, rb);
+                        entity.addCompCmd(&self.cmds, RigidBody, rb);
                         if (expected) |e| e.rb = rb;
                     },
                     .model => {
                         const model = self.parser.next(Model);
-                        entity.addComponentCmd(&self.cmds, Model, model);
+                        entity.addCompCmd(&self.cmds, Model, model);
                         if (expected) |e| e.model = model;
                     },
                     .tag => {
                         const tag = self.parser.next(Tag);
-                        entity.addComponentCmd(&self.cmds, Tag, tag);
+                        entity.addCompCmd(&self.cmds, Tag, tag);
                         if (expected) |e| e.tag = tag;
                     },
                 }
@@ -468,19 +470,19 @@ const FuzzCmdBuf = struct {
                     commit,
                 })) {
                     .rb => {
-                        entity.removeComponentCmd(&self.es, &self.cmds, RigidBody);
+                        entity.removeCompCmd(&self.cmds, RigidBody);
                         if (expected) |e| e.rb = null;
                     },
                     .model => {
-                        entity.removeComponentCmd(&self.es, &self.cmds, Model);
+                        entity.removeCompCmd(&self.cmds, Model);
                         if (expected) |e| e.model = null;
                     },
                     .tag => {
-                        entity.removeComponentCmd(&self.es, &self.cmds, Tag);
+                        entity.removeCompCmd(&self.cmds, Tag);
                         if (expected) |e| e.tag = null;
                     },
                     .commit => {
-                        entity.commitCmd(&self.es, &self.cmds);
+                        entity.commitCmd(&self.cmds);
                     },
                 }
             }
@@ -497,9 +499,9 @@ const FuzzCmdBuf = struct {
         const tag = self.parser.next(Tag);
 
         // If the entity has these components, update them
-        if (entity.getComponent(&self.es, RigidBody)) |old| old.* = rb;
-        if (entity.getComponent(&self.es, Model)) |old| old.* = model;
-        if (entity.getComponent(&self.es, Tag)) |old| old.* = tag;
+        if (entity.getComp(&self.es, RigidBody)) |old| old.* = rb;
+        if (entity.getComp(&self.es, Model)) |old| old.* = model;
+        if (entity.getComp(&self.es, Tag)) |old| old.* = tag;
 
         // Update the oracle
         if (self.committed.getPtr(entity)) |e| {
@@ -540,7 +542,7 @@ const FuzzCmdBuf = struct {
         self: *@This(),
         T: type,
         buf: *std.BoundedArray(?T, change_cap),
-        add: *std.BoundedArray(Component.Optional, change_cap),
+        add: *std.BoundedArray(Comp.Optional, change_cap),
     ) *const ?T {
         // Either get an interned component, or generate a random one
         const i = self.parser.next(u8);

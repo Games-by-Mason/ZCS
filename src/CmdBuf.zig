@@ -16,16 +16,16 @@ const types = @import("types.zig");
 const CompFlag = types.CompFlag;
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
-const Component = zcs.Component;
+const Comp = zcs.Comp;
 
 const SubCmd = @import("CmdBuf/sub_cmd.zig").SubCmd;
 
-pub const ChangeArchetypes = @import("CmdBuf/ChangeArchetypes.zig");
+pub const ArchetypeChanges = @import("CmdBuf/ArchetypeChanges.zig");
 
 /// Entities queued for destruction.
 destroy: std.ArrayListUnmanaged(Entity),
 /// Archetype changes queued for execution.
-change_archetype: ChangeArchetypes,
+archetype_changes: ArchetypeChanges,
 /// Reserved entities.
 reserved: std.ArrayListUnmanaged(Entity),
 
@@ -52,7 +52,7 @@ pub fn initGranularCapacity(
     var args: std.ArrayListUnmanaged(u64) = try .initCapacity(gpa, capacity.args);
     errdefer args.deinit(gpa);
 
-    var comp_bytes: std.ArrayListAlignedUnmanaged(u8, Component.max_align) = try .initCapacity(
+    var comp_bytes: std.ArrayListAlignedUnmanaged(u8, Comp.max_align) = try .initCapacity(
         gpa,
         capacity.comp_bytes,
     );
@@ -70,7 +70,7 @@ pub fn initGranularCapacity(
     return .{
         .destroy = destroy,
         .reserved = reserved,
-        .change_archetype = .{
+        .archetype_changes = .{
             .tags = tags,
             .args = args,
             .comp_bytes = comp_bytes,
@@ -83,9 +83,9 @@ pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
     for (self.reserved.items) |entity| entity.destroyImmediately(es);
     self.reserved.deinit(gpa);
     self.destroy.deinit(gpa);
-    self.change_archetype.comp_bytes.deinit(gpa);
-    self.change_archetype.args.deinit(gpa);
-    self.change_archetype.tags.deinit(gpa);
+    self.archetype_changes.comp_bytes.deinit(gpa);
+    self.archetype_changes.args.deinit(gpa);
+    self.archetype_changes.tags.deinit(gpa);
     self.* = undefined;
 }
 
@@ -99,10 +99,10 @@ pub fn clear(self: *@This(), es: *Entities) void {
 /// entity list instead of panicking.
 pub fn clearChecked(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
     self.destroy.clearRetainingCapacity();
-    self.change_archetype.comp_bytes.clearRetainingCapacity();
-    self.change_archetype.args.clearRetainingCapacity();
-    self.change_archetype.tags.clearRetainingCapacity();
-    self.change_archetype.bound = .none;
+    self.archetype_changes.comp_bytes.clearRetainingCapacity();
+    self.archetype_changes.args.clearRetainingCapacity();
+    self.archetype_changes.tags.clearRetainingCapacity();
+    self.archetype_changes.bound = .none;
     while (self.reserved.items.len < self.reserved.capacity) {
         self.reserved.appendAssumeCapacity(try Entity.reserveImmediatelyChecked(es));
     }
@@ -113,9 +113,9 @@ pub fn clearChecked(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void
 pub fn worstCaseUsage(self: @This()) f32 {
     return @max(
         usage(self.destroy),
-        usage(self.change_archetype.comp_bytes),
-        usage(self.change_archetype.args),
-        usage(self.change_archetype.tags),
+        usage(self.archetype_changes.comp_bytes),
+        usage(self.archetype_changes.args),
+        usage(self.archetype_changes.tags),
     );
 }
 
@@ -151,7 +151,7 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
     }
 
     // Execute the archetype changes
-    var changes = self.change_archetype.iterator(es);
+    var changes = self.archetype_changes.iterator(es);
     while (changes.next()) |change| {
         if (change.entity.exists(es)) {
             var add: CompFlag.Set = .{};
@@ -188,8 +188,8 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
                 var ops = change.iterator();
                 while (ops.next()) |op| {
                     switch (op) {
-                        .add => |comp| if (change.entity.getComponentFromId(es, comp.id)) |dest| {
-                            @memcpy(dest, comp.bytes);
+                        .add => |comp| if (change.entity.getCompFromId(es, comp.id)) |dest| {
+                            @memcpy(dest, comp.bytes());
                         },
                         .remove => {},
                     }
@@ -223,7 +223,7 @@ pub const GranularCapacity = struct {
         _ = SubCmd.rename_when_changing_encoding;
 
         // Each command can have at most one component's worth of component data.
-        const comp_bytes_cap = (cap.comp_bytes + Component.max_align) * cap.cmds;
+        const comp_bytes_cap = (cap.comp_bytes + Comp.max_align) * cap.cmds;
 
         // The command with the most subcommands is change archetype
         var change_archetype_tags: usize = 0;

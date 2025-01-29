@@ -14,7 +14,7 @@ const zcs = @import("root.zig");
 const types = @import("types.zig");
 const CompFlag = types.CompFlag;
 const compId = zcs.compId;
-const Component = zcs.Component;
+const Comp = zcs.Comp;
 const slot_map = @import("slot_map");
 const SlotMap = slot_map.SlotMap;
 const Entity = zcs.Entity;
@@ -29,7 +29,7 @@ const Slot = struct {
 };
 
 slots: SlotMap(Slot, .{}),
-comps: *[CompFlag.max][]align(Component.max_align) u8,
+comps: *[CompFlag.max][]align(Comp.max_align) u8,
 live: std.DynamicBitSetUnmanaged,
 iterator_generation: IteratorGeneration = 0,
 reserved_entities: usize = 0,
@@ -39,13 +39,13 @@ pub fn init(gpa: Allocator, capacity: usize) Allocator.Error!@This() {
     var slots = try SlotMap(Slot, .{}).init(gpa, capacity);
     errdefer slots.deinit(gpa);
 
-    const comps = try gpa.create([CompFlag.max][]align(Component.max_align) u8);
+    const comps = try gpa.create([CompFlag.max][]align(Comp.max_align) u8);
     errdefer gpa.destroy(comps);
 
     comptime var comps_init = 0;
     errdefer for (0..comps_init) |i| gpa.free(comps[i]);
     inline for (comps) |*comp| {
-        comp.* = try gpa.alignedAlloc(u8, Component.max_align, capacity);
+        comp.* = try gpa.alignedAlloc(u8, Comp.max_align, capacity);
         comps_init += 1;
     }
 
@@ -178,7 +178,6 @@ pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
                 @compileError("view field is not Entity or pointer to a component: " ++ @typeName(field.type));
             };
 
-            // XXX: this shouldn't register the comp
             const flag = types.register(compId(T));
             if (@typeInfo(field.type) != .optional) {
                 required_comps.insert(flag);
@@ -214,21 +213,29 @@ pub fn ViewIterator(View: type) type {
                     if (field.type == Entity) {
                         @field(view, field.name) = entity;
                     } else {
-                        // XXX: is this checked?
+                        // Get the component type
                         const T = ComponentFromPointer(field.type) orelse {
-                            unreachable; // Checked in init
+                            comptime unreachable; // Checked during iterator init
                         };
+
+                        // Get the slot
                         const slot = self.es.slots.values[entity.key.index];
                         assert(slot.committed);
-                        const archetype = slot.archetype;
-                        // XXX: document why this unwrap is okay
+
+                        // Check if the field is required. If it is then we must have the component
+                        // since the normal iterator gave us the entity. If it's optional, check for
+                        // ourselves if we have it. We can unwrap the flag because the iterator
+                        // initialization code registers the types it's given.
                         if (@typeInfo(field.type) != .optional or
-                            archetype.contains(compId(T).flag.?))
+                            slot.archetype.contains(compId(T).flag.?))
                         {
+                            // We have the component, pass it to the caller
                             const base = @intFromPtr(@field(view, field.name));
                             const offset = entity.key.index * @sizeOf(T);
                             @field(view, field.name) = @ptrFromInt(base + offset);
                         } else {
+                            // This component is optional and we don't have it, set our result to
+                            // null
                             @field(view, field.name) = null;
                         }
                     }

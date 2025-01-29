@@ -1,17 +1,19 @@
-//! Internal types for managing registered component types.
+//! For internal use. Types and functions for managing component type registration.
 
 const std = @import("std");
 const zcs = @import("root.zig");
-const Component = zcs.Component;
+const Comp = zcs.Comp;
 
 /// The tag type for `CompFlag`.
 const CompFlagInt = u6;
 
+/// For internal use.
+///
 /// A tightly packed index representing a registered component type.
 ///
-/// Not exposed publicly since components are currently registered on first use, and this results in
-/// a hard to work with API. May be exposed if we can register components at compile time in the
-/// future without making `Entities` generic:
+/// Not part of public interface because components are currently registered on first use, and this
+/// results in a hard to work with API. May be exposed if we can register components at compile time
+/// in the future without making `Entities` generic:
 ///
 /// https://github.com/games-by-Mason/zcs/issues/11
 pub const CompFlag = enum(CompFlagInt) {
@@ -24,30 +26,42 @@ pub const CompFlag = enum(CompFlagInt) {
     _,
 };
 
-/// The number of registered component types.
-var registered: usize = 0;
+/// For internal use. The list of registered components.
+pub var registered: std.BoundedArray(Comp.Id, CompFlag.max) = .{};
 
-/// Assigns the given ID the next flag index if it doesn't have one, and then returns its flag.
+/// For internal use.
 ///
-/// Not thread safe.
-pub fn register(self: Component.Id) CompFlag {
+/// Assigns the given ID the next flag index if it doesn't have one, and then returns its flag. Not
+/// thread safe.
+pub fn register(id: Comp.Id) CompFlag {
     // Early out if we're already registered
-    if (self.flag) |f| return f;
+    if (id.flag) |f| return f;
 
-    // Check if we've registered too many components
-    if (registered == CompFlag.max / 2) {
+    // Debug log that we're registering the component
+    std.log.scoped(.zcs).debug("register comp: {s}", .{id.name});
+
+    // Warn if we've registered a large number of components
+    if (registered.len == CompFlag.max / 2) {
         std.log.warn(
             "{} component types registered, you're at 50% the fatal capacity!",
-            .{registered},
+            .{registered.len},
         );
     }
-    if (registered >= CompFlag.max) {
+
+    // Fail if we're out of component types
+    if (registered.len >= registered.buffer.len) {
         @panic("component type overflow");
     }
 
-    // Register the ID and return it
-    const flag: CompFlag = @enumFromInt(registered);
-    registered += 1;
-    self.flag = flag;
+    // Pick the next sequential flag
+    const flag: CompFlag = @enumFromInt(registered.len);
+    id.flag = flag;
+
+    // This function is not thread safe, but reading from `registered` is, so we update the
+    // registered list, and then increment the counter atomically.
+    registered.buffer[registered.len] = id;
+    _ = @atomicRmw(usize, &registered.len, .Add, 1, .release);
+
+    // Return the registered flag
     return flag;
 }

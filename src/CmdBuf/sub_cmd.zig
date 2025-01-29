@@ -1,25 +1,27 @@
+//! For internal use. Subcommand encoding for the command buffer.
+
 const std = @import("std");
 const assert = std.debug.assert;
 
 const zcs = @import("../root.zig");
 const Entity = zcs.Entity;
-const Component = zcs.Component;
+const Comp = zcs.Comp;
 const CmdBuf = zcs.CmdBuf;
 const Entities = zcs.Entities;
 
-/// Implementation detail of `CmdBuf`. Archetype change commands are composed of a sequence of one
-/// or more subcommands which are then encoded in a compact form.
+/// For internal use. Archetype change commands are composed of a sequence of one  or more
+/// subcommands which are then encoded in a compact form.
 pub const SubCmd = union(enum) {
     /// Binds an existing entity.
     bind_entity: Entity,
     /// Queues components to be added by value. ID is passed as an argument, component data is
     /// passed via component data.
-    add_component_val: Component,
+    add_comp_val: Comp,
     /// Queues components to be added bye value. ID and a pointer to the component data are passed
     /// as arguments.
-    add_component_ptr: Component,
+    add_comp_ptr: Comp,
     /// Queues a component to be removed.
-    remove_component: Component.Id,
+    remove_comp: Comp.Id,
 
     /// If a new worst case command is introduced, also update the tests!
     pub const rename_when_changing_encoding = {};
@@ -28,11 +30,11 @@ pub const SubCmd = union(enum) {
 
     /// Decodes encoded subcommands.
     pub const Decoder = struct {
-        cmds: *const CmdBuf.ChangeArchetypes,
+        cmds: *const CmdBuf.ArchetypeChanges,
         es: *Entities,
         tag_index: usize = 0,
         arg_index: usize = 0,
-        component_bytes_index: usize = 0,
+        comp_bytes_index: usize = 0,
 
         pub inline fn next(self: *@This()) ?SubCmd {
             _ = rename_when_changing_encoding;
@@ -44,30 +46,27 @@ pub const SubCmd = union(enum) {
                         const entity: Entity = @bitCast(self.nextArg().?);
                         return .{ .bind_entity = entity };
                     },
-                    .add_component_val => {
-                        const id: Component.Id = @ptrFromInt(self.nextArg().?);
-                        const bytes = self.nextComponentData(id);
-                        const comp: Component = .{
+                    .add_comp_val => {
+                        const id: Comp.Id = @ptrFromInt(self.nextArg().?);
+                        const ptr = self.nextComponentData(id);
+                        const comp: Comp = .{
                             .id = id,
-                            .bytes = bytes,
-                            .interned = false,
+                            .ptr = ptr,
                         };
-                        return .{ .add_component_val = comp };
+                        return .{ .add_comp_val = comp };
                     },
-                    .add_component_ptr => {
-                        const id: Component.Id = @ptrFromInt(self.nextArg().?);
-                        const bytes_unsized: [*]const u8 = @ptrFromInt(self.nextArg().?);
-                        const bytes = bytes_unsized[0..id.size];
-                        const comp: Component = .{
+                    .add_comp_ptr => {
+                        const id: Comp.Id = @ptrFromInt(self.nextArg().?);
+                        const ptr: [*]const u8 = @ptrFromInt(self.nextArg().?);
+                        const comp: Comp = .{
                             .id = id,
-                            .bytes = bytes,
-                            .interned = true,
+                            .ptr = ptr,
                         };
-                        return .{ .add_component_ptr = comp };
+                        return .{ .add_comp_ptr = comp };
                     },
-                    .remove_component => {
-                        const id: Component.Id = @ptrFromInt(self.nextArg().?);
-                        return .{ .remove_component = id };
+                    .remove_comp => {
+                        const id: Comp.Id = @ptrFromInt(self.nextArg().?);
+                        return .{ .remove_comp = id };
                     },
                 }
             }
@@ -75,7 +74,7 @@ pub const SubCmd = union(enum) {
             // Assert that we're fully empty, and return null
             assert(self.tag_index == self.cmds.tags.items.len);
             assert(self.arg_index == self.cmds.args.items.len);
-            assert(self.component_bytes_index == self.cmds.comp_bytes.items.len);
+            assert(self.comp_bytes_index == self.cmds.comp_bytes.items.len);
             return null;
         }
 
@@ -103,21 +102,21 @@ pub const SubCmd = union(enum) {
             }
         }
 
-        pub inline fn nextComponentData(self: *@This(), id: Component.Id) []const u8 {
-            self.component_bytes_index = std.mem.alignForward(
+        pub inline fn nextComponentData(self: *@This(), id: Comp.Id) *const anyopaque {
+            self.comp_bytes_index = std.mem.alignForward(
                 usize,
-                self.component_bytes_index,
+                self.comp_bytes_index,
                 id.alignment,
             );
-            const result = self.cmds.comp_bytes.items[self.component_bytes_index..][0..id.size];
-            self.component_bytes_index += id.size;
-            return result;
+            const ptr = &self.cmds.comp_bytes.items[self.comp_bytes_index];
+            self.comp_bytes_index += id.size;
+            return ptr;
         }
     };
 
     /// Encodes a subcommand.
     pub fn encode(
-        changes: *CmdBuf.ChangeArchetypes,
+        changes: *CmdBuf.ArchetypeChanges,
         sub_cmd: SubCmd,
     ) error{ZcsCmdBufOverflow}!void {
         _ = SubCmd.rename_when_changing_encoding;
@@ -131,7 +130,7 @@ pub const SubCmd = union(enum) {
                 changes.tags.appendAssumeCapacity(.bind_entity);
                 changes.args.appendAssumeCapacity(@bitCast(entity));
             },
-            .add_component_val => |comp| {
+            .add_comp_val => |comp| {
                 const aligned = std.mem.alignForward(
                     usize,
                     changes.comp_bytes.items.len,
@@ -139,26 +138,25 @@ pub const SubCmd = union(enum) {
                 );
                 if (changes.tags.items.len >= changes.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (changes.args.items.len + 1 > changes.args.capacity) return error.ZcsCmdBufOverflow;
-                if (aligned + comp.bytes.len > changes.comp_bytes.capacity) {
+                if (aligned + comp.id.size > changes.comp_bytes.capacity) {
                     return error.ZcsCmdBufOverflow;
                 }
-                changes.tags.appendAssumeCapacity(.add_component_val);
+                changes.tags.appendAssumeCapacity(.add_comp_val);
                 changes.args.appendAssumeCapacity(@intFromPtr(comp.id));
                 changes.comp_bytes.items.len = aligned;
-                changes.comp_bytes.appendSliceAssumeCapacity(comp.bytes);
+                changes.comp_bytes.appendSliceAssumeCapacity(comp.constSlice());
             },
-            .add_component_ptr => |comp| {
-                assert(comp.interned);
+            .add_comp_ptr => |comp| {
                 if (changes.tags.items.len >= changes.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (changes.args.items.len + 2 > changes.args.capacity) return error.ZcsCmdBufOverflow;
-                changes.tags.appendAssumeCapacity(.add_component_ptr);
+                changes.tags.appendAssumeCapacity(.add_comp_ptr);
                 changes.args.appendAssumeCapacity(@intFromPtr(comp.id));
-                changes.args.appendAssumeCapacity(@intFromPtr(comp.bytes.ptr));
+                changes.args.appendAssumeCapacity(@intFromPtr(comp.ptr));
             },
-            .remove_component => |id| {
+            .remove_comp => |id| {
                 if (changes.tags.items.len >= changes.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (changes.args.items.len >= changes.args.capacity) return error.ZcsCmdBufOverflow;
-                changes.tags.appendAssumeCapacity(.remove_component);
+                changes.tags.appendAssumeCapacity(.remove_comp);
                 changes.args.appendAssumeCapacity(@intFromPtr(id));
             },
         }

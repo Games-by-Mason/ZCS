@@ -13,10 +13,8 @@ const CompFlag = types.CompFlag;
 
 const SlotMap = slot_map.SlotMap;
 const Entities = zcs.Entities;
-const Component = zcs.Component;
+const Comp = zcs.Comp;
 const CmdBuf = zcs.CmdBuf;
-
-const meta = @import("meta.zig");
 
 /// An entity.
 ///
@@ -77,17 +75,14 @@ pub const Entity = packed struct {
     /// Queues an entity for destruction.
     ///
     /// Destroying an entity that no longer exists has no effect.
-    pub fn destroyCmd(self: @This(), es: *const Entities, cmds: *CmdBuf) void {
-        self.destroyCmdChecked(es, cmds) catch |err|
+    pub fn destroyCmd(self: @This(), cmds: *CmdBuf) void {
+        self.destroyCmdChecked(cmds) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `destroyCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
-    pub fn destroyCmdChecked(self: @This(), es: *const Entities, cmds: *CmdBuf) error{ZcsCmdBufOverflow}!void {
-        // Early out if already destroyed, also checks some assertions
-        if (!self.exists(es)) return;
-
+    pub fn destroyCmdChecked(self: @This(), cmds: *CmdBuf) error{ZcsCmdBufOverflow}!void {
         // Check capacity
         if (cmds.destroy.items.len >= cmds.destroy.capacity) {
             return error.ZcsCmdBufOverflow;
@@ -120,65 +115,34 @@ pub const Entity = packed struct {
         return slot.committed;
     }
 
-    /// Returns the archetype of the entity. If it has been destroyed or is not yet committed, the
-    /// empty archetype will be returned.
-    pub fn getArchetype(self: @This(), es: *const Entities) CompFlag.Set {
-        const slot = es.slots.get(self.key) orelse return .{};
-        if (!slot.committed) assert(slot.archetype.eql(.{}));
-        return slot.archetype;
-    }
-
     /// Returns true if the entity has the given component type, false otherwise or if the entity
     /// has been destroyed.
-    ///
-    /// `Component` must be a registered component type.
-    pub fn hasComponent(self: @This(), es: *const Entities, T: type) bool {
-        const comp_flag = es.getComponentFlag(T) orelse return false;
-        return self.hasComponentFlag(es, comp_flag);
+    pub fn hasComp(self: @This(), es: *const Entities, T: type) bool {
+        return self.hasCompId(es, compId(T));
     }
 
-    // XXX: ...
-    /// Similar to `hasComponent`, but operates on component IDs instead of types.
-    pub fn hasComponentId(self: @This(), es: *const Entities, id: Component.Id) bool {
-        const flag = es.comp_types.getFlagFromId(id);
+    /// Similar to `hasComp`, but operates on component IDs instead of types.
+    pub fn hasCompId(self: @This(), es: *const Entities, id: Comp.Id) bool {
+        const flag = id.flag orelse return false;
         const archetype = self.getArchetype(es);
         return archetype.contains(flag);
     }
 
-    /// Similar to `hasComponent`, but operates on component flags instead of types.
-    pub fn hasComponentFlag(self: @This(), es: *const Entities, flag: CompFlag) bool {
-        return self.getArchetype(es).contains(flag);
-    }
-
     /// Retrieves the given component type. Returns null if the entity does not have this component
     /// or has been destroyed.
-    ///
-    /// `Component` must be a registered component type.
-    pub fn getComponent(self: @This(), es: *const Entities, T: type) ?*T {
-        const flag = compId(T).flag orelse return null;
-        const untyped = self.getComponentFromFlag(es, flag, @sizeOf(T)) orelse return null;
+    pub fn getComp(self: @This(), es: *const Entities, T: type) ?*T {
+        const untyped = self.getCompFromId(es, compId(T)) orelse return null;
         return @alignCast(@ptrCast(untyped));
     }
 
-    /// Similar to `getComponent`, but operates on component IDs instead of types.
-    pub fn getComponentFromId(self: @This(), es: *const Entities, id: Component.Id) ?[]u8 {
+    /// Similar to `getComp`, but operates on component IDs instead of types.
+    pub fn getCompFromId(self: @This(), es: *const Entities, id: Comp.Id) ?[]u8 {
         const flag = id.flag orelse return null;
-        return self.getComponentFromFlag(es, flag, id.size);
-    }
-
-    // XXX: still useful?
-    /// Similar to `getComponent`, but operates on component indices instead of types.
-    pub fn getComponentFromFlag(
-        self: @This(),
-        es: *const Entities,
-        flag: CompFlag,
-        size: usize,
-    ) ?[]u8 {
-        if (!self.hasComponentFlag(es, flag)) return null;
+        if (!self.hasCompId(es, id)) return null;
         const comp_buffer = es.comps[@intFromEnum(flag)];
-        const comp_offset = self.key.index * size;
+        const comp_offset = self.key.index * id.size;
         const bytes = comp_buffer.ptr + comp_offset;
-        return bytes[0..size];
+        return bytes[0..id.size];
     }
 
     /// Returns true if the given entities are the same entity, false otherwise.
@@ -192,35 +156,35 @@ pub const Entity = packed struct {
     /// sized.
     ///
     /// Adding components to an entity that no longer exists has no effect.
-    pub inline fn addComponentCmd(self: @This(), cmds: *CmdBuf, T: type, comp: T) void {
-        self.addComponentCmdChecked(cmds, T, comp) catch |err|
+    pub inline fn addCompCmd(self: @This(), cmds: *CmdBuf, T: type, comp: T) void {
+        self.addCompCmdChecked(cmds, T, comp) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `addComponentCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
+    /// Similar to `addCompCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
-    pub inline fn addComponentCmdChecked(
+    pub inline fn addCompCmdChecked(
         self: @This(),
         cmds: *CmdBuf,
         T: type,
         comp: T,
     ) error{ZcsCmdBufOverflow}!void {
-        if (@sizeOf(T) > @sizeOf(*T) and meta.isComptimeKnown(comp)) {
-            try self.addComponentByPtrCmdChecked(cmds, T, comp);
+        if (@sizeOf(T) > @sizeOf(*T) and isComptimeKnown(comp)) {
+            try self.addCompByPtrCmdChecked(cmds, T, comp);
         } else {
-            try self.addComponentByValueCmdChecked(cmds, T, comp);
+            try self.addCompByValueCmdChecked(cmds, T, comp);
         }
     }
 
-    /// Similar to `addComponentCmd` but forces the data to be passed by value.
-    pub fn addComponentByValueCmd(self: @This(), cmds: *CmdBuf, T: type, comp: T) void {
-        self.addComponentByValueCmdChecked(cmds, T, comp) catch |err|
+    /// Similar to `addCompCmd` but forces the data to be passed by value.
+    pub fn addCompByValueCmd(self: @This(), cmds: *CmdBuf, T: type, comp: T) void {
+        self.addCompByValueCmdChecked(cmds, T, comp) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `addComponentByValueCmd`, but returns `error.ZcsCmdBufOverflow` on failure
+    /// Similar to `addCompByValueCmd`, but returns `error.ZcsCmdBufOverflow` on failure
     /// instead of panicking.
-    pub fn addComponentByValueCmdChecked(
+    pub fn addCompByValueCmdChecked(
         self: @This(),
         cmds: *CmdBuf,
         T: type,
@@ -231,24 +195,20 @@ pub const Entity = packed struct {
         errdefer cmds.* = restore;
 
         // Issue the subcommands
-        try SubCmd.encode(&cmds.change_archetype, .{ .bind_entity = self });
-        try SubCmd.encode(&cmds.change_archetype, .{ .add_component_val = .{
-            .id = compId(T),
-            .bytes = std.mem.asBytes(&comp),
-            .interned = false,
-        } });
+        try SubCmd.encode(&cmds.archetype_changes, .{ .bind_entity = self });
+        try SubCmd.encode(&cmds.archetype_changes, .{ .add_comp_val = .init(T, &comp) });
     }
 
-    /// Similar to `addComponentCmd` but forces the data to be passed by pointer. Only available for
+    /// Similar to `addCompCmd` but forces the data to be passed by pointer. Only available for
     /// comptime known arguments.
-    pub fn addComponentByPtrCmd(self: @This(), cmds: *CmdBuf, T: type, comptime comp: T) void {
-        self.addComponentByPtrCmdChecked(cmds, T, comp) catch |err|
+    pub fn addCompByPtrCmd(self: @This(), cmds: *CmdBuf, T: type, comptime comp: T) void {
+        self.addCompByPtrCmdChecked(cmds, T, comp) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `addComponentByPtrCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead
+    /// Similar to `addCompByPtrCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead
     /// of panicking.
-    pub fn addComponentByPtrCmdChecked(
+    pub fn addCompByPtrCmdChecked(
         self: @This(),
         cmds: *CmdBuf,
         T: type,
@@ -262,189 +222,83 @@ pub const Entity = packed struct {
         const Interned = struct {
             const value = comp;
         };
-        try SubCmd.encode(&cmds.change_archetype, .{ .bind_entity = self });
-        try SubCmd.encode(&cmds.change_archetype, .{ .add_component_ptr = .{
+        try SubCmd.encode(&cmds.archetype_changes, .{ .bind_entity = self });
+        try SubCmd.encode(&cmds.archetype_changes, .{ .add_comp_ptr = .{
             .id = compId(T),
             .bytes = std.mem.asBytes(&Interned.value),
-            .interned = true,
         } });
     }
 
     /// Queues the given component to be removed. Has no effect if the component is not present, or
     /// the entity no longer exists.
-    pub fn removeComponentCmd(
+    pub fn removeCompCmd(
         self: @This(),
-        es: *Entities,
         cmds: *CmdBuf,
         T: type,
     ) void {
-        self.removeComponentCmdChecked(es, cmds, T) catch |err|
+        self.removeCompCmdChecked(cmds, T) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `removeComponentCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
+    /// Similar to `removeCompCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
-    pub fn removeComponentCmdChecked(
+    pub fn removeCompCmdChecked(
         self: @This(),
-        es: *Entities,
         cmds: *CmdBuf,
         T: type,
     ) error{ZcsCmdBufOverflow}!void {
-        // Early out if destroyed, also checks some assertions
-        if (!self.exists(es)) return;
+        try self.removeCompIdCmdChecked(cmds, compId(T));
+    }
 
+    /// Similar to `removeCompCmd`, but doesn't require compile time types.
+    pub fn removeCompIdCmd(
+        self: @This(),
+        cmds: *CmdBuf,
+        id: Comp.Id,
+    ) void {
+        self.removeCompIdCmdChecked(cmds, id) catch |err|
+            @panic(@errorName(err));
+    }
+
+    /// Similar to `removeCompCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
+    /// panicking.
+    pub fn removeCompIdCmdChecked(
+        self: @This(),
+        cmds: *CmdBuf,
+        id: Comp.Id,
+    ) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cmds.*;
         errdefer cmds.* = restore;
 
         // Issue the subcommands
-        try SubCmd.encode(&cmds.change_archetype, .{ .bind_entity = self });
-        try SubCmd.encode(&cmds.change_archetype, .{
-            .remove_component = compId(T),
-        });
+        try SubCmd.encode(&cmds.archetype_changes, .{ .bind_entity = self });
+        try SubCmd.encode(&cmds.archetype_changes, .{ .remove_comp = id });
     }
 
     /// Queues the entity to be committed. Has no effect if it has already been committed, called
     /// implicitly on add/remove. In practice only necessary when creating an empty entity.
-    pub fn commitCmd(self: @This(), es: *Entities, cmds: *CmdBuf) void {
-        self.commitCmdChecked(es, cmds) catch |err|
+    pub fn commitCmd(self: @This(), cmds: *CmdBuf) void {
+        self.commitCmdChecked(cmds) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `commitCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
-    pub fn commitCmdChecked(
-        self: @This(),
-        es: *Entities,
-        cmds: *CmdBuf,
-    ) error{ZcsCmdBufOverflow}!void {
-        // Early out if destroyed, also checks some assertions
-        if (!self.exists(es)) return;
-
+    pub fn commitCmdChecked(self: @This(), cmds: *CmdBuf) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cmds.*;
         errdefer cmds.* = restore;
 
         // Issue the subcommand
-        try SubCmd.encode(&cmds.change_archetype, .{ .bind_entity = self });
-    }
-
-    pub const ChangeArchetypeFromComponentsOptions = struct {
-        add: []const Component.Optional = &.{},
-        remove: CompFlag.Set = .{},
-    };
-
-    /// Similar to `changeArchetypeCmd` but does not require compile time types.
-    ///
-    /// Components set to `.none` have no effect.
-    pub fn changeArchetypeCmdFromComponents(
-        self: @This(),
-        es: *const Entities,
-        cmds: *CmdBuf,
-        changes: ChangeArchetypeFromComponentsOptions,
-    ) void {
-        self.changeArchetypeCmdFromComponentsChecked(es, cmds, changes) catch |err|
-            @panic(@errorName(err));
-    }
-
-    /// Similar to `changeArchetypeCmdFromComponents` but returns `error.ZcsCmdBufOverflow` on
-    /// failure instead of panicking.
-    pub fn changeArchetypeCmdFromComponentsChecked(
-        self: @This(),
-        es: *const Entities,
-        cmds: *CmdBuf,
-        changes: ChangeArchetypeFromComponentsOptions,
-    ) error{ZcsCmdBufOverflow}!void {
-        // Early out if destroyed, also checks some assertions
-        if (!self.exists(es)) return;
-
-        const restore = cmds.*;
-        errdefer cmds.* = restore;
-
-        try SubCmd.encode(es, &cmds.change_archetype, .{ .bind_entity = self });
-        if (!changes.remove.eql(.{})) {
-            try SubCmd.encode(es, &cmds.change_archetype, .{ .remove_components = changes.remove });
-        }
-
-        // Issue subcommands to add the listed components. Issued in reverse order, duplicates are
-        // skipped.
-        var added: CompFlag.Set = .{};
-        for (0..changes.add.len) |i| {
-            const comp = changes.add[changes.add.len - i - 1];
-            if (comp.unwrap()) |some| {
-                if (!added.contains(some.id)) {
-                    added.insert(some.id);
-                    if (some.interned) {
-                        try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_ptr = some });
-                    } else {
-                        try SubCmd.encode(es, &cmds.change_archetype, .{ .add_component_val = some });
-                    }
-                }
-            }
-        }
-    }
-
-    /// Similar to `changeArchetypeCmd`, but immediately executes. Prefer `changeArchetypeCmd`.
-    ///
-    /// Invalidates iterators.
-    pub fn changeArchetypeImmediately(
-        self: @This(),
-        es: *Entities,
-        changes: anytype,
-    ) void {
-        return self.changeArchetypeImmediatelyChecked(es, changes) catch |err|
-            @panic(@errorName(err));
-    }
-
-    /// Similar to `changeArchetypeImmediately`, but returns `error.ZcsEntityOverflow` on failure
-    /// instead of panicking.
-    pub fn changeArchetypeImmediatelyChecked(
-        self: @This(),
-        es: *Entities,
-        changes: anytype,
-    ) error{ZcsEntityOverflow}!void {
-        const Changes = meta.ArchetypeChanges(@TypeOf(changes));
-        const add = Changes.getAdd(changes);
-        const remove = Changes.getRemove(changes);
-
-        // Early out if the entity does not exist, also checks some assertions
-        if (!self.exists(es)) return;
-
-        // Get the component type indices and determine the archetype.
-        var comp_flags: CompFlag.Set = .{};
-        inline for (add) |comp| {
-            if (@typeInfo(@TypeOf(comp)) != .optional or comp != null) {
-                const T = meta.Unwrapped(@TypeOf(comp));
-                // XXX: ...
-                const flag = es.getComponentFlag(T);
-                comp_flags.insert(flag);
-            }
-        }
-
-        try self.changeArchetypeUninitializedImmediatelyChecked(es, .{
-            .remove = remove,
-            .add = comp_flags,
-        });
-
-        // Initialize each added non-null component that hasn't been removed
-        inline for (add, 0..) |value, i| {
-            if (!remove.containsKey(value)) {
-                const optional: ?meta.Unwrapped(@TypeOf(value)) = value;
-                if (optional) |some| {
-                    const flag = comp_flags[i];
-                    const untyped = self.getComponentFromFlag(es, flag, @sizeOf(some)).?;
-                    const typed: *@TypeOf(some) = @alignCast(@ptrCast(untyped));
-                    typed.* = some;
-                }
-            }
-        }
+        try SubCmd.encode(&cmds.archetype_changes, .{ .bind_entity = self });
     }
 
     /// Options for the uninitialized variants of change archetype.
     pub const ChangeArchetypeUninitializedImmediatelyOptions = struct {
-        /// Component types to remove.
+        /// Comp types to remove.
         remove: CompFlag.Set = .{},
-        /// Component types to add.
+        /// Comp types to add.
         add: CompFlag.Set = .{},
     };
 
@@ -460,22 +314,27 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
+    pub const ChangeArchetypeFromCompsImmediatelyOptions = struct {
+        add: []const Comp.Optional = &.{},
+        remove: CompFlag.Set = .{},
+    };
+
     /// Similar to `changeArchetypeImmediately`, but does not require compile time types.
-    pub fn changeArchetypeFromComponentsImmediately(
+    pub fn changeArchetypeFromCompsImmediately(
         self: @This(),
         es: *Entities,
-        changes: ChangeArchetypeFromComponentsOptions,
+        changes: ChangeArchetypeFromCompsImmediatelyOptions,
     ) void {
-        self.changeArchetypeFromComponentsImmediatelyChecked(es, changes) catch |err|
+        self.changeArchetypeFromCompsImmediatelyChecked(es, changes) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `changeArchetypeFromComponentsImmediately`, but returns `error.ZcsEntityOverflow`
+    /// Similar to `changeArchetypeFromCompsImmediately`, but returns `error.ZcsEntityOverflow`
     /// on failure instead of panicking.
-    pub fn changeArchetypeFromComponentsImmediatelyChecked(
+    pub fn changeArchetypeFromCompsImmediatelyChecked(
         self: @This(),
         es: *Entities,
-        changes: ChangeArchetypeFromComponentsOptions,
+        changes: ChangeArchetypeFromCompsImmediatelyOptions,
     ) error{ZcsEntityOverflow}!void {
         // Early out if the entity does not exist, also checks some assertions
         if (!self.exists(es)) return;
@@ -501,7 +360,7 @@ pub const Entity = packed struct {
                 if (!skip.contains(some.id)) {
                     skip.insert(some.id);
                     const src = some.bytes;
-                    const dest = self.getComponentFromFlag(es, some.id, src.bytes.len).?;
+                    const dest = self.getCompFromId(es, some.id).?;
                     @memcpy(dest, src);
                 }
             }
@@ -535,9 +394,31 @@ pub const Entity = packed struct {
         return self.key.format(fmt, options, writer);
     }
 
+    /// Returns the archetype of the entity. If it has been destroyed or is not yet committed, the
+    /// empty archetype will be returned.
+    fn getArchetype(self: @This(), es: *const Entities) CompFlag.Set {
+        const slot = es.slots.get(self.key) orelse return .{};
+        if (!slot.committed) assert(slot.archetype.eql(.{}));
+        return slot.archetype;
+    }
+
+    /// Explicitly invalidates iterators to catch bugs in debug builds.
     fn invalidateIterators(es: *Entities) void {
         if (@FieldType(Entities, "iterator_generation") != u0) {
             es.iterator_generation +%= 1;
         }
     }
 };
+
+inline fn isComptimeKnown(value: anytype) bool {
+    return @typeInfo(@TypeOf(.{value})).@"struct".fields[0].is_comptime;
+}
+
+test "isComptimeKnown" {
+    try std.testing.expect(isComptimeKnown(123));
+    const foo = 456;
+    try std.testing.expect(isComptimeKnown(foo));
+    var bar: u8 = 123;
+    bar += 1;
+    try std.testing.expect(!isComptimeKnown(bar));
+}
