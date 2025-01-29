@@ -538,6 +538,7 @@ const FuzzCmdBuf = struct {
         }
     }
 
+    // XXX: this is dead code, and our normal one doesn't ever add interned!
     fn addComponent(
         self: *@This(),
         T: type,

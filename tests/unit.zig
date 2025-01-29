@@ -81,18 +81,6 @@ test "command buffer some test decode" {
     try expect(Entity.none.eql(.none));
     try expect(!Entity.none.exists(&es));
 
-    // // Make sure we exercise the `toOptional` API and such
-    // const comp: Comp = .init(&Tag{});
-    // const comp_interned: Comp = .init(&Tag{});
-    // XXX: ...
-    // const comp_optional = comp.toOptional();
-    // const comp_optional_interned = comp.toOptional();
-    // try expect(!comp.interned);
-    // try expect(!comp_interned.interned);
-    // XXX: ...
-    // try expectEqual(comp, comp_optional.unwrap().?);
-    // try expectEqual(comp, comp_optional_interned.unwrap().?);
-
     var capacity: CmdBuf.GranularCapacity = .init(.{
         .cmds = 4,
         .comp_bytes = @sizeOf(RigidBody),
@@ -165,195 +153,129 @@ test "command buffer some test decode" {
     try expectEqual(null, e2.getComp(&es, Tag));
 }
 
-// XXX: ...
-// // Verify that fromComponents methods don't pass duplicate component data, this allows us to make
-// // our capacity guarantees
-// test "command buffer skip dups" {
-//     defer Comp.unregisterAll();
-//     var es = try Entities.init(gpa, 100);
-//     defer es.deinit(gpa);
+fn isInCompBytes(cmds: CmdBuf, ptr: *const anyopaque) bool {
+    const comp_bytes = cmds.archetype_changes.comp_bytes.items;
+    const start = @intFromPtr(comp_bytes.ptr);
+    const end = start + comp_bytes.len;
+    const addr = @intFromPtr(ptr);
+    return addr >= start and addr < end;
+}
 
-//     var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .comp_bytes = @sizeOf(RigidBody) });
-//     defer cmds.deinit(gpa, &es);
+// Verify that components are interned appropriately
+test "command buffer interning" {
+    defer Comp.unregisterAll();
+    // Assumed by this test (affects cmds submission order.) If this fails, just adjust the types to
+    // make it true and the rest of the test should pass.
+    comptime assert(@alignOf(RigidBody) > @alignOf(Model));
+    comptime assert(@alignOf(Model) > @alignOf(Tag));
 
-//     const model1: Model = .{
-//         .vertex_start = 1,
-//         .vertex_count = 2,
-//     };
-//     const model2: Model = .{
-//         .vertex_start = 3,
-//         .vertex_count = 4,
-//     };
+    var xoshiro_256: std.Random.Xoshiro256 = .init(0);
+    const rand = xoshiro_256.random();
 
-//     const e0: Entity = Entity.reserveImmediately(&es);
+    var es = try Entities.init(gpa, 100);
+    defer es.deinit(gpa);
 
-//     {
-//         defer cmds.clear(&es);
-//         e0.changeArchetypeCmdFromComponents(&es, &cmds, .{
-//             .remove = Comp.flags(&.{}),
-//             .add = &.{
-//                 .init(&es, &model1),
-//                 .init(&es, &RigidBody{}),
-//                 .init(&es, &model2),
-//                 .none,
-//             },
-//         });
-//         var iter = cmds.change_archetype.iterator(&es);
-//         const change_archetype = iter.next().?;
-//         try expectEqual(
-//             Comp.Flags{},
-//             change_archetype.remove,
-//         );
-//         var comps = change_archetype.componentIterator();
-//         const comp1 = comps.next().?;
-//         try expect(!comp1.interned);
-//         try expectEqual(model2, comp1.as(Model).?.*);
-//         const comp2 = comps.next().?;
-//         try expect(!comp2.interned);
-//         try expectEqual(RigidBody{}, comp2.as(RigidBody).?.*);
-//     }
-// }
+    var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .comp_bytes = @sizeOf(RigidBody) });
+    defer cmds.deinit(gpa, &es);
 
-// XXX: ...
-// // Verify that components are interned appropriately
-// test "command buffer interning" {
-//     defer Comp.unregisterAll();
-//     // Assumed by this test (affects cmds submission order.) If this fails, just adjust the types to
-//     // make it true and the rest of the test should pass.
-//     comptime assert(@alignOf(RigidBody) > @alignOf(Model));
-//     comptime assert(@alignOf(Model) > @alignOf(Tag));
+    const rb_interned: RigidBody = .{
+        .position = .{ 0.5, 1.5 },
+        .velocity = .{ 2.5, 3.5 },
+        .mass = 4.5,
+    };
+    const rb_value = RigidBody.random(rand);
+    const model_interned: Model = .{
+        .vertex_start = 1,
+        .vertex_count = 2,
+    };
+    const model_value = Model.random(rand);
 
-//     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
-//     const rand = xoshiro_256.random();
+    const e0: Entity = .reserveImmediately(&es);
+    const e1: Entity = .reserveImmediately(&es);
 
-//     var es = try Entities.init(gpa, 100);
-//     defer es.deinit(gpa);
+    // Automatic interning
+    e0.addCompCmd(&cmds, Model, model_value);
+    e0.addCompCmd(&cmds, RigidBody, rb_interned);
 
-//     var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .comp_bytes = @sizeOf(RigidBody) });
-//     defer cmds.deinit(gpa, &es);
+    e1.addCompCmd(&cmds, Model, model_interned);
+    e1.addCompCmd(&cmds, RigidBody, rb_value);
 
-//     const rb_interned: RigidBody = .{
-//         .position = .{ 0.5, 1.5 },
-//         .velocity = .{ 2.5, 3.5 },
-//         .mass = 4.5,
-//     };
-//     const rb_value = RigidBody.random(rand);
-//     const model_interned: Model = .{
-//         .vertex_start = 1,
-//         .vertex_count = 2,
-//     };
-//     const model_value = Model.random(rand);
+    // Explicit by value
+    e0.addCompValCmd(&cmds, Model, model_value);
+    e0.addCompValCmd(&cmds, RigidBody, rb_interned);
 
-//     const e0: Entity = .reserveImmediately(&es);
-//     const e1: Entity = .reserveImmediately(&es);
+    e1.addCompValCmd(&cmds, Model, model_interned);
+    e1.addCompValCmd(&cmds, RigidBody, rb_value);
 
-//     // Automatic interning
-//     e0.addCompCmd(&cmds, Model, model_value);
-//     e0.addCompCmd(&cmds, RigidBody, rb_interned);
-//     e0.removeCompCmd(&cmds, Tag);
+    // Explicit interning
+    e0.addCompPtrCmd(&cmds, RigidBody, rb_interned);
+    e0.addCompPtrCmd(&cmds, Model, model_interned);
 
-//     e1.addCompCmd(&cmds, Model, model_interned);
-//     e1.addCompCmd(&cmds, RigidBody, rb_value);
-//     e1.removeCompCmd(&cmds, Tag);
+    // Test the results
+    var iter = cmds.archetype_changes.iterator(&es);
 
-//     // Explicit by value
-//     e0.addComponentByValueCmd(&cmds, Model, model_value);
-//     e0.addComponentByValueCmd(&cmds, RigidBody, rb_interned);
+    {
+        const cmd = iter.next().?;
+        try expectEqual(e0, cmd.entity);
+        var ops = cmd.iterator();
+        const comp1 = ops.next().?.add;
+        try expect(isInCompBytes(cmds, comp1.as(Model).?));
+        try expectEqual(model_value, comp1.as(Model).?.*);
+        const comp2 = ops.next().?.add;
+        try expect(!isInCompBytes(cmds, comp2.as(RigidBody).?));
+        try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
+    }
+    {
+        const cmd = iter.next().?;
+        try expectEqual(e1, cmd.entity);
+        var ops = cmd.iterator();
+        const comp1 = ops.next().?.add;
+        try expect(isInCompBytes(cmds, comp1.as(Model).?)); // By value because it's too small!
+        try expectEqual(model_interned, comp1.as(Model).?.*);
+        const comp2 = ops.next().?.add;
+        try expect(isInCompBytes(cmds, comp2.as(RigidBody).?));
+        try expectEqual(rb_value, comp2.as(RigidBody).?.*);
+        try expectEqual(null, ops.next());
+    }
+    {
+        const cmd = iter.next().?;
+        try expectEqual(e0, cmd.entity);
+        var ops = cmd.iterator();
+        const comp1 = ops.next().?.add;
+        try expect(isInCompBytes(cmds, comp1.as(Model).?));
+        try expectEqual(model_value, comp1.as(Model).?.*);
+        const comp2 = ops.next().?.add;
+        try expect(isInCompBytes(cmds, comp2.as(RigidBody).?));
+        try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
+        try expectEqual(null, ops.next());
+    }
+    {
+        const cmd = iter.next().?;
+        try expectEqual(e1, cmd.entity);
+        var ops = cmd.iterator();
+        const comp1 = ops.next().?.add;
+        try expect(isInCompBytes(cmds, comp1.as(Model).?));
+        try expectEqual(model_interned, comp1.as(Model).?.*);
+        const comp2 = ops.next().?.add;
+        try expect(isInCompBytes(cmds, comp2.as(RigidBody).?));
+        try expectEqual(rb_value, comp2.as(RigidBody).?.*);
+        try expectEqual(null, ops.next());
+    }
+    {
+        const cmd = iter.next().?;
+        try expectEqual(e0, cmd.entity);
+        var ops = cmd.iterator();
+        const comp1 = ops.next().?.add;
+        try expect(!isInCompBytes(cmds, comp1.as(RigidBody).?));
+        try expectEqual(rb_interned, comp1.as(RigidBody).?.*);
+        const comp2 = ops.next().?.add;
+        try expect(!isInCompBytes(cmds, comp2.as(Model).?));
+        try expectEqual(model_interned, comp2.as(Model).?.*);
+        try expectEqual(null, ops.next());
+    }
 
-//     e1.addComponentByValueCmd(&cmds, Model, model_interned);
-//     e1.addComponentByValueCmd(&cmds, RigidBody, rb_value);
-//     e1.removeCompCmd(&cmds, Tag);
-
-//     // Explicit interning
-//     e0.addComponentByPtrCmd(&cmds, RigidBody, rb_interned);
-//     e0.addComponentByPtrCmd(&cmds, Model, model_interned);
-//     e0.removeCompCmd(&cmds, Tag);
-
-//     // Test the results
-//     var iter = cmds.change_archetype.iterator(&es);
-
-//     {
-//         const cmd = iter.next().?;
-//         try expectEqual(e0, cmd.entity);
-//         try expectEqual(
-//             Comp.flags(&.{Tag}),
-//             cmd.remove,
-//         );
-//         // Components reordered due to alignment
-//         var comps = cmd.componentIterator();
-//         const comp1 = comps.next().?;
-//         try expect(!comp1.interned);
-//         try expectEqual(model_value, comp1.as(Model).?.*);
-//         const comp2 = comps.next().?;
-//         try expect(comp2.interned);
-//         try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
-//         try expectEqual(null, comps.next());
-//     }
-//     {
-//         const cmd = iter.next().?;
-//         try expectEqual(e1, cmd.entity);
-//         try expectEqual(
-//             Comp.flags(&.{Tag}),
-//             cmd.remove,
-//         );
-//         var comps = cmd.componentIterator();
-//         const comp1 = comps.next().?;
-//         try expect(!comp1.interned); // Not interned because it's too small!
-//         try expectEqual(model_interned, comp1.as(Model).?.*);
-//         const comp2 = comps.next().?;
-//         try expect(!comp2.interned);
-//         try expectEqual(rb_value, comp2.as(RigidBody).?.*);
-//         try expectEqual(null, comps.next());
-//     }
-//     {
-//         const cmd = iter.next().?;
-//         try expectEqual(e0, cmd.entity);
-//         try expectEqual(Comp.Flags{}, cmd.remove);
-//         // Comps are encoded in reverse order by *fromComponents methods
-//         var comps = cmd.componentIterator();
-//         const comp1 = comps.next().?;
-//         try expect(!comp1.interned);
-//         try expectEqual(model_value, comp1.as(Model).?.*);
-//         const comp2 = comps.next().?;
-//         try expect(!comp2.interned);
-//         try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
-//         try expectEqual(null, comps.next());
-//     }
-//     {
-//         const cmd = iter.next().?;
-//         try expectEqual(e1, cmd.entity);
-//         try expectEqual(
-//             Comp.flags(&.{Tag}),
-//             cmd.remove,
-//         );
-//         var comps = cmd.componentIterator();
-//         const comp1 = comps.next().?;
-//         try expect(!comp1.interned);
-//         try expectEqual(model_interned, comp1.as(Model).?.*);
-//         const comp2 = comps.next().?;
-//         try expect(!comp2.interned);
-//         try expectEqual(rb_value, comp2.as(RigidBody).?.*);
-//         try expectEqual(null, comps.next());
-//     }
-//     {
-//         const cmd = iter.next().?;
-//         try expectEqual(e0, cmd.entity);
-//         try expectEqual(
-//             Comp.flags(&.{Tag}),
-//             cmd.remove,
-//         );
-//         var comps = cmd.componentIterator();
-//         const comp1 = comps.next().?;
-//         try expect(comp1.interned);
-//         try expectEqual(rb_interned, comp1.as(RigidBody).?.*);
-//         const comp2 = comps.next().?;
-//         try expect(comp2.interned);
-//         try expectEqual(model_interned, comp2.as(Model).?.*);
-//         try expectEqual(null, comps.next());
-//     }
-
-//     try expectEqual(null, iter.next());
-// }
+    try expectEqual(null, iter.next());
+}
 
 // XXX: ...
 // test "command buffer overflow" {

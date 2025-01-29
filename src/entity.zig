@@ -170,21 +170,21 @@ pub const Entity = packed struct {
         comp: T,
     ) error{ZcsCmdBufOverflow}!void {
         if (@sizeOf(T) > @sizeOf(*T) and isComptimeKnown(comp)) {
-            try self.addCompByPtrCmdChecked(cmds, T, comp);
+            try self.addCompPtrCmdChecked(cmds, T, comp);
         } else {
-            try self.addCompByValueCmdChecked(cmds, T, comp);
+            try self.addCompValCmdChecked(cmds, T, comp);
         }
     }
 
     /// Similar to `addCompCmd` but forces the data to be passed by value.
-    pub fn addCompByValueCmd(self: @This(), cmds: *CmdBuf, T: type, comp: T) void {
-        self.addCompByValueCmdChecked(cmds, T, comp) catch |err|
+    pub fn addCompValCmd(self: @This(), cmds: *CmdBuf, T: type, comp: T) void {
+        self.addCompValCmdChecked(cmds, T, comp) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `addCompByValueCmd`, but returns `error.ZcsCmdBufOverflow` on failure
+    /// Similar to `addCompValCmd`, but returns `error.ZcsCmdBufOverflow` on failure
     /// instead of panicking.
-    pub fn addCompByValueCmdChecked(
+    pub fn addCompValCmdChecked(
         self: @This(),
         cmds: *CmdBuf,
         T: type,
@@ -201,14 +201,15 @@ pub const Entity = packed struct {
 
     /// Similar to `addCompCmd` but forces the data to be passed by pointer. Only available for
     /// comptime known arguments.
-    pub fn addCompByPtrCmd(self: @This(), cmds: *CmdBuf, T: type, comptime comp: T) void {
-        self.addCompByPtrCmdChecked(cmds, T, comp) catch |err|
+    pub fn addCompPtrCmd(self: @This(), cmds: *CmdBuf, T: type, comptime comp: T) void {
+        self.addCompPtrCmdChecked(cmds, T, comp) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `addCompByPtrCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead
+    // XXX: was the fuzz test not executing this??
+    /// Similar to `addCompPtrCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead
     /// of panicking.
-    pub fn addCompByPtrCmdChecked(
+    pub fn addCompPtrCmdChecked(
         self: @This(),
         cmds: *CmdBuf,
         T: type,
@@ -223,10 +224,7 @@ pub const Entity = packed struct {
             const value = comp;
         };
         try SubCmd.encode(&cmds.archetype_changes, .{ .bind_entity = self });
-        try SubCmd.encode(&cmds.archetype_changes, .{ .add_comp_ptr = .{
-            .id = compId(T),
-            .bytes = std.mem.asBytes(&Interned.value),
-        } });
+        try SubCmd.encode(&cmds.archetype_changes, .{ .add_comp_ptr = .init(T, &Interned.value) });
     }
 
     /// Queues the given component to be removed. Has no effect if the component is not present, or
