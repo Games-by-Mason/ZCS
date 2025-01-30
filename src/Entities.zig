@@ -3,133 +3,65 @@
 //! See `SlotMap` for how handle safety works. Note that you may want to check
 //! `saturated_generations` every now and then and warn if it's nonzero.
 //!
-//! # Example
-//! ```zig
-//! var es: Entities = try .init(&gpa, 100, &.{RigidBody, Mesh, Fire});
-//! defer es.deinit(gpa);
-//!
-//! const e = Entity.create(.{RigidBody { .mass = 0.5 }, Mesh { .vertices = player });
-//! const mesh = e.getComponent(Mesh).?;
-//!
-//! var iter = es.viewIterator(struct {rb: RigidBody, mesh: Mesh});
-//! while (iter.next()) |entity| {
-//!     std.debug.print("mesh: {}\n", .{entity.mesh});
-//! }
-//! ```
+//! See `README.md` for more information.
 
 const std = @import("std");
 const assert = std.debug.assert;
+
 const Allocator = std.mem.Allocator;
 
 const zcs = @import("root.zig");
-const Component = zcs.Component;
+const types = @import("types.zig");
+const CompFlag = types.CompFlag;
+const compId = zcs.compId;
+const Comp = zcs.Comp;
 const slot_map = @import("slot_map");
 const SlotMap = slot_map.SlotMap;
 const Entity = zcs.Entity;
 
 const Entities = @This();
 
-/// An unspecified but unique value per type.
-const TypeId = *const struct { _: u8 };
-
-/// Returns the type ID of the given type.
-inline fn typeId(comptime T: type) TypeId {
-    return &struct {
-        comptime {
-            _ = T;
-        }
-        var id: @typeInfo(TypeId).pointer.child = undefined;
-    }.id;
-}
-
 const IteratorGeneration = if (std.debug.runtime_safety) u64 else u0;
 
-/// The maximum alignment a component is allowed to have.
-pub const max_align = 16;
-
-const ComponentInfo = struct {
-    size: usize,
-    alignment: u8,
+const Slot = struct {
+    arch: CompFlag.Set,
+    committed: bool,
 };
 
-comp_types: std.AutoArrayHashMapUnmanaged(TypeId, void),
-comp_info: []ComponentInfo,
-slots: SlotMap(Component.Flags, .{}),
-comps: *[Component.Id.max][]align(max_align) u8,
+slots: SlotMap(Slot, .{}),
+comps: *[CompFlag.max][]align(Comp.max_align) u8,
 live: std.DynamicBitSetUnmanaged,
 iterator_generation: IteratorGeneration = 0,
+reserved_entities: usize = 0,
 
-/// Initializes the entity storage with the given capacity, and registers the given component types.
-pub fn init(
-    gpa: Allocator,
-    capacity: usize,
-    comptime Components: []const type,
-) Allocator.Error!@This() {
-    // Check the component types
-    comptime assert(Components.len < Component.Id.max);
-    inline for (Components) |T| {
-        if (@typeInfo(T) == .optional) {
-            // There's nothing technically wrong with this, but if we allowed it then the
-            // `create` and `changeArchetype` functions couldn't use optionals to allow deciding
-            // at runtime whether or not to create a component.
-            //
-            // Furthermore, it would be difficult to distinguish syntactically whether an
-            // optional component was missing or null.
-            //
-            // Instead, optional components should be represented by a struct with an optional
-            // field, or a tagged union.
-            @compileError("component types may not be optional: " ++ @typeName(T));
-        }
-    }
+/// The capacity for `Entities`.
+pub const Capacity = struct {
+    /// The max number of entities.
+    max_entities: u32,
+    /// The number of bytes per component type array.
+    comp_bytes: usize,
+};
 
-    // Register the component types
-    var comp_types: std.AutoArrayHashMapUnmanaged(TypeId, void) = .empty;
-    errdefer comp_types.deinit(gpa);
-    try comp_types.ensureTotalCapacity(gpa, Components.len);
-
-    inline for (Components) |T| {
-        const entry = comp_types.getOrPutAssumeCapacity(typeId(T));
-        if (entry.found_existing) {
-            @panic("component registered twice: " ++ @typeName(T));
-        }
-    }
-
-    // Register the component sizes
-    const comp_info = try gpa.alloc(ComponentInfo, Components.len);
-    errdefer gpa.free(comp_info);
-    inline for (Components, comp_info) |T, *size| {
-        comptime assert(@alignOf(T) <= max_align);
-        size.* = .{
-            .size = @sizeOf(T),
-            .alignment = @alignOf(T),
-        };
-    }
-
-    var slots = try SlotMap(Component.Flags, .{}).init(gpa, capacity);
+/// Initializes the entity storage with the given capacity.
+pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
+    var slots = try SlotMap(Slot, .{}).init(gpa, capacity.max_entities);
     errdefer slots.deinit(gpa);
 
-    const comps = try gpa.create([Component.Id.max][]align(max_align) u8);
+    const comps = try gpa.create([CompFlag.max][]align(Comp.max_align) u8);
     errdefer gpa.destroy(comps);
 
     comptime var comps_init = 0;
-    errdefer for (0..comps_init) |id| gpa.free(comps[id]);
-    inline for (Components) |T| {
-        const id = comp_types.getIndex(typeId(T)).?;
-        comps[id] = try gpa.alignedAlloc(
-            u8,
-            max_align,
-            @sizeOf(T) * capacity,
-        );
+    errdefer for (0..comps_init) |i| gpa.free(comps[i]);
+    inline for (comps) |*comp| {
+        comp.* = try gpa.alignedAlloc(u8, Comp.max_align, capacity.comp_bytes);
         comps_init += 1;
     }
 
-    const live = try std.DynamicBitSetUnmanaged.initEmpty(gpa, capacity);
+    const live = try std.DynamicBitSetUnmanaged.initEmpty(gpa, capacity.max_entities);
     errdefer live.deinit(gpa);
 
     return .{
         .slots = slots,
-        .comp_types = comp_types,
-        .comp_info = comp_info,
         .comps = comps,
         .live = live,
     };
@@ -138,11 +70,9 @@ pub fn init(
 /// Destroys the entity storage.
 pub fn deinit(self: *@This(), gpa: Allocator) void {
     self.live.deinit(gpa);
-    for (0..self.comp_types.count()) |id| {
-        gpa.free(self.comps[id]);
+    for (self.comps) |comp| {
+        gpa.free(comp);
     }
-    self.comp_types.deinit(gpa);
-    gpa.free(self.comp_info);
     gpa.destroy(self.comps);
     self.slots.deinit(gpa);
     self.* = undefined;
@@ -152,35 +82,17 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
 /// be detected by `Entity.exists`.
 pub fn reset(self: *@This()) void {
     self.slots.reset();
-}
-
-/// Returns the component ID for the given component type. Panics if the given type was not
-/// registered.
-pub fn getComponentId(self: @This(), T: type) Component.Id {
-    return self.findComponentId(T) orelse {
-        @panic("component type not registered: " ++ @typeName(T));
-    };
-}
-
-/// Returns the size of the component type with the given ID.
-pub fn getComponentSize(self: @This(), id: Component.Id) usize {
-    return self.comp_info[@intFromEnum(id)].size;
-}
-
-/// Returns the alignment of the component type with the given ID.
-pub fn getComponentAlignment(self: @This(), id: Component.Id) u8 {
-    return self.comp_info[@intFromEnum(id)].alignment;
-}
-
-/// Similar to `componentId`, but returns null if the component type was not registered.
-pub fn findComponentId(self: @This(), T: type) ?Component.Id {
-    const id = self.comp_types.getIndex(typeId(T)) orelse return null;
-    return @enumFromInt(id);
+    self.reserved_entities = 0;
 }
 
 /// Returns the current number of entities.
 pub fn count(self: @This()) usize {
-    return self.slots.count();
+    return self.slots.count() - self.reserved_entities;
+}
+
+/// Returns the number of reserved but not committed entities that currently exist.
+pub fn reserved(self: @This()) usize {
+    return self.reserved_entities;
 }
 
 /// If `T` is a pointer to a component, returns the component type. Otherwise returns null.
@@ -194,9 +106,9 @@ fn ComponentFromPointer(T: type) ?type {
         else => return null,
     };
 
-    if (pointer.size != .One) return null;
+    if (pointer.size != .one) return null;
     if (pointer.alignment != @alignOf(pointer.child)) return null;
-    if (pointer.sentinel != null) return null;
+    if (pointer.sentinel() != null) return null;
     if (@typeInfo(pointer.child) == .optional) return null;
 
     return pointer.child;
@@ -206,7 +118,7 @@ fn ComponentFromPointer(T: type) ?type {
 /// an implementation defined order.
 pub fn iterator(
     self: *const @This(),
-    required_comps: Component.Flags,
+    required_comps: CompFlag.Set,
 ) Iterator {
     return .{
         .es = self,
@@ -219,7 +131,7 @@ pub fn iterator(
 /// See `iterator`.
 pub const Iterator = struct {
     es: *const Entities,
-    required_comps: Component.Flags,
+    required_comps: CompFlag.Set,
     index: u32,
     generation: IteratorGeneration,
 
@@ -232,8 +144,8 @@ pub const Iterator = struct {
             const index = self.index;
             self.index += 1;
             if (self.es.live.isSet(index)) {
-                const archetype = self.es.slots.values[index];
-                if (self.required_comps.subsetOf(archetype)) {
+                const slot = self.es.slots.values[index];
+                if (slot.committed and self.required_comps.subsetOf(slot.arch)) {
                     return .{ .key = .{
                         .index = index,
                         .generation = self.es.slots.generations[index],
@@ -244,30 +156,16 @@ pub const Iterator = struct {
 
         return null;
     }
-
-    /// Destroys the current entity without invalidating this iterator. May invalidate other
-    /// iterators.
-    pub fn destroyCurrent(self: *@This(), es: *Entities) void {
-        assert(self.index > 0);
-        const index = self.index - 1;
-        const entity: Entity = .{ .key = .{
-            .index = index,
-            .generation = es.slots.generations[index],
-        } };
-        entity.destroy(es);
-        self.generation +%= 1;
-    }
 };
 
 /// Similar to `iterator`, but returns a view with pointers to the requested components.
 ///
 /// `View` must be a struct whose fields are all either type `Entity` or are pointers to registered
 /// component types. Pointers can be set to optional to make a component type optional.
-pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
+pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
     var base: View = undefined;
-    var required_comps: Component.Flags = .{};
-    var comp_ids: [@typeInfo(View).@"struct".fields.len]Component.Id = undefined;
-    inline for (@typeInfo(View).@"struct".fields, 0..) |field, i| {
+    var required_comps: CompFlag.Set = .{};
+    inline for (@typeInfo(View).@"struct".fields) |field| {
         if (field.type == Entity) {
             @field(base, field.name).key.index = 0;
         } else {
@@ -275,12 +173,11 @@ pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
                 @compileError("view field is not Entity or pointer to a component: " ++ @typeName(field.type));
             };
 
-            const comp_id = self.getComponentId(T);
-            comp_ids[i] = comp_id;
+            const flag = types.register(compId(T));
             if (@typeInfo(field.type) != .optional) {
-                required_comps.insert(comp_id);
+                required_comps.insert(flag);
             }
-            @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(comp_id)]);
+            @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(flag)]);
         }
     }
 
@@ -293,37 +190,47 @@ pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
             .generation = self.iterator_generation,
         },
         .base = base,
-        .comp_ids = comp_ids,
     };
 }
 
-/// See `viewIterator`.
+/// See `Entities.viewIterator`.
 pub fn ViewIterator(View: type) type {
     return struct {
         es: *const Entities,
         entity_iterator: Iterator,
-        comp_ids: [@typeInfo(View).@"struct".fields.len]Component.Id,
         base: View,
 
         /// Advances the iterator, returning the next view.
         pub fn next(self: *@This()) ?View {
             while (self.entity_iterator.next()) |entity| {
                 var view: View = self.base;
-                inline for (@typeInfo(View).@"struct".fields, 0..) |field, i| {
+                inline for (@typeInfo(View).@"struct".fields) |field| {
                     if (field.type == Entity) {
                         @field(view, field.name) = entity;
                     } else {
+                        // Get the component type
                         const T = ComponentFromPointer(field.type) orelse {
-                            unreachable; // Checked in init
+                            comptime unreachable; // Checked during iterator init
                         };
-                        const archetype = self.es.slots.values[entity.key.index];
+
+                        // Get the slot
+                        const slot = self.es.slots.values[entity.key.index];
+                        assert(slot.committed);
+
+                        // Check if the field is required. If it is then we must have the component
+                        // since the normal iterator gave us the entity. If it's optional, check for
+                        // ourselves if we have it. We can unwrap the flag because the iterator
+                        // initialization code registers the types it's given.
                         if (@typeInfo(field.type) != .optional or
-                            archetype.contains(self.comp_ids[i]))
+                            slot.arch.contains(compId(T).flag.?))
                         {
+                            // We have the component, pass it to the caller
                             const base = @intFromPtr(@field(view, field.name));
                             const offset = entity.key.index * @sizeOf(T);
                             @field(view, field.name) = @ptrFromInt(base + offset);
                         } else {
+                            // This component is optional and we don't have it, set our result to
+                            // null
                             @field(view, field.name) = null;
                         }
                     }
@@ -336,8 +243,8 @@ pub fn ViewIterator(View: type) type {
 
         /// Destroys the current entity without invalidating this iterator. May invalidate other
         /// iterators.
-        pub fn destroyCurrent(self: *@This(), es: *Entities) void {
-            self.entity_iterator.destroyCurrent(es);
+        pub fn destroyCurrentImmediately(self: *@This(), es: *Entities) void {
+            self.entity_iterator.destroyCurrentImmediately(es);
         }
     };
 }
