@@ -631,7 +631,7 @@ test "entity overflow" {
     e0.changeArchImmediate(&es, .{ .add = &.{
         .init(u32, &0),
     } });
-    try expectError(error.ZcsEntityOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+    try expectError(error.ZcsCompOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u128, &0),
     } }));
 }

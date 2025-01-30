@@ -141,8 +141,8 @@ pub fn execute(self: *@This(), es: *Entities) void {
 ///
 /// On overflow, all work that doesn't trigger an overflow is still completed regardless of order
 /// relative to the overflowing work.
-pub fn executeOrErr(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
-    if (!self.executeOrOverflow(es)) return error.ZcsEntityOverflow;
+pub fn executeOrErr(self: *@This(), es: *Entities) error{ZcsCompOverflow}!void {
+    if (!self.executeOrOverflow(es)) return error.ZcsCompOverflow;
 }
 
 /// Submits the command buffer, returns true on success false on overflow. Pulled out into a
@@ -183,7 +183,7 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
                     .add = add,
                     .remove = remove,
                 }) catch |err| switch (err) {
-                    error.ZcsEntityOverflow => {
+                    error.ZcsCompOverflow => {
                         overflow = true;
                         continue;
                     },
@@ -204,7 +204,7 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
         }
     }
 
-    // Return whether or not we overflowed.
+    // Return whether or not we overflowed
     return !overflow;
 }
 

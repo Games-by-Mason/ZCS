@@ -311,13 +311,13 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `changeArchImmediate`, but returns `error.ZcsEntityOverflow` on failure instead
+    /// Similar to `changeArchImmediate`, but returns `error.ZcsCompOverflow` on failure instead
     /// of panicking.
     pub fn changeArchImmediateOrErr(
         self: @This(),
         es: *Entities,
         changes: ChangeArchImmediateOptions,
-    ) error{ZcsEntityOverflow}!void {
+    ) error{ZcsCompOverflow}!void {
         // Early out if the entity does not exist, also checks some assertions
         if (!self.exists(es)) return;
 
@@ -356,12 +356,12 @@ pub const Entity = packed struct {
     };
 
     /// For internal use. Similar to `changeArchUninitImmediate`, but returns
-    /// `error.ZcsEntityOverflow` on failure instead of panicking.
+    /// `error.ZcsCompOverflow` on failure instead of panicking.
     pub fn changeArchUninitImmediateOrErr(
         self: @This(),
         es: *Entities,
         options: ChangeArchUninitImmediateOptions,
-    ) error{ZcsEntityOverflow}!void {
+    ) error{ZcsCompOverflow}!void {
         invalidateIterators(es);
 
         // Get the slot
@@ -374,7 +374,7 @@ pub const Entity = packed struct {
             const comp_buffer = es.comps[@intFromEnum(flag)];
             const comp_offset = self.key.index * id.size;
             if (id.size > 0 and comp_offset + id.size > comp_buffer.len) {
-                return error.ZcsEntityOverflow;
+                return error.ZcsCompOverflow;
             }
         }
 
