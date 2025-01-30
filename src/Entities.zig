@@ -24,7 +24,7 @@ const Entities = @This();
 const IteratorGeneration = if (std.debug.runtime_safety) u64 else u0;
 
 const Slot = struct {
-    archetype: CompFlag.Set,
+    arch: CompFlag.Set,
     committed: bool,
 };
 
@@ -137,7 +137,7 @@ pub const Iterator = struct {
             self.index += 1;
             if (self.es.live.isSet(index)) {
                 const slot = self.es.slots.values[index];
-                if (slot.committed and self.required_comps.subsetOf(slot.archetype)) {
+                if (slot.committed and self.required_comps.subsetOf(slot.arch)) {
                     return .{ .key = .{
                         .index = index,
                         .generation = self.es.slots.generations[index],
@@ -227,7 +227,7 @@ pub fn ViewIterator(View: type) type {
                         // ourselves if we have it. We can unwrap the flag because the iterator
                         // initialization code registers the types it's given.
                         if (@typeInfo(field.type) != .optional or
-                            slot.archetype.contains(compId(T).flag.?))
+                            slot.arch.contains(compId(T).flag.?))
                         {
                             // We have the component, pass it to the caller
                             const base = @intFromPtr(@field(view, field.name));

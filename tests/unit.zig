@@ -92,9 +92,9 @@ test "command buffer some test decode" {
 
     try expectEqual(0, es.count());
 
-    const e0 = Entity.reserveImmediately(&es);
-    const e1 = Entity.reserveImmediately(&es);
-    const e2 = Entity.reserveImmediately(&es);
+    const e0 = Entity.reserveImmediate(&es);
+    const e1 = Entity.reserveImmediate(&es);
+    const e2 = Entity.reserveImmediate(&es);
     e0.commitCmd(&cmds);
     e1.commitCmd(&cmds);
     const rb = RigidBody.random(rand);
@@ -155,7 +155,7 @@ test "command buffer some test decode" {
 }
 
 fn isInCompBytes(cmds: CmdBuf, ptr: *const anyopaque) bool {
-    const comp_bytes = cmds.archetype_changes.comp_bytes.items;
+    const comp_bytes = cmds.arch_changes.comp_bytes.items;
     const start = @intFromPtr(comp_bytes.ptr);
     const end = start + comp_bytes.len;
     const addr = @intFromPtr(ptr);
@@ -191,8 +191,8 @@ test "command buffer interning" {
     };
     const model_value = Model.random(rand);
 
-    const e0: Entity = .reserveImmediately(&es);
-    const e1: Entity = .reserveImmediately(&es);
+    const e0: Entity = .reserveImmediate(&es);
+    const e1: Entity = .reserveImmediate(&es);
 
     // Automatic interning
     e0.addCompCmd(&cmds, Model, model_value);
@@ -213,7 +213,7 @@ test "command buffer interning" {
     e0.addCompPtrCmd(&cmds, .init(Model, &model_interned));
 
     // Test the results
-    var iter = cmds.archetype_changes.iterator();
+    var iter = cmds.arch_changes.iterator();
 
     {
         const cmd = iter.next().?;
@@ -302,16 +302,16 @@ test "command buffer overflow" {
 
         try expectError(
             error.ZcsCmdBufOverflow,
-            Entity.reserveImmediately(&es).commitCmdChecked(&cmds),
+            Entity.reserveImmediate(&es).commitCmdChecked(&cmds),
         );
         try expectError(
             error.ZcsCmdBufOverflow,
-            Entity.reserveImmediately(&es).destroyCmdChecked(&cmds),
+            Entity.reserveImmediate(&es).destroyCmdChecked(&cmds),
         );
 
         try expectEqual(1.0, cmds.worstCaseUsage());
 
-        var iter = cmds.archetype_changes.iterator();
+        var iter = cmds.arch_changes.iterator();
         try expectEqual(null, iter.next());
     }
 
@@ -328,16 +328,16 @@ test "command buffer overflow" {
 
         try expectError(
             error.ZcsCmdBufOverflow,
-            Entity.reserveImmediately(&es).commitCmdChecked(&cmds),
+            Entity.reserveImmediate(&es).commitCmdChecked(&cmds),
         );
-        const e = Entity.reserveImmediately(&es);
+        const e = Entity.reserveImmediate(&es);
         e.destroyCmd(&cmds);
 
         try expectEqual(1.0, cmds.worstCaseUsage());
 
         try expectEqual(1, cmds.destroy.items.len);
         try expectEqual(e, cmds.destroy.items[0]);
-        var iter = cmds.archetype_changes.iterator();
+        var iter = cmds.arch_changes.iterator();
         try expectEqual(null, iter.next());
     }
 
@@ -352,10 +352,10 @@ test "command buffer overflow" {
         });
         defer cmds.deinit(gpa, &es);
 
-        const e: Entity = Entity.reserveImmediately(&es);
+        const e: Entity = Entity.reserveImmediate(&es);
         const rb = RigidBody.random(rand);
 
-        _ = Entity.reserveImmediately(&es).addCompCmd(&cmds, RigidBody, rb);
+        _ = Entity.reserveImmediate(&es).addCompCmd(&cmds, RigidBody, rb);
         e.destroyCmd(&cmds);
         try expectError(error.ZcsCmdBufOverflow, e.addCompCmdChecked(
             &cmds,
@@ -367,9 +367,9 @@ test "command buffer overflow" {
 
         try expectEqual(1, cmds.destroy.items.len);
         try expectEqual(e, cmds.destroy.items[0]);
-        var iter = cmds.archetype_changes.iterator();
-        const archetype_change = iter.next().?;
-        var ops = archetype_change.iterator();
+        var iter = cmds.arch_changes.iterator();
+        const arch_change = iter.next().?;
+        var ops = arch_change.iterator();
         const create_rb = ops.next().?.add;
         try expectEqual(compId(RigidBody), create_rb.id);
         try expectEqual(rb, create_rb.as(RigidBody).?.*);
@@ -393,8 +393,8 @@ test "command buffer worst case capacity" {
     // Change archetype
     {
         // Add val
-        const e0 = Entity.reserveImmediately(&es);
-        const e1 = Entity.reserveImmediately(&es);
+        const e0 = Entity.reserveImmediate(&es);
+        const e1 = Entity.reserveImmediate(&es);
 
         for (0..cb_capacity / 12) |_| {
             e0.addCompValCmd(&cmds, .init(u0, &0));

@@ -20,19 +20,19 @@ pub fn iterator(self: *const @This()) Iterator {
 
 /// A single archetype change, encoded as a sequence of archetype change operations. Change
 /// operations are grouped per entity for efficient execution.
-pub const ArchetypeChange = struct {
+pub const Cmd = struct {
     /// The bound entity.
     entity: Entity,
     decoder: SubCmd.Decoder,
 
     /// An iterator over the operations that make up this archetype change.
-    pub fn iterator(self: @This()) OperationIterator {
+    pub fn iterator(self: @This()) OpIterator {
         return .{ .decoder = self.decoder };
     }
 };
 
 /// An individual operation that's part of an archetype change.
-pub const Operation = union(enum) {
+pub const Op = union(enum) {
     add: Comp,
     remove: Comp.Id,
 };
@@ -42,7 +42,7 @@ pub const Iterator = struct {
     decoder: SubCmd.Decoder,
 
     /// Returns the next archetype changed command, or `null` if there is none.
-    pub fn next(self: *@This()) ?ArchetypeChange {
+    pub fn next(self: *@This()) ?Cmd {
         while (self.decoder.next()) |cmd| {
             switch (cmd) {
                 .bind_entity => |entity| {
@@ -77,11 +77,11 @@ pub const Iterator = struct {
 };
 
 /// An iterator over an archetype change command's operations.
-pub const OperationIterator = struct {
+pub const OpIterator = struct {
     decoder: SubCmd.Decoder,
 
     /// Returns the next operation, or `null` if there are none.
-    pub fn next(self: *@This()) ?Operation {
+    pub fn next(self: *@This()) ?Op {
         while (self.decoder.peekTag()) |tag| {
             return switch (tag) {
                 .add_comp_val => .{ .add = self.decoder.next().?.add_comp_val },

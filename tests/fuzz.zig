@@ -138,11 +138,11 @@ const FuzzCmdBuf = struct {
                 switch (self.parser.next(enum {
                     reserve,
                     destroy,
-                    change_archetype,
+                    change_arch,
                 })) {
                     .reserve => try self.reserve(),
                     .destroy => try self.destroy(),
-                    .change_archetype => try self.changeArchetype(),
+                    .change_arch => try self.changeArch(),
                 }
             }
 
@@ -240,7 +240,7 @@ const FuzzCmdBuf = struct {
 
             // Compare them
             try expectEqual(
-                self.expectedOfArchetype(.{ .rb = true }),
+                self.expectedOfArch(.{ .rb = true }),
                 count,
             );
         }
@@ -257,7 +257,7 @@ const FuzzCmdBuf = struct {
 
             // Compare them
             try expectEqual(
-                self.expectedOfArchetype(.{ .rb = true }),
+                self.expectedOfArch(.{ .rb = true }),
                 self.found_buf.count(),
             );
         }
@@ -274,7 +274,7 @@ const FuzzCmdBuf = struct {
 
             // Compare to the expected count
             try expectEqual(
-                self.expectedOfArchetype(.{ .model = true }),
+                self.expectedOfArch(.{ .model = true }),
                 self.found_buf.count(),
             );
         }
@@ -291,7 +291,7 @@ const FuzzCmdBuf = struct {
 
             // Compare to the expected count
             try expectEqual(
-                self.expectedOfArchetype(.{ .tag = true }),
+                self.expectedOfArch(.{ .tag = true }),
                 self.found_buf.count(),
             );
         }
@@ -315,7 +315,7 @@ const FuzzCmdBuf = struct {
 
             // Compare to the expected count
             try expectEqual(
-                self.expectedOfArchetype(.{ .rb = true, .model = true, .tag = true }),
+                self.expectedOfArch(.{ .rb = true, .model = true, .tag = true }),
                 self.found_buf.count(),
             );
         }
@@ -360,29 +360,29 @@ const FuzzCmdBuf = struct {
 
             // Compare to the expected count
             try expectEqual(
-                self.expectedOfArchetype(.{ .rb = true, .tag = true }),
+                self.expectedOfArch(.{ .rb = true, .tag = true }),
                 self.found_buf.count(),
             );
         }
     }
 
-    const Archetype = packed struct {
+    const Arch = packed struct {
         rb: bool = false,
         model: bool = false,
         tag: bool = false,
     };
 
-    fn expectedOfArchetype(self: *@This(), archetype: Archetype) usize {
+    fn expectedOfArch(self: *@This(), arch: Arch) usize {
         var count: usize = 0;
         var iter = self.committed.iterator();
         while (iter.next()) |entry| {
-            if (archetype.rb) {
+            if (arch.rb) {
                 if (entry.value_ptr.rb == null) continue;
             }
-            if (archetype.model) {
+            if (arch.model) {
                 if (entry.value_ptr.model == null) continue;
             }
-            if (archetype.tag) {
+            if (arch.tag) {
                 if (entry.value_ptr.tag == null) continue;
             }
             count += 1;
@@ -426,7 +426,7 @@ const FuzzCmdBuf = struct {
         try self.destroyed.put(gpa, entity, {});
     }
 
-    fn changeArchetype(self: *@This()) !void {
+    fn changeArch(self: *@This()) !void {
         // Get a random entity
         const entity = self.randomEntity();
 

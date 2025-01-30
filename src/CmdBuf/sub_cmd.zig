@@ -30,7 +30,7 @@ pub const SubCmd = union(enum) {
 
     /// Decodes encoded subcommands.
     pub const Decoder = struct {
-        cmds: *const CmdBuf.ArchetypeChanges,
+        cmds: *const CmdBuf.ArchChanges,
         tag_index: usize = 0,
         arg_index: usize = 0,
         comp_bytes_index: usize = 0,
@@ -120,7 +120,7 @@ pub const SubCmd = union(enum) {
 
     /// Encodes a subcommand.
     pub fn encode(
-        changes: *CmdBuf.ArchetypeChanges,
+        changes: *CmdBuf.ArchChanges,
         sub_cmd: SubCmd,
     ) error{ZcsCmdBufOverflow}!void {
         _ = SubCmd.rename_when_changing_encoding;

@@ -23,7 +23,7 @@ const CmdBuf = zcs.CmdBuf;
 /// on user input.
 ///
 /// Methods with `cmd` in the name append the command to a command buffer for execution at a later
-/// time. Methods with `immediately` in the name are executed immediately, usage of these is
+/// time. Methods with `immediate` in the name are executed immediately, usage of these is
 /// discouraged as they are not valid while iterating unless otherwise noted and are not thread
 /// safe.
 pub const Entity = packed struct {
@@ -37,7 +37,8 @@ pub const Entity = packed struct {
     /// A reserved entity is given a persistent key, but no storage. As such, it will behave like
     /// an empty entity, but not show up in iteration.
     ///
-    /// To commit a reserved entity, use one of the `changeArchetype*` methods.
+    /// You can commit a reserved entity explicitly with `commitCmd`, but this isn't usually
+    /// necessary as adding or attempting to remove a component implicitly commits the entity.
     pub fn nextReserved(cmds: *CmdBuf) Entity {
         return nextReservedChecked(cmds) catch |err|
             @panic(@errorName(err));
@@ -53,16 +54,16 @@ pub const Entity = packed struct {
     /// buffers reserve. Prefer `nextReserved`.
     ///
     /// This does not invalidate iterators, but it's not thread safe.
-    pub fn reserveImmediately(es: *Entities) Entity {
-        return reserveImmediatelyChecked(es) catch |err|
+    pub fn reserveImmediate(es: *Entities) Entity {
+        return reserveImmediateChecked(es) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `reserveImmediately`, but returns `error.ZcsEntityOverflow` on failure instead of
+    /// Similar to `reserveImmediate`, but returns `error.ZcsEntityOverflow` on failure instead of
     /// panicking.
-    pub fn reserveImmediatelyChecked(es: *Entities) error{ZcsEntityOverflow}!Entity {
+    pub fn reserveImmediateChecked(es: *Entities) error{ZcsEntityOverflow}!Entity {
         const key = es.slots.put(.{
-            .archetype = .{},
+            .arch = .{},
             .committed = false,
         }) catch |err| switch (err) {
             error.Overflow => return error.ZcsEntityOverflow,
@@ -95,7 +96,7 @@ pub const Entity = packed struct {
     /// Similar to `destroyCmd`, but destroys the entity immediately. Prefer `destroyCmd`.
     ///
     /// Invalidates iterators.
-    pub fn destroyImmediately(self: @This(), es: *Entities) void {
+    pub fn destroyImmediate(self: @This(), es: *Entities) void {
         invalidateIterators(es);
         if (es.slots.get(self.key)) |slot| {
             if (!slot.committed) es.reserved_entities -= 1;
@@ -124,8 +125,8 @@ pub const Entity = packed struct {
     /// Similar to `hasComp`, but operates on component IDs instead of types.
     pub fn hasCompId(self: @This(), es: *const Entities, id: Comp.Id) bool {
         const flag = id.flag orelse return false;
-        const archetype = self.getArchetype(es);
-        return archetype.contains(flag);
+        const arch = self.getArch(es);
+        return arch.contains(flag);
     }
 
     /// Retrieves the given component type. Returns null if the entity does not have this component
@@ -198,8 +199,8 @@ pub const Entity = packed struct {
         errdefer cmds.* = restore;
 
         // Issue the subcommands
-        try SubCmd.encode(&cmds.archetype_changes, .{ .bind_entity = self });
-        try SubCmd.encode(&cmds.archetype_changes, .{ .add_comp_val = comp });
+        try SubCmd.encode(&cmds.arch_changes, .{ .bind_entity = self });
+        try SubCmd.encode(&cmds.arch_changes, .{ .add_comp_val = comp });
     }
 
     /// Similar to `addCompCmd`, but doesn't require compile time types and forces the component to
@@ -221,8 +222,8 @@ pub const Entity = packed struct {
         errdefer cmds.* = restore;
 
         // Issue the subcommands
-        try SubCmd.encode(&cmds.archetype_changes, .{ .bind_entity = self });
-        try SubCmd.encode(&cmds.archetype_changes, .{ .add_comp_ptr = comp });
+        try SubCmd.encode(&cmds.arch_changes, .{ .bind_entity = self });
+        try SubCmd.encode(&cmds.arch_changes, .{ .add_comp_ptr = comp });
     }
 
     /// Queues the given component to be removed. Has no effect if the component is not present, or
@@ -268,8 +269,8 @@ pub const Entity = packed struct {
         errdefer cmds.* = restore;
 
         // Issue the subcommands
-        try SubCmd.encode(&cmds.archetype_changes, .{ .bind_entity = self });
-        try SubCmd.encode(&cmds.archetype_changes, .{ .remove_comp = id });
+        try SubCmd.encode(&cmds.arch_changes, .{ .bind_entity = self });
+        try SubCmd.encode(&cmds.arch_changes, .{ .remove_comp = id });
     }
 
     /// Queues the entity to be committed. Has no effect if it has already been committed, called
@@ -287,50 +288,30 @@ pub const Entity = packed struct {
         errdefer cmds.* = restore;
 
         // Issue the subcommand
-        try SubCmd.encode(&cmds.archetype_changes, .{ .bind_entity = self });
+        try SubCmd.encode(&cmds.arch_changes, .{ .bind_entity = self });
     }
 
-    /// Options for the uninitialized variants of change archetype.
-    pub const ChangeArchetypeUninitializedImmediatelyOptions = struct {
-        /// Comp types to remove.
-        remove: CompFlag.Set = .{},
-        /// Comp types to add.
-        add: CompFlag.Set = .{},
+    pub const ChangeArchImmediateOptions = struct {
+        add: []const Comp,
+        remove: []const Comp.Id,
     };
 
-    /// Similar to `changeArchetypeImmediately`, but does not initialize any added components.
-    ///
-    /// May invalidate removed components even if they are also present in `add`.
-    pub fn changeArchetypeUnintializedImmediately(
+    /// Adds the listed components and then removes the listed component IDs.
+    pub fn changeArchImmediate(
         self: @This(),
         es: *Entities,
-        options: ChangeArchetypeUninitializedImmediatelyOptions,
+        changes: ChangeArchImmediateOptions,
     ) void {
-        self.changeArchetypeUninitializedImmediatelyChecked(es, options) catch |err|
+        self.changeArchImmediateChecked(es, changes) catch |err|
             @panic(@errorName(err));
     }
 
-    pub const ChangeArchetypeImmediatelyOptions = struct {
-        add: []const Comp.Optional = &.{},
-        remove: CompFlag.Set = .{},
-    };
-
-    /// Similar to `changeArchetypeImmediately`, but does not require compile time types.
-    pub fn changeArchetypeImmediately(
+    /// Similar to `changeArchImmediate`, but returns `error.ZcsEntityOverflow` on failure instead
+    /// of panicking.
+    pub fn changeArchImmediateChecked(
         self: @This(),
         es: *Entities,
-        changes: ChangeArchetypeImmediatelyOptions,
-    ) void {
-        self.changeArchetypeImmediatelyChecked(es, changes) catch |err|
-            @panic(@errorName(err));
-    }
-
-    /// Similar to `changeArchetypeImmediately`, but returns `error.ZcsEntityOverflow`
-    /// on failure instead of panicking.
-    pub fn changeArchetypeImmediatelyChecked(
-        self: @This(),
-        es: *Entities,
-        changes: ChangeArchetypeImmediatelyOptions,
+        changes: ChangeArchImmediateOptions,
     ) error{ZcsEntityOverflow}!void {
         // Early out if the entity does not exist, also checks some assertions
         if (!self.exists(es)) return;
@@ -341,7 +322,7 @@ pub const Entity = packed struct {
                 add_flags.insert(some.id);
             }
         }
-        try self.changeArchetypeUninitializedImmediatelyChecked(
+        try self.changeArchUninitImmediateChecked(
             es,
             .{
                 .remove = changes.remove,
@@ -363,12 +344,31 @@ pub const Entity = packed struct {
         }
     }
 
-    /// Similar to `changeArchetypeUnintializedImmediately`, but returns `error.ZcsEntityOverflow`
-    /// on failure instead of panicking.
-    pub fn changeArchetypeUninitializedImmediatelyChecked(
+    /// Options for the uninitialized variants of change archetype.
+    pub const ChangeArchUninitImmediateOptions = struct {
+        /// Component types to remove.
+        remove: CompFlag.Set = .{},
+        /// Component types to add.
+        add: CompFlag.Set = .{},
+    };
+
+    /// For internal use. Similar to `changeArchImmediate`, but operates on flags and does not
+    /// initialize the components.
+    pub fn changeArchUninitImmediate(
         self: @This(),
         es: *Entities,
-        options: ChangeArchetypeUninitializedImmediatelyOptions,
+        options: ChangeArchUninitImmediateOptions,
+    ) void {
+        self.changeArchUninitImmediateChecked(es, options) catch |err|
+            @panic(@errorName(err));
+    }
+
+    /// For internal use. Similar to `changeArchUninitImmediate`, but returns
+    /// `error.ZcsEntityOverflow` on failure instead of panicking.
+    pub fn changeArchUninitImmediateChecked(
+        self: @This(),
+        es: *Entities,
+        options: ChangeArchUninitImmediateOptions,
     ) error{ZcsEntityOverflow}!void {
         invalidateIterators(es);
         const slot = es.slots.get(self.key) orelse return;
@@ -376,8 +376,8 @@ pub const Entity = packed struct {
             es.reserved_entities -= 1;
             slot.committed = true;
         }
-        slot.archetype = slot.archetype.unionWith(options.add);
-        slot.archetype = slot.archetype.differenceWith(options.remove);
+        slot.arch = slot.arch.unionWith(options.add);
+        slot.arch = slot.arch.differenceWith(options.remove);
     }
 
     /// Default formatting for `Entity`.
@@ -392,10 +392,10 @@ pub const Entity = packed struct {
 
     /// Returns the archetype of the entity. If it has been destroyed or is not yet committed, the
     /// empty archetype will be returned.
-    fn getArchetype(self: @This(), es: *const Entities) CompFlag.Set {
+    fn getArch(self: @This(), es: *const Entities) CompFlag.Set {
         const slot = es.slots.get(self.key) orelse return .{};
-        if (!slot.committed) assert(slot.archetype.eql(.{}));
-        return slot.archetype;
+        if (!slot.committed) assert(slot.arch.eql(.{}));
+        return slot.arch;
     }
 
     /// Explicitly invalidates iterators to catch bugs in debug builds.

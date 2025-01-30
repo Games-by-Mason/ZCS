@@ -20,12 +20,12 @@ const Comp = zcs.Comp;
 
 const SubCmd = @import("CmdBuf/sub_cmd.zig").SubCmd;
 
-pub const ArchetypeChanges = @import("CmdBuf/ArchetypeChanges.zig");
+pub const ArchChanges = @import("CmdBuf/ArchChanges.zig");
 
 /// Entities queued for destruction.
 destroy: std.ArrayListUnmanaged(Entity),
 /// Archetype changes queued for execution.
-archetype_changes: ArchetypeChanges,
+arch_changes: ArchChanges,
 /// Reserved entities.
 reserved: std.ArrayListUnmanaged(Entity),
 
@@ -64,13 +64,13 @@ pub fn initGranularCapacity(
     var reserved: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacity.reserved);
     errdefer reserved.deinit(gpa);
     for (0..reserved.capacity) |_| {
-        reserved.appendAssumeCapacity(try Entity.reserveImmediatelyChecked(es));
+        reserved.appendAssumeCapacity(try Entity.reserveImmediateChecked(es));
     }
 
     return .{
         .destroy = destroy,
         .reserved = reserved,
-        .archetype_changes = .{
+        .arch_changes = .{
             .tags = tags,
             .args = args,
             .comp_bytes = comp_bytes,
@@ -80,12 +80,12 @@ pub fn initGranularCapacity(
 
 /// Destroys the command buffer.
 pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
-    for (self.reserved.items) |entity| entity.destroyImmediately(es);
+    for (self.reserved.items) |entity| entity.destroyImmediate(es);
     self.reserved.deinit(gpa);
     self.destroy.deinit(gpa);
-    self.archetype_changes.comp_bytes.deinit(gpa);
-    self.archetype_changes.args.deinit(gpa);
-    self.archetype_changes.tags.deinit(gpa);
+    self.arch_changes.comp_bytes.deinit(gpa);
+    self.arch_changes.args.deinit(gpa);
+    self.arch_changes.tags.deinit(gpa);
     self.* = undefined;
 }
 
@@ -99,12 +99,12 @@ pub fn clear(self: *@This(), es: *Entities) void {
 /// entity list instead of panicking.
 pub fn clearChecked(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
     self.destroy.clearRetainingCapacity();
-    self.archetype_changes.comp_bytes.clearRetainingCapacity();
-    self.archetype_changes.args.clearRetainingCapacity();
-    self.archetype_changes.tags.clearRetainingCapacity();
-    self.archetype_changes.bound = .none;
+    self.arch_changes.comp_bytes.clearRetainingCapacity();
+    self.arch_changes.args.clearRetainingCapacity();
+    self.arch_changes.tags.clearRetainingCapacity();
+    self.arch_changes.bound = .none;
     while (self.reserved.items.len < self.reserved.capacity) {
-        self.reserved.appendAssumeCapacity(try Entity.reserveImmediatelyChecked(es));
+        self.reserved.appendAssumeCapacity(try Entity.reserveImmediateChecked(es));
     }
 }
 
@@ -118,9 +118,9 @@ pub fn worstCaseUsage(self: @This()) f32 {
         reserved_used / @as(f32, @floatFromInt(self.reserved.capacity));
     return @max(
         usage(self.destroy),
-        usage(self.archetype_changes.comp_bytes),
-        usage(self.archetype_changes.args),
-        usage(self.archetype_changes.tags),
+        usage(self.arch_changes.comp_bytes),
+        usage(self.arch_changes.args),
+        usage(self.arch_changes.tags),
         reserved_usage,
     );
 }
@@ -153,11 +153,11 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
 
     // Execute the destroys first since they might make some of the archetype changes redundant
     for (self.destroy.items) |entity| {
-        entity.destroyImmediately(es);
+        entity.destroyImmediate(es);
     }
 
     // Execute the archetype changes
-    var changes = self.archetype_changes.iterator();
+    var changes = self.arch_changes.iterator();
     while (changes.next()) |change| {
         if (change.entity.exists(es)) {
             var add: CompFlag.Set = .{};
@@ -179,7 +179,7 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
                     }
                 }
 
-                change.entity.changeArchetypeUninitializedImmediatelyChecked(es, .{
+                change.entity.changeArchUninitImmediateChecked(es, .{
                     .add = add,
                     .remove = remove,
                 }) catch |err| switch (err) {
