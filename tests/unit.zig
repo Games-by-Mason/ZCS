@@ -377,6 +377,22 @@ test "command buffer overflow" {
         try expectEqual(null, iter.next());
     }
 
+    // Reserved underflow
+    {
+        var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
+            .tags = 100,
+            .args = 100,
+            .comp_bytes = @sizeOf(RigidBody) * 2 - 1,
+            .destroy = 100,
+            .reserved = 2,
+        });
+        defer cmds.deinit(gpa, &es);
+
+        _ = try Entity.popReservedOrErr(&cmds);
+        _ = try Entity.popReservedOrErr(&cmds);
+        try expectError(error.ZcsReservedEntityUnderflow, Entity.popReservedOrErr(&cmds));
+    }
+
     // Calling some things just to make sure they compile that we don't test elsewhere
     var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
         .tags = 100,
@@ -542,4 +558,80 @@ test "format entity" {
         .generation = .invalid,
     } });
     try std.testing.expectFmt(".none", "{}", Entity.none);
+}
+
+test "change arch immediate" {
+    defer Comp.unregisterAll();
+    var es = try Entities.init(gpa, .{ .max_entities = 100, .comp_bytes = 100 });
+    defer es.deinit(gpa);
+
+    {
+        const e = Entity.reserveImmediate(&es);
+        e.changeArchImmediate(&es, .{
+            .add = &.{ .init(RigidBody, &.{ .mass = 1.0 }), .init(Model, &.{ .vertex_start = 2 }) },
+            .remove = &.{compId(RigidBody)},
+        });
+        try expectEqual(Model{ .vertex_start = 2 }, e.getComp(&es, Model).?.*);
+        try expectEqual(null, e.getComp(&es, RigidBody));
+    }
+
+    {
+        const e = Entity.reserveImmediate(&es);
+        e.changeArchImmediate(&es, .{
+            .add = &.{
+                .init(RigidBody, &.{ .mass = 0.5 }),
+                .init(Model, &.{ .vertex_start = 20 }),
+            },
+            .remove = &.{compId(Tag)},
+        });
+        try expectEqual(RigidBody{ .mass = 0.5 }, e.getComp(&es, RigidBody).?.*);
+        try expectEqual(Model{ .vertex_start = 20 }, e.getComp(&es, Model).?.*);
+    }
+}
+
+test "getRegistered" {
+    defer Comp.unregisterAll();
+    var es = try Entities.init(gpa, .{ .max_entities = 100, .comp_bytes = 100 });
+    defer es.deinit(gpa);
+    const e = Entity.reserveImmediate(&es);
+    e.changeArchImmediate(&es, .{ .remove = &.{ compId(RigidBody), compId(Model) } }); // Register two types
+    _ = compId(i32); // Should not result in a registration
+
+    const registered = zcs.Comp.getRegistered();
+    try std.testing.expectEqual(2, registered.len);
+    for (registered, 0..) |id, i| {
+        if (id == compId(RigidBody)) {
+            try expectEqual(id.*, Comp.Meta{
+                .name = @typeName(RigidBody),
+                .size = @sizeOf(RigidBody),
+                .alignment = @alignOf(RigidBody),
+                .flag = @enumFromInt(i),
+            });
+        } else if (id == compId(Model)) {
+            try expectEqual(id.*, Comp.Meta{
+                .name = @typeName(Model),
+                .size = @sizeOf(Model),
+                .alignment = @alignOf(Model),
+                .flag = @enumFromInt(i),
+            });
+        } else std.debug.panic("unexpected registration: {}", .{id.*});
+    }
+}
+
+test "entity overflow" {
+    defer Comp.unregisterAll();
+    var es = try Entities.init(gpa, .{ .max_entities = 3, .comp_bytes = 4 });
+    defer es.deinit(gpa);
+
+    const e0 = Entity.reserveImmediate(&es);
+    _ = Entity.reserveImmediate(&es);
+    _ = Entity.reserveImmediate(&es);
+    try expectError(error.ZcsEntityOverflow, Entity.reserveImmediateOrErr(&es));
+
+    e0.changeArchImmediate(&es, .{ .add = &.{
+        .init(u32, &0),
+    } });
+    try expectError(error.ZcsEntityOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+        .init(u128, &0),
+    } }));
 }

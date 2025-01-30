@@ -45,7 +45,8 @@ pub fn bytes(self: @This()) [*]const u8 {
     return @ptrCast(self.ptr);
 }
 
-/// Gets the list of registered component types for introspection purposes. Thread safe.
+/// Gets the list of registered component types for introspection purposes. Components are
+/// registered lazily, this list will grow over time. Thread safe.
 pub fn getRegistered() []const Id {
     return types.registered.constSlice();
 }

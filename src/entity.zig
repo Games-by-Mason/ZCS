@@ -362,9 +362,23 @@ pub const Entity = packed struct {
         es: *Entities,
         options: ChangeArchUninitImmediateOptions,
     ) error{ZcsEntityOverflow}!void {
-        // XXX: register?
         invalidateIterators(es);
+
+        // Get the slot
         const slot = es.slots.get(self.key) orelse return;
+
+        // Check if we have enough space
+        var added = options.add.differenceWith(options.remove).iterator();
+        while (added.next()) |flag| {
+            const id = types.registered.get(@intFromEnum(flag));
+            const comp_buffer = es.comps[@intFromEnum(flag)];
+            const comp_offset = self.key.index * id.size;
+            if (id.size > 0 and comp_offset + id.size > comp_buffer.len) {
+                return error.ZcsEntityOverflow;
+            }
+        }
+
+        // Commit the slot and change the archetype
         if (!slot.committed) {
             es.reserved_entities -= 1;
             slot.committed = true;

@@ -28,6 +28,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("tests/index.zig"),
         .target = target,
         .optimize = optimize,
+        .filters = test_filters,
     });
     external_tests_exe.root_module.addImport("zcs", zcs);
     const external_tests = b.addRunArtifact(external_tests_exe);

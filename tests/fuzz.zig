@@ -15,7 +15,11 @@ const Comp = zcs.Comp;
 const typeId = zcs.typeId;
 
 test "fuzz cmdbuf" {
-    try std.testing.fuzz(FuzzCmdBuf.run, .{ .corpus = &.{} });
+    try std.testing.fuzz(FuzzCmdBuf.runNormal, .{ .corpus = &.{} });
+}
+
+test "fuzz cmdbuf saturated" {
+    try std.testing.fuzz(FuzzCmdBuf.runSaturated, .{ .corpus = &.{} });
 }
 
 test "rand cmdbuf" {
@@ -24,7 +28,16 @@ test "rand cmdbuf" {
     const input: []u8 = try gpa.alloc(u8, 8192);
     defer gpa.free(input);
     rand.bytes(input);
-    try FuzzCmdBuf.run(input);
+    try FuzzCmdBuf.runNormal(input);
+}
+
+test "rand cmdbuf saturated" {
+    var xoshiro_256: std.Random.Xoshiro256 = .init(0);
+    const rand = xoshiro_256.random();
+    const input: []u8 = try gpa.alloc(u8, 8192);
+    defer gpa.free(input);
+    rand.bytes(input);
+    try FuzzCmdBuf.runSaturated(input);
 }
 
 const RigidBody = struct {
@@ -130,18 +143,42 @@ const FuzzCmdBuf = struct {
         self.* = undefined;
     }
 
-    fn run(input: []const u8) !void {
+    fn runNormal(input: []const u8) !void {
+        try run(input, false);
+    }
+
+    fn runSaturated(input: []const u8) !void {
+        try run(input, true);
+    }
+
+    fn run(input: []const u8, saturated: bool) !void {
         defer Comp.unregisterAll();
 
         var self: @This() = try init(input);
         defer self.deinit();
 
-        var i = self.parser.index;
+        const saturated_count = if (saturated) self.parser.nextLessThan(u16, 10000) else 0;
+
+        for (0..saturated_count) |_| {
+            const e = Entity.reserveImmediate(&self.es);
+            e.destroyImmediate(&self.es);
+            const Key = @FieldType(Entities, "slots").Key;
+            const Generation = @FieldType(Key, "generation");
+            const invalid = @intFromEnum(Generation.invalid);
+            self.es.slots.generations[e.key.index] = @enumFromInt(invalid - 1);
+            const e2 = Entity.reserveImmediate(&self.es);
+            e2.destroyImmediate(&self.es);
+            try expect(!e.exists(&self.es));
+            try expect(!e2.exists(&self.es));
+            try expect(!e.committed(&self.es));
+            try expect(!e2.committed(&self.es));
+        }
+        try expectEqual(saturated_count, self.es.slots.saturated_generations);
+
         while (!self.parser.isEmpty()) {
             // Modify the entities via a command buffer
             for (0..self.parser.nextLessThan(u16, cmds_capacity)) |_| {
                 if (self.parser.isEmpty()) break;
-                i = self.parser.index;
                 switch (self.parser.next(enum {
                     reserve,
                     destroy,
@@ -165,6 +202,11 @@ const FuzzCmdBuf = struct {
                 try self.modify();
             }
             try self.checkOracle();
+        }
+
+        try expect(self.es.slots.saturated_generations >= saturated_count);
+        for (0..saturated_count) |i| {
+            try expectEqual(.invalid, self.es.slots.generations[i + self.cmds.reserved.capacity]);
         }
     }
 
