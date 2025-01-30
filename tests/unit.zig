@@ -376,6 +376,27 @@ test "command buffer overflow" {
         try expectEqual(null, ops.next());
         try expectEqual(null, iter.next());
     }
+
+    // Calling some things just to make sure they compile that we don't test elsewhere
+    var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
+        .tags = 100,
+        .args = 100,
+        .comp_bytes = @sizeOf(RigidBody) * 2 - 1,
+        .destroy = 100,
+        .reserved = 0,
+    });
+    defer cmds.deinit(gpa, &es);
+    const e = Entity.reserveImmediate(&es);
+    e.changeArchImmediate(&es, .{});
+    try e.addCompValCmdOrErr(&cmds, .init(RigidBody, &.{}));
+    try e.addCompPtrCmdOrErr(&cmds, .init(RigidBody, &.{}));
+    try expect(!e.hasComp(&es, Model));
+    _ = Entity.reserveImmediate(&es);
+    try expect(es.count() > 0);
+    try expect(es.reserved() > 0);
+    es.reset();
+    try expectEqual(0, es.count());
+    try expectEqual(0, es.reserved());
 }
 
 // Verify that command buffers don't overflow before their estimated capacity
@@ -508,4 +529,17 @@ test "command buffer worst case capacity" {
         try expectEqual(1.0, cmds.worstCaseUsage());
         cmds.clear(&es);
     }
+}
+
+// Basically just making sure it compiles
+test "format entity" {
+    try std.testing.expectFmt("0xa:0xb", "{}", Entity{ .key = .{
+        .index = 10,
+        .generation = @enumFromInt(11),
+    } });
+    try std.testing.expectFmt("0xc:invalid", "{}", Entity{ .key = .{
+        .index = 12,
+        .generation = .invalid,
+    } });
+    try std.testing.expectFmt(".none", "{}", Entity.none);
 }

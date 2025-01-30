@@ -153,6 +153,9 @@ pub const Entity = packed struct {
 
     /// Queues a component to be added.
     ///
+    /// Batching add/removes on the same entity in sequence is more efficient than alternating
+    /// between operations on different entities.
+    ///
     /// Will automatically pass the data by pointer if it's comptime known, and larger than pointer
     /// sized.
     ///
@@ -228,6 +231,8 @@ pub const Entity = packed struct {
 
     /// Queues the given component to be removed. Has no effect if the component is not present, or
     /// the entity no longer exists.
+    ///
+    /// See note on `addCompCmd` with regards to performance.
     pub fn remCompCmd(
         self: @This(),
         cmds: *CmdBuf,
@@ -292,8 +297,8 @@ pub const Entity = packed struct {
     }
 
     pub const ChangeArchImmediateOptions = struct {
-        add: []const Comp,
-        remove: []const Comp.Id,
+        add: []const Comp = &.{},
+        remove: []const Comp.Id = &.{},
     };
 
     /// Adds the listed components and then removes the listed component IDs.
@@ -316,30 +321,28 @@ pub const Entity = packed struct {
         // Early out if the entity does not exist, also checks some assertions
         if (!self.exists(es)) return;
 
-        var add_flags: CompFlag.Set = .{};
+        // Build a set of component types to add/remove
+        var add: CompFlag.Set = .{};
         for (changes.add) |comp| {
-            if (comp.unwrap()) |some| {
-                add_flags.insert(some.id);
-            }
+            add.insert(types.register(comp.id));
         }
-        try self.changeArchUninitImmediateOrErr(
-            es,
-            .{
-                .remove = changes.remove,
-                .add = add_flags,
-            },
-        );
 
-        var skip = changes.remove;
-        for (0..changes.add.len) |i| {
-            const comp = changes.add[changes.add.len - i - 1];
-            if (comp.unwrap()) |some| {
-                if (!skip.contains(some.id)) {
-                    skip.insert(some.id);
-                    const src = some.bytes;
-                    const dest = self.getCompFromId(es, some.id).?;
-                    @memcpy(dest, src);
-                }
+        var remove: CompFlag.Set = .{};
+        for (changes.remove) |id| {
+            remove.insert(types.register(id));
+        }
+
+        // Apply the archetype change
+        try self.changeArchUninitImmediateOrErr(es, .{ .add = add, .remove = remove });
+
+        // Initialize the components
+        for (changes.add) |comp| {
+            // Unwrapping the flag is safe because we already registered it above
+            const flag = comp.id.flag.?;
+            if (!remove.contains(flag)) {
+                // Unwrapping the component is safe because we added it above
+                const dest = self.getCompFromId(es, comp.id).?;
+                @memcpy(dest, comp.bytes());
             }
         }
     }
@@ -352,17 +355,6 @@ pub const Entity = packed struct {
         add: CompFlag.Set = .{},
     };
 
-    /// For internal use. Similar to `changeArchImmediate`, but operates on flags and does not
-    /// initialize the components.
-    pub fn changeArchUninitImmediate(
-        self: @This(),
-        es: *Entities,
-        options: ChangeArchUninitImmediateOptions,
-    ) void {
-        self.changeArchUninitImmediateOrErr(es, options) catch |err|
-            @panic(@errorName(err));
-    }
-
     /// For internal use. Similar to `changeArchUninitImmediate`, but returns
     /// `error.ZcsEntityOverflow` on failure instead of panicking.
     pub fn changeArchUninitImmediateOrErr(
@@ -370,6 +362,7 @@ pub const Entity = packed struct {
         es: *Entities,
         options: ChangeArchUninitImmediateOptions,
     ) error{ZcsEntityOverflow}!void {
+        // XXX: register?
         invalidateIterators(es);
         const slot = es.slots.get(self.key) orelse return;
         if (!slot.committed) {

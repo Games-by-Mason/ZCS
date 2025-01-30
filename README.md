@@ -65,12 +65,8 @@ const e = Entity.popReserved(&cmds);
 
 // Schedule an archetype change for the reserved entity, this will assign it storage when the
 // command buffer executes.
-e.changeArchetypeCmd(&es, &cmds, .{
-    .add = .{
-        RigidBody { .mass = 20 },
-        Sprite { .index = .cat },
-    },
-});
+e.addCompCmd(&cmds, RigidBody, .{ .mass = 20 });
+e.addCompCmd(&cmds, Sprite, .{ .index = .cat });
 
 // Execute the command buffer, and then clear it for reuse. This would be done from the main thread.
 cmds.execute(&es);
@@ -90,12 +86,12 @@ Instead, since all work is typically done via command buffers, this use case is 
 
 ```zig
 fn updateTransforms(es: *const Entities, cmds: *const CmdBuf) {
-    for (cmds.destroy) |entity| {
+    for (cmds.destroy.items) |entity| {
         // Process each entity scheduled for destruction
     }
 
-    var iter = cmds.change_archetype.iterator(es);
-    while (iter.next()) |change_archetype| {
+    var iter = cmds.arch_changes.iterator(es);
+    while (iter.next()) |change| {
         // Process each archetype change
     }
 }
@@ -107,9 +103,9 @@ Most ECS implementations use some form of generics to provide a friendly interfa
 
 However, when important types become generic, it infects the whole code base--everything that needs to interact with the ECS also needs to become generic, or at least depend on an instantiation of a generic type. This makes it hard to write modular/library code, and presumably will hurt incremental compile times in the near future.
 
-As such, ZCS leans heavily on generic methods but errs against generic types at API boundaries. For example, while `Entities.init` is a generic method, `Entities` is not a generic type:
+As such, while ZCS will use generic methods where it's convenient, types at API boundaries are typically not generic. For example, `Entities` which stores all the ECS data is not a generic type:
 ```zig
-var es: Entities = try .init(gpa, 1000, &.{ RigidBody, Mesh });
+var es: Entities = try .init(gpa, .{ .max_entities = 10000, .comp_bytes = 8192 });
 defer es.deinit(gpa);
 ```
 

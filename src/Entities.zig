@@ -156,19 +156,6 @@ pub const Iterator = struct {
 
         return null;
     }
-
-    /// Destroys the current entity without invalidating this iterator. May invalidate other
-    /// iterators.
-    pub fn destroyCurrentImmediately(self: *@This(), es: *Entities) void {
-        assert(self.index > 0);
-        const index = self.index - 1;
-        const entity: Entity = .{ .key = .{
-            .index = index,
-            .generation = es.slots.generations[index],
-        } };
-        entity.destroyImmediately(es);
-        self.generation +%= 1;
-    }
 };
 
 /// Similar to `iterator`, but returns a view with pointers to the requested components.
