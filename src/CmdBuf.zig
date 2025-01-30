@@ -213,7 +213,7 @@ pub const Capacity = struct {
     /// Space for at least this many commands will be reserved.
     cmds: usize,
     /// Space for an average of at least this many bytes per component will be reserved.
-    comp_bytes: usize,
+    avg_comp_bytes: usize,
 };
 
 /// Per buffer capacity. Prefer `Capacity`.
@@ -229,7 +229,7 @@ pub const GranularCapacity = struct {
         _ = SubCmd.rename_when_changing_encoding;
 
         // Each command can have at most one component's worth of component data.
-        const comp_bytes_cap = (cap.comp_bytes + Comp.max_align) * cap.cmds;
+        const comp_bytes_cap = (cap.avg_comp_bytes + Comp.max_align) * cap.cmds;
 
         // Each command can have at most two tags
         const tags_cap = cap.cmds * 2;

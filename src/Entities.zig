@@ -34,9 +34,17 @@ live: std.DynamicBitSetUnmanaged,
 iterator_generation: IteratorGeneration = 0,
 reserved_entities: usize = 0,
 
+/// The capacity for `Entities`.
+pub const Capacity = struct {
+    /// The max number of entities.
+    max_entities: u32,
+    /// The number of bytes per component type array.
+    comp_bytes: usize,
+};
+
 /// Initializes the entity storage with the given capacity.
-pub fn init(gpa: Allocator, capacity: usize) Allocator.Error!@This() {
-    var slots = try SlotMap(Slot, .{}).init(gpa, capacity);
+pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
+    var slots = try SlotMap(Slot, .{}).init(gpa, capacity.max_entities);
     errdefer slots.deinit(gpa);
 
     const comps = try gpa.create([CompFlag.max][]align(Comp.max_align) u8);
@@ -45,11 +53,11 @@ pub fn init(gpa: Allocator, capacity: usize) Allocator.Error!@This() {
     comptime var comps_init = 0;
     errdefer for (0..comps_init) |i| gpa.free(comps[i]);
     inline for (comps) |*comp| {
-        comp.* = try gpa.alignedAlloc(u8, Comp.max_align, capacity);
+        comp.* = try gpa.alignedAlloc(u8, Comp.max_align, capacity.comp_bytes);
         comps_init += 1;
     }
 
-    const live = try std.DynamicBitSetUnmanaged.initEmpty(gpa, capacity);
+    const live = try std.DynamicBitSetUnmanaged.initEmpty(gpa, capacity.max_entities);
     errdefer live.deinit(gpa);
 
     return .{

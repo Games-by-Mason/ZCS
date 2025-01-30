@@ -63,7 +63,8 @@ const ExpectedEntity = struct {
 
 /// Tests random command buffers against an oracle.
 const FuzzCmdBuf = struct {
-    const capacity = 100000;
+    const max_entities = 100000;
+    const comp_bytes = 100000;
     const cmds_capacity = 1000;
     const change_cap = 16;
 
@@ -78,27 +79,33 @@ const FuzzCmdBuf = struct {
     found_buf: std.AutoArrayHashMapUnmanaged(Entity, void),
 
     fn init(input: []const u8) !@This() {
-        var es: Entities = try .init(gpa, capacity);
+        var es: Entities = try .init(gpa, .{
+            .max_entities = max_entities,
+            .comp_bytes = comp_bytes,
+        });
         errdefer es.deinit(gpa);
 
-        var cmds: CmdBuf = try .init(gpa, &es, .{ .cmds = cmds_capacity, .comp_bytes = @sizeOf(RigidBody) });
+        var cmds: CmdBuf = try .init(gpa, &es, .{
+            .cmds = cmds_capacity,
+            .avg_comp_bytes = @sizeOf(RigidBody),
+        });
         errdefer cmds.deinit(gpa, &es);
 
         var reserved: std.AutoArrayHashMapUnmanaged(Entity, void) = .{};
         errdefer reserved.deinit(gpa);
-        try reserved.ensureTotalCapacity(gpa, capacity);
+        try reserved.ensureTotalCapacity(gpa, max_entities);
 
         var committed: std.AutoArrayHashMapUnmanaged(Entity, ExpectedEntity) = .{};
         errdefer committed.deinit(gpa);
-        try committed.ensureTotalCapacity(gpa, capacity);
+        try committed.ensureTotalCapacity(gpa, max_entities);
 
         var destroyed: std.AutoArrayHashMapUnmanaged(Entity, void) = .{};
         errdefer destroyed.deinit(gpa);
-        try destroyed.ensureTotalCapacity(gpa, capacity);
+        try destroyed.ensureTotalCapacity(gpa, max_entities);
 
         var found_buf: std.AutoArrayHashMapUnmanaged(Entity, void) = .{};
         errdefer found_buf.deinit(gpa);
-        try found_buf.ensureTotalCapacity(gpa, capacity);
+        try found_buf.ensureTotalCapacity(gpa, max_entities);
 
         const parser: FuzzParser = .init(input);
 
@@ -465,15 +472,15 @@ const FuzzCmdBuf = struct {
                     commit,
                 })) {
                     .rb => {
-                        entity.removeCompCmd(&self.cmds, RigidBody);
+                        entity.remCompCmd(&self.cmds, RigidBody);
                         if (expected) |e| e.rb = null;
                     },
                     .model => {
-                        entity.removeCompCmd(&self.cmds, Model);
+                        entity.remCompCmd(&self.cmds, Model);
                         if (expected) |e| e.model = null;
                     },
                     .tag => {
-                        entity.removeCompCmd(&self.cmds, Tag);
+                        entity.remCompCmd(&self.cmds, Tag);
                         if (expected) |e| e.tag = null;
                     },
                     .commit => {

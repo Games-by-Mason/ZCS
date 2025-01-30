@@ -228,38 +228,38 @@ pub const Entity = packed struct {
 
     /// Queues the given component to be removed. Has no effect if the component is not present, or
     /// the entity no longer exists.
-    pub fn removeCompCmd(
+    pub fn remCompCmd(
         self: @This(),
         cmds: *CmdBuf,
         T: type,
     ) void {
-        self.removeCompCmdOrErr(cmds, T) catch |err|
+        self.remCompCmdOrErr(cmds, T) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `removeCompCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
+    /// Similar to `remCompCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
-    pub fn removeCompCmdOrErr(
+    pub fn remCompCmdOrErr(
         self: @This(),
         cmds: *CmdBuf,
         T: type,
     ) error{ZcsCmdBufOverflow}!void {
-        try self.removeCompIdCmdOrErr(cmds, compId(T));
+        try self.remCompIdCmdOrErr(cmds, compId(T));
     }
 
-    /// Similar to `removeCompCmd`, but doesn't require compile time types.
-    pub fn removeCompIdCmd(
+    /// Similar to `remCompCmd`, but doesn't require compile time types.
+    pub fn remCompIdCmd(
         self: @This(),
         cmds: *CmdBuf,
         id: Comp.Id,
     ) void {
-        self.removeCompIdCmdOrErr(cmds, id) catch |err|
+        self.remCompIdCmdOrErr(cmds, id) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `removeCompCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
+    /// Similar to `remCompCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
-    pub fn removeCompIdCmdOrErr(
+    pub fn remCompIdCmdOrErr(
         self: @This(),
         cmds: *CmdBuf,
         id: Comp.Id,

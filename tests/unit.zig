@@ -75,7 +75,7 @@ test "command buffer some test decode" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es = try Entities.init(gpa, 100);
+    var es = try Entities.init(gpa, .{ .max_entities = 100, .comp_bytes = 100 });
     defer es.deinit(gpa);
 
     // Check some entity equality stuff not tested elsewhere, OrErr more extensively in slot map
@@ -84,7 +84,7 @@ test "command buffer some test decode" {
 
     var capacity: CmdBuf.GranularCapacity = .init(.{
         .cmds = 4,
-        .comp_bytes = @sizeOf(RigidBody),
+        .avg_comp_bytes = @sizeOf(RigidBody),
     });
     capacity.reserved = 0;
     var cmds = try CmdBuf.initGranularCapacity(gpa, &es, capacity);
@@ -132,10 +132,10 @@ test "command buffer some test decode" {
     try expect(!e1.eql(e2));
     try expect(!e1.eql(.none));
 
-    e0.removeCompCmd(&cmds, RigidBody);
-    e1.removeCompCmd(&cmds, RigidBody);
+    e0.remCompCmd(&cmds, RigidBody);
+    e1.remCompCmd(&cmds, RigidBody);
     e2.addCompCmd(&cmds, Model, model);
-    e2.removeCompCmd(&cmds, RigidBody);
+    e2.remCompCmd(&cmds, RigidBody);
     cmds.execute(&es);
     cmds.clear(&es);
 
@@ -173,10 +173,10 @@ test "command buffer interning" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es = try Entities.init(gpa, 100);
+    var es = try Entities.init(gpa, .{ .max_entities = 100, .comp_bytes = 100 });
     defer es.deinit(gpa);
 
-    var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .comp_bytes = @sizeOf(RigidBody) });
+    var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .avg_comp_bytes = @sizeOf(RigidBody) });
     defer cmds.deinit(gpa, &es);
 
     const rb_interned: RigidBody = .{
@@ -286,7 +286,7 @@ test "command buffer overflow" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es = try Entities.init(gpa, 100);
+    var es = try Entities.init(gpa, .{ .max_entities = 100, .comp_bytes = 100 });
     defer es.deinit(gpa);
 
     // Tag/destroy overflow
@@ -384,10 +384,13 @@ test "command buffer worst case capacity" {
 
     const cb_capacity = 600;
 
-    var es = try Entities.init(gpa, cb_capacity * 10);
+    var es = try Entities.init(gpa, .{
+        .max_entities = cb_capacity * 10,
+        .comp_bytes = cb_capacity * 10,
+    });
     defer es.deinit(gpa);
 
-    var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = cb_capacity, .comp_bytes = 22 });
+    var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = cb_capacity, .avg_comp_bytes = 22 });
     defer cmds.deinit(gpa, &es);
 
     // Change archetype
@@ -447,24 +450,24 @@ test "command buffer worst case capacity" {
 
         // Remove
         for (0..cb_capacity / 12) |_| {
-            e0.removeCompCmd(&cmds, u0);
-            e1.removeCompCmd(&cmds, u8);
-            e0.removeCompCmd(&cmds, u16);
-            e1.removeCompCmd(&cmds, u32);
-            e0.removeCompCmd(&cmds, u64);
-            e1.removeCompCmd(&cmds, u128);
+            e0.remCompCmd(&cmds, u0);
+            e1.remCompCmd(&cmds, u8);
+            e0.remCompCmd(&cmds, u16);
+            e1.remCompCmd(&cmds, u32);
+            e0.remCompCmd(&cmds, u64);
+            e1.remCompCmd(&cmds, u128);
         }
 
         try expect(cmds.worstCaseUsage() < 1.0);
         cmds.clear(&es);
 
         for (0..cb_capacity / 6) |_| {
-            e0.removeCompCmd(&cmds, u0);
-            e1.removeCompCmd(&cmds, u8);
-            e0.removeCompCmd(&cmds, u16);
-            e1.removeCompCmd(&cmds, u32);
-            e0.removeCompCmd(&cmds, u64);
-            e1.removeCompCmd(&cmds, u128);
+            e0.remCompCmd(&cmds, u0);
+            e1.remCompCmd(&cmds, u8);
+            e0.remCompCmd(&cmds, u16);
+            e1.remCompCmd(&cmds, u32);
+            e0.remCompCmd(&cmds, u64);
+            e1.remCompCmd(&cmds, u128);
         }
 
         try expectEqual(1.0, cmds.worstCaseUsage());
