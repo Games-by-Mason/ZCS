@@ -64,7 +64,7 @@ pub fn initGranularCapacity(
     var reserved: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacity.reserved);
     errdefer reserved.deinit(gpa);
     for (0..reserved.capacity) |_| {
-        reserved.appendAssumeCapacity(try Entity.reserveImmediateChecked(es));
+        reserved.appendAssumeCapacity(try Entity.reserveImmediateOrErr(es));
     }
 
     return .{
@@ -91,20 +91,20 @@ pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
 
 /// Clears the command buffer for reuse. Refills the reserved entity list to capacity.
 pub fn clear(self: *@This(), es: *Entities) void {
-    self.clearChecked(es) catch |err|
+    self.clearOrErr(es) catch |err|
         @panic(@errorName(err));
 }
 
 /// Similar to `clear`, but returns `error.ZcsEntityOverflow` when failing to refill the reserved
 /// entity list instead of panicking.
-pub fn clearChecked(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
+pub fn clearOrErr(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
     self.destroy.clearRetainingCapacity();
     self.arch_changes.comp_bytes.clearRetainingCapacity();
     self.arch_changes.args.clearRetainingCapacity();
     self.arch_changes.tags.clearRetainingCapacity();
     self.arch_changes.bound = .none;
     while (self.reserved.items.len < self.reserved.capacity) {
-        self.reserved.appendAssumeCapacity(try Entity.reserveImmediateChecked(es));
+        self.reserved.appendAssumeCapacity(try Entity.reserveImmediateOrErr(es));
     }
 }
 
@@ -133,7 +133,7 @@ fn usage(list: anytype) f32 {
 
 /// Executes the command buffer.
 pub fn execute(self: *@This(), es: *Entities) void {
-    self.executeChecked(es) catch |err|
+    self.executeOrErr(es) catch |err|
         @panic(@errorName(err));
 }
 
@@ -141,7 +141,7 @@ pub fn execute(self: *@This(), es: *Entities) void {
 ///
 /// On overflow, all work that doesn't trigger an overflow is still completed regardless of order
 /// relative to the overflowing work.
-pub fn executeChecked(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
+pub fn executeOrErr(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
     if (!self.executeOrOverflow(es)) return error.ZcsEntityOverflow;
 }
 
@@ -179,7 +179,7 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
                     }
                 }
 
-                change.entity.changeArchUninitImmediateChecked(es, .{
+                change.entity.changeArchUninitImmediateOrErr(es, .{
                     .add = add,
                     .remove = remove,
                 }) catch |err| switch (err) {

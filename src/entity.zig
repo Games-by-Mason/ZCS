@@ -39,29 +39,29 @@ pub const Entity = packed struct {
     ///
     /// You can commit a reserved entity explicitly with `commitCmd`, but this isn't usually
     /// necessary as adding or attempting to remove a component implicitly commits the entity.
-    pub fn nextReserved(cmds: *CmdBuf) Entity {
-        return nextReservedChecked(cmds) catch |err|
+    pub fn popReserved(cmds: *CmdBuf) Entity {
+        return popReservedOrErr(cmds) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `nextReserved`, but returns `error.ZcsReservedEntityUnderflow` if there are no
+    /// Similar to `popReserved`, but returns `error.ZcsReservedEntityUnderflow` if there are no
     /// more reserved entities instead of panicking.
-    pub fn nextReservedChecked(cmds: *CmdBuf) error{ZcsReservedEntityUnderflow}!Entity {
+    pub fn popReservedOrErr(cmds: *CmdBuf) error{ZcsReservedEntityUnderflow}!Entity {
         return cmds.reserved.popOrNull() orelse error.ZcsReservedEntityUnderflow;
     }
 
-    /// Similar to `nextReserved`, but reserves a new entity instead of popping one from a command
-    /// buffers reserve. Prefer `nextReserved`.
+    /// Similar to `popReserved`, but reserves a new entity instead of popping one from a command
+    /// buffers reserve. Prefer `popReserved`.
     ///
     /// This does not invalidate iterators, but it's not thread safe.
     pub fn reserveImmediate(es: *Entities) Entity {
-        return reserveImmediateChecked(es) catch |err|
+        return reserveImmediateOrErr(es) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `reserveImmediate`, but returns `error.ZcsEntityOverflow` on failure instead of
     /// panicking.
-    pub fn reserveImmediateChecked(es: *Entities) error{ZcsEntityOverflow}!Entity {
+    pub fn reserveImmediateOrErr(es: *Entities) error{ZcsEntityOverflow}!Entity {
         const key = es.slots.put(.{
             .arch = .{},
             .committed = false,
@@ -77,13 +77,13 @@ pub const Entity = packed struct {
     ///
     /// Destroying an entity that no longer exists has no effect.
     pub fn destroyCmd(self: @This(), cmds: *CmdBuf) void {
-        self.destroyCmdChecked(cmds) catch |err|
+        self.destroyCmdOrErr(cmds) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `destroyCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
-    pub fn destroyCmdChecked(self: @This(), cmds: *CmdBuf) error{ZcsCmdBufOverflow}!void {
+    pub fn destroyCmdOrErr(self: @This(), cmds: *CmdBuf) error{ZcsCmdBufOverflow}!void {
         // Check capacity
         if (cmds.destroy.items.len >= cmds.destroy.capacity) {
             return error.ZcsCmdBufOverflow;
@@ -158,13 +158,13 @@ pub const Entity = packed struct {
     ///
     /// Adding components to an entity that no longer exists has no effect.
     pub inline fn addCompCmd(self: @This(), cmds: *CmdBuf, T: type, comp: T) void {
-        self.addCompCmdChecked(cmds, T, comp) catch |err|
+        self.addCompCmdOrErr(cmds, T, comp) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `addCompCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
-    pub inline fn addCompCmdChecked(
+    pub inline fn addCompCmdOrErr(
         self: @This(),
         cmds: *CmdBuf,
         T: type,
@@ -174,22 +174,22 @@ pub const Entity = packed struct {
             const Interned = struct {
                 const value = comp;
             };
-            try self.addCompPtrCmdChecked(cmds, .init(T, comptime &Interned.value));
+            try self.addCompPtrCmdOrErr(cmds, .init(T, comptime &Interned.value));
         } else {
-            try self.addCompValCmdChecked(cmds, .init(T, &comp));
+            try self.addCompValCmdOrErr(cmds, .init(T, &comp));
         }
     }
 
     /// Similar to `addCompCmd`, but doesn't require compile time types and forces the component to
     /// be copied by value. Prefer `addCompCmd`.
     pub fn addCompValCmd(self: @This(), cmds: *CmdBuf, comp: Comp) void {
-        self.addCompValCmdChecked(cmds, comp) catch |err|
+        self.addCompValCmdOrErr(cmds, comp) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `addCompValCmd`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
     /// panicking.
-    pub fn addCompValCmdChecked(
+    pub fn addCompValCmdOrErr(
         self: @This(),
         cmds: *CmdBuf,
         comp: Comp,
@@ -206,13 +206,13 @@ pub const Entity = packed struct {
     /// Similar to `addCompCmd`, but doesn't require compile time types and forces the component to
     /// be copied by pointer. Prefer `addCompCmd`.
     pub fn addCompPtrCmd(self: @This(), cmds: *CmdBuf, comp: Comp) void {
-        self.addCompPtrCmdChecked(cmds, comp) catch |err|
+        self.addCompPtrCmdOrErr(cmds, comp) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `addCompPtrCmd`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
     /// panicking.
-    pub fn addCompPtrCmdChecked(
+    pub fn addCompPtrCmdOrErr(
         self: @This(),
         cmds: *CmdBuf,
         comp: Comp,
@@ -233,18 +233,18 @@ pub const Entity = packed struct {
         cmds: *CmdBuf,
         T: type,
     ) void {
-        self.removeCompCmdChecked(cmds, T) catch |err|
+        self.removeCompCmdOrErr(cmds, T) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `removeCompCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
-    pub fn removeCompCmdChecked(
+    pub fn removeCompCmdOrErr(
         self: @This(),
         cmds: *CmdBuf,
         T: type,
     ) error{ZcsCmdBufOverflow}!void {
-        try self.removeCompIdCmdChecked(cmds, compId(T));
+        try self.removeCompIdCmdOrErr(cmds, compId(T));
     }
 
     /// Similar to `removeCompCmd`, but doesn't require compile time types.
@@ -253,13 +253,13 @@ pub const Entity = packed struct {
         cmds: *CmdBuf,
         id: Comp.Id,
     ) void {
-        self.removeCompIdCmdChecked(cmds, id) catch |err|
+        self.removeCompIdCmdOrErr(cmds, id) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `removeCompCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
-    pub fn removeCompIdCmdChecked(
+    pub fn removeCompIdCmdOrErr(
         self: @This(),
         cmds: *CmdBuf,
         id: Comp.Id,
@@ -276,13 +276,13 @@ pub const Entity = packed struct {
     /// Queues the entity to be committed. Has no effect if it has already been committed, called
     /// implicitly on add/remove. In practice only necessary when creating an empty entity.
     pub fn commitCmd(self: @This(), cmds: *CmdBuf) void {
-        self.commitCmdChecked(cmds) catch |err|
+        self.commitCmdOrErr(cmds) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `commitCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
-    pub fn commitCmdChecked(self: @This(), cmds: *CmdBuf) error{ZcsCmdBufOverflow}!void {
+    pub fn commitCmdOrErr(self: @This(), cmds: *CmdBuf) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cmds.*;
         errdefer cmds.* = restore;
@@ -302,13 +302,13 @@ pub const Entity = packed struct {
         es: *Entities,
         changes: ChangeArchImmediateOptions,
     ) void {
-        self.changeArchImmediateChecked(es, changes) catch |err|
+        self.changeArchImmediateOrErr(es, changes) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `changeArchImmediate`, but returns `error.ZcsEntityOverflow` on failure instead
     /// of panicking.
-    pub fn changeArchImmediateChecked(
+    pub fn changeArchImmediateOrErr(
         self: @This(),
         es: *Entities,
         changes: ChangeArchImmediateOptions,
@@ -322,7 +322,7 @@ pub const Entity = packed struct {
                 add_flags.insert(some.id);
             }
         }
-        try self.changeArchUninitImmediateChecked(
+        try self.changeArchUninitImmediateOrErr(
             es,
             .{
                 .remove = changes.remove,
@@ -359,13 +359,13 @@ pub const Entity = packed struct {
         es: *Entities,
         options: ChangeArchUninitImmediateOptions,
     ) void {
-        self.changeArchUninitImmediateChecked(es, options) catch |err|
+        self.changeArchUninitImmediateOrErr(es, options) catch |err|
             @panic(@errorName(err));
     }
 
     /// For internal use. Similar to `changeArchUninitImmediate`, but returns
     /// `error.ZcsEntityOverflow` on failure instead of panicking.
-    pub fn changeArchUninitImmediateChecked(
+    pub fn changeArchUninitImmediateOrErr(
         self: @This(),
         es: *Entities,
         options: ChangeArchUninitImmediateOptions,

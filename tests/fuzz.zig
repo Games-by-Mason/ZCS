@@ -397,7 +397,7 @@ const FuzzCmdBuf = struct {
         }
 
         // Reserve an entity and update the oracle
-        const entity = Entity.nextReserved(&self.cmds);
+        const entity = Entity.popReserved(&self.cmds);
         try self.reserved.putNoClobber(gpa, entity, {});
     }
 

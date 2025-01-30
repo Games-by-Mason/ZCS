@@ -78,7 +78,7 @@ test "command buffer some test decode" {
     var es = try Entities.init(gpa, 100);
     defer es.deinit(gpa);
 
-    // Check some entity equality stuff not tested elsewhere, checked more extensively in slot map
+    // Check some entity equality stuff not tested elsewhere, OrErr more extensively in slot map
     try expect(Entity.none.eql(.none));
     try expect(!Entity.none.exists(&es));
 
@@ -302,11 +302,11 @@ test "command buffer overflow" {
 
         try expectError(
             error.ZcsCmdBufOverflow,
-            Entity.reserveImmediate(&es).commitCmdChecked(&cmds),
+            Entity.reserveImmediate(&es).commitCmdOrErr(&cmds),
         );
         try expectError(
             error.ZcsCmdBufOverflow,
-            Entity.reserveImmediate(&es).destroyCmdChecked(&cmds),
+            Entity.reserveImmediate(&es).destroyCmdOrErr(&cmds),
         );
 
         try expectEqual(1.0, cmds.worstCaseUsage());
@@ -328,7 +328,7 @@ test "command buffer overflow" {
 
         try expectError(
             error.ZcsCmdBufOverflow,
-            Entity.reserveImmediate(&es).commitCmdChecked(&cmds),
+            Entity.reserveImmediate(&es).commitCmdOrErr(&cmds),
         );
         const e = Entity.reserveImmediate(&es);
         e.destroyCmd(&cmds);
@@ -357,7 +357,7 @@ test "command buffer overflow" {
 
         _ = Entity.reserveImmediate(&es).addCompCmd(&cmds, RigidBody, rb);
         e.destroyCmd(&cmds);
-        try expectError(error.ZcsCmdBufOverflow, e.addCompCmdChecked(
+        try expectError(error.ZcsCmdBufOverflow, e.addCompCmdOrErr(
             &cmds,
             RigidBody,
             RigidBody.random(rand),
@@ -478,7 +478,7 @@ test "command buffer worst case capacity" {
                 .index = @intCast(i),
                 .generation = @enumFromInt(0),
             } };
-            try e.destroyCmdChecked(&cmds);
+            try e.destroyCmdOrErr(&cmds);
         }
 
         try expect(cmds.worstCaseUsage() < 1.0);
@@ -489,7 +489,7 @@ test "command buffer worst case capacity" {
                 .index = @intCast(i),
                 .generation = @enumFromInt(0),
             } };
-            try e.destroyCmdChecked(&cmds);
+            try e.destroyCmdOrErr(&cmds);
         }
 
         try expectEqual(1.0, cmds.worstCaseUsage());
@@ -499,7 +499,7 @@ test "command buffer worst case capacity" {
     // Destroy
     {
         for (0..cb_capacity) |_| {
-            _ = try Entity.nextReservedChecked(&cmds);
+            _ = try Entity.popReservedOrErr(&cmds);
         }
 
         try expectEqual(1.0, cmds.worstCaseUsage());

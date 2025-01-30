@@ -61,7 +61,7 @@ defer cmds.deinit(gpa, &es);
 
 // Get the next reserved entity. By reserving entities up front, the command buffer allows you to
 // create entities on background threads safely.
-const e = Entity.nextReserved(&cmds);
+const e = Entity.popReserved(&cmds);
 
 // Schedule an archetype change for the reserved entity, this will assign it storage when the
 // command buffer executes.
