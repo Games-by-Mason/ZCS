@@ -542,7 +542,7 @@ const FuzzCmdBuf = struct {
             switch (i % T.interned.len) {
                 inline 0...(T.interned.len - 1) => |n| {
                     const val = T.interned[n];
-                    e.addCompPtrCmd(&self.cmds, T, val);
+                    e.addCompPtrCmd(&self.cmds, .init(T, &val));
                     return val;
                 },
                 else => unreachable,

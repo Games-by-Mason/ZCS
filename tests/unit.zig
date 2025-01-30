@@ -202,15 +202,15 @@ test "command buffer interning" {
     e1.addCompCmd(&cmds, RigidBody, rb_value);
 
     // Explicit by value
-    e0.addCompValCmd(&cmds, Model, model_value);
-    e0.addCompValCmd(&cmds, RigidBody, rb_interned);
+    e0.addCompValCmd(&cmds, .init(Model, &model_value));
+    e0.addCompValCmd(&cmds, .init(RigidBody, &rb_interned));
 
-    e1.addCompValCmd(&cmds, Model, model_interned);
-    e1.addCompValCmd(&cmds, RigidBody, rb_value);
+    e1.addCompValCmd(&cmds, .init(Model, &model_interned));
+    e1.addCompValCmd(&cmds, .init(RigidBody, &rb_value));
 
     // Explicit interning
-    e0.addCompPtrCmd(&cmds, RigidBody, rb_interned);
-    e0.addCompPtrCmd(&cmds, Model, model_interned);
+    e0.addCompPtrCmd(&cmds, .init(RigidBody, &rb_interned));
+    e0.addCompPtrCmd(&cmds, .init(Model, &model_interned));
 
     // Test the results
     var iter = cmds.archetype_changes.iterator();
@@ -397,24 +397,24 @@ test "command buffer worst case capacity" {
         const e1 = Entity.reserveImmediately(&es);
 
         for (0..cb_capacity / 12) |_| {
-            e0.addCompValCmd(&cmds, u0, 0);
-            e1.addCompValCmd(&cmds, u8, 0);
-            e0.addCompValCmd(&cmds, u16, 0);
-            e1.addCompValCmd(&cmds, u32, 0);
-            e0.addCompValCmd(&cmds, u64, 0);
-            e1.addCompValCmd(&cmds, u128, 0);
+            e0.addCompValCmd(&cmds, .init(u0, &0));
+            e1.addCompValCmd(&cmds, .init(u8, &0));
+            e0.addCompValCmd(&cmds, .init(u16, &0));
+            e1.addCompValCmd(&cmds, .init(u32, &0));
+            e0.addCompValCmd(&cmds, .init(u64, &0));
+            e1.addCompValCmd(&cmds, .init(u128, &0));
         }
 
         try expect(cmds.worstCaseUsage() < 1.0);
         cmds.clear(&es);
 
         for (0..cb_capacity / 6) |_| {
-            e0.addCompValCmd(&cmds, u0, 0);
-            e1.addCompValCmd(&cmds, u8, 0);
-            e0.addCompValCmd(&cmds, u16, 0);
-            e1.addCompValCmd(&cmds, u32, 0);
-            e0.addCompValCmd(&cmds, u64, 0);
-            e1.addCompValCmd(&cmds, u128, 0);
+            e0.addCompValCmd(&cmds, .init(u0, &0));
+            e1.addCompValCmd(&cmds, .init(u8, &0));
+            e0.addCompValCmd(&cmds, .init(u16, &0));
+            e1.addCompValCmd(&cmds, .init(u32, &0));
+            e0.addCompValCmd(&cmds, .init(u64, &0));
+            e1.addCompValCmd(&cmds, .init(u128, &0));
         }
 
         try expectEqual(1.0, cmds.worstCaseUsage());
@@ -422,24 +422,24 @@ test "command buffer worst case capacity" {
 
         // Add ptr
         for (0..cb_capacity / 12) |_| {
-            e0.addCompPtrCmd(&cmds, u0, 0);
-            e1.addCompPtrCmd(&cmds, u8, 0);
-            e0.addCompPtrCmd(&cmds, u16, 0);
-            e1.addCompPtrCmd(&cmds, u32, 0);
-            e0.addCompPtrCmd(&cmds, u64, 0);
-            e1.addCompPtrCmd(&cmds, u128, 0);
+            e0.addCompPtrCmd(&cmds, .init(u0, &0));
+            e1.addCompPtrCmd(&cmds, .init(u8, &0));
+            e0.addCompPtrCmd(&cmds, .init(u16, &0));
+            e1.addCompPtrCmd(&cmds, .init(u32, &0));
+            e0.addCompPtrCmd(&cmds, .init(u64, &0));
+            e1.addCompPtrCmd(&cmds, .init(u128, &0));
         }
 
         try expect(cmds.worstCaseUsage() < 1.0);
         cmds.clear(&es);
 
         for (0..cb_capacity / 6) |_| {
-            e0.addCompPtrCmd(&cmds, u0, 0);
-            e1.addCompPtrCmd(&cmds, u8, 0);
-            e0.addCompPtrCmd(&cmds, u16, 0);
-            e1.addCompPtrCmd(&cmds, u32, 0);
-            e0.addCompPtrCmd(&cmds, u64, 0);
-            e1.addCompPtrCmd(&cmds, u128, 0);
+            e0.addCompPtrCmd(&cmds, .init(u0, &0));
+            e1.addCompPtrCmd(&cmds, .init(u8, &0));
+            e0.addCompPtrCmd(&cmds, .init(u16, &0));
+            e1.addCompPtrCmd(&cmds, .init(u32, &0));
+            e0.addCompPtrCmd(&cmds, .init(u64, &0));
+            e1.addCompPtrCmd(&cmds, .init(u128, &0));
         }
 
         try expectEqual(1.0, cmds.worstCaseUsage());

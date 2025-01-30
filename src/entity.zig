@@ -152,7 +152,7 @@ pub const Entity = packed struct {
 
     /// Queues a component to be added.
     ///
-    /// Will automatically pass the data by pointer if it's comptime known and larger than pointer
+    /// Will automatically pass the data by pointer if it's comptime known, and larger than pointer
     /// sized.
     ///
     /// Adding components to an entity that no longer exists has no effect.
@@ -170,25 +170,28 @@ pub const Entity = packed struct {
         comp: T,
     ) error{ZcsCmdBufOverflow}!void {
         if (@sizeOf(T) > @sizeOf(*T) and isComptimeKnown(comp)) {
-            try self.addCompPtrCmdChecked(cmds, T, comp);
+            const Interned = struct {
+                const value = comp;
+            };
+            try self.addCompPtrCmdChecked(cmds, .init(T, comptime &Interned.value));
         } else {
-            try self.addCompValCmdChecked(cmds, T, comp);
+            try self.addCompValCmdChecked(cmds, .init(T, &comp));
         }
     }
 
-    /// Similar to `addCompCmd` but forces the data to be passed by value.
-    pub fn addCompValCmd(self: @This(), cmds: *CmdBuf, T: type, comp: T) void {
-        self.addCompValCmdChecked(cmds, T, comp) catch |err|
+    /// Similar to `addCompCmd`, but doesn't require compile time types and forces the component to
+    /// be copied by value. Prefer `addCompCmd`.
+    pub fn addCompValCmd(self: @This(), cmds: *CmdBuf, comp: Comp) void {
+        self.addCompValCmdChecked(cmds, comp) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `addCompValCmd`, but returns `error.ZcsCmdBufOverflow` on failure
-    /// instead of panicking.
+    /// Similar to `addCompValCmd`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
+    /// panicking.
     pub fn addCompValCmdChecked(
         self: @This(),
         cmds: *CmdBuf,
-        T: type,
-        comp: T,
+        comp: Comp,
     ) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cmds.*;
@@ -196,34 +199,30 @@ pub const Entity = packed struct {
 
         // Issue the subcommands
         try SubCmd.encode(&cmds.archetype_changes, .{ .bind_entity = self });
-        try SubCmd.encode(&cmds.archetype_changes, .{ .add_comp_val = .init(T, &comp) });
+        try SubCmd.encode(&cmds.archetype_changes, .{ .add_comp_val = comp });
     }
 
-    /// Similar to `addCompCmd` but forces the data to be passed by pointer. Only available for
-    /// comptime known arguments.
-    pub fn addCompPtrCmd(self: @This(), cmds: *CmdBuf, T: type, comptime comp: T) void {
-        self.addCompPtrCmdChecked(cmds, T, comp) catch |err|
+    /// Similar to `addCompCmd`, but doesn't require compile time types and forces the component to
+    /// be copied by pointer. Prefer `addCompCmd`.
+    pub fn addCompPtrCmd(self: @This(), cmds: *CmdBuf, comp: Comp) void {
+        self.addCompPtrCmdChecked(cmds, comp) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `addCompPtrCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead
-    /// of panicking.
+    /// Similar to `addCompPtrCmd`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
+    /// panicking.
     pub fn addCompPtrCmdChecked(
         self: @This(),
         cmds: *CmdBuf,
-        T: type,
-        comptime comp: T,
+        comp: Comp,
     ) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cmds.*;
         errdefer cmds.* = restore;
 
         // Issue the subcommands
-        const Interned = struct {
-            const value = comp;
-        };
         try SubCmd.encode(&cmds.archetype_changes, .{ .bind_entity = self });
-        try SubCmd.encode(&cmds.archetype_changes, .{ .add_comp_ptr = .init(T, &Interned.value) });
+        try SubCmd.encode(&cmds.archetype_changes, .{ .add_comp_ptr = comp });
     }
 
     /// Queues the given component to be removed. Has no effect if the component is not present, or
