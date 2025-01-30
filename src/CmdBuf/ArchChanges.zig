@@ -24,10 +24,14 @@ pub const Cmd = struct {
     /// The bound entity.
     entity: Entity,
     decoder: SubCmd.Decoder,
+    parent: *Iterator,
 
     /// An iterator over the operations that make up this archetype change.
     pub fn iterator(self: @This()) OpIterator {
-        return .{ .decoder = self.decoder };
+        return .{
+            .decoder = self.decoder,
+            .parent = self.parent,
+        };
     }
 };
 
@@ -43,32 +47,17 @@ pub const Iterator = struct {
 
     /// Returns the next archetype changed command, or `null` if there is none.
     pub fn next(self: *@This()) ?Cmd {
-        while (self.decoder.next()) |cmd| {
-            switch (cmd) {
-                .bind_entity => |entity| {
-                    const op_decoder = self.decoder;
-                    while (self.decoder.peekTag()) |subcmd| {
-                        switch (subcmd) {
-                            .bind_entity => break,
-                            .add_comp_val => _ = self.decoder.next().?.add_comp_val,
-                            .add_comp_ptr => _ = self.decoder.next().?.add_comp_ptr,
-                            .remove_comp => _ = self.decoder.next().?.remove_comp,
-                        }
-                    }
-                    return .{
-                        .entity = entity,
-                        .decoder = op_decoder,
-                    };
+        // We just return bind operations here, `Cmd` handles the add/remove commands. If the first
+        // bind is `.none` it's elided, and we end up skipping the initial add/removes, but that's
+        // fine since adding/removing to `.none` is a noop anyway.
+        while (self.decoder.next()) |subcmd| {
+            switch (subcmd) {
+                .bind_entity => |entity| return .{
+                    .entity = entity,
+                    .decoder = self.decoder,
+                    .parent = self,
                 },
-                .add_comp_val, .add_comp_ptr, .remove_comp => {
-                    // Add/remove commands with no entity bound. This can occur if the first entity
-                    // we bind is `.none`. Since it is none, and the default cached binding is none,
-                    // the binding is omitted.
-                    //
-                    // Adding/removing components from entities that don't exist, such as `.none`,
-                    // is a noop, so we just skip these commands.
-                    continue;
-                },
+                else => {},
             }
         }
 
@@ -79,16 +68,27 @@ pub const Iterator = struct {
 /// An iterator over an archetype change command's operations.
 pub const OpIterator = struct {
     decoder: SubCmd.Decoder,
+    parent: *Iterator,
 
     /// Returns the next operation, or `null` if there are none.
     pub fn next(self: *@This()) ?Op {
         while (self.decoder.peekTag()) |tag| {
-            return switch (tag) {
+            // Get the next operation
+            const op: Op = switch (tag) {
                 .add_comp_val => .{ .add = self.decoder.next().?.add_comp_val },
                 .add_comp_ptr => .{ .add = self.decoder.next().?.add_comp_ptr },
                 .remove_comp => .{ .remove = self.decoder.next().?.remove_comp },
                 .bind_entity => break,
             };
+
+            // If we're ahead of the parent iterator, fast forward it. This isn't necessary but saves
+            // us from parsing the same subcommands multiple times.
+            if (self.decoder.tag_index > self.parent.decoder.tag_index) {
+                self.parent.decoder = self.decoder;
+            }
+
+            // Return the operation.
+            return op;
         }
         return null;
     }
