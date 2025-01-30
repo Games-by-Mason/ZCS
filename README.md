@@ -113,4 +113,4 @@ defer es.deinit(gpa);
 
 You can generate documentation with `zig build docs`.
 
-This library is very new, and as such there are not high quality examples yet. You may be able to find some example code on the branch where I'm porting [2Pew](https://github.com/MasonRemaley/2Pew/tree/zcs) to use this library, but it's currently incomplete.
+This library is very new, and as such there are not high quality examples yet. You may be able to find some example code in [2Pew](https://github.com/MasonRemaley/2Pew/tree/zcs) which I'm porting to use this library, but it's currently incomplete.
