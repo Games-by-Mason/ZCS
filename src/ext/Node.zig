@@ -33,14 +33,18 @@ pub fn setParentImmediate(es: *Entities, child: Entity, parent: Entity) void {
     // Unparent the child
     if (!child_node.parent.eql(.none)) {
         const curr_parent = child_node.parent.getComp(es, Node).?;
+
         if (child_node.prev_sib.eql(.none)) {
             curr_parent.first_child = child_node.next_sib;
-            child_node.next_sib = .none;
         } else {
             child_node.prev_sib.getComp(es, Node).?.next_sib = child_node.next_sib;
-            child_node.prev_sib = .none;
+        }
+        if (!child_node.next_sib.eql(.none)) {
+            child_node.next_sib.getComp(es, Node).?.prev_sib = child_node.prev_sib;
             child_node.next_sib = .none;
         }
+        child_node.prev_sib = .none;
+        child_node.parent = .none;
     }
 
     // Get the parent node
@@ -53,6 +57,9 @@ pub fn setParentImmediate(es: *Entities, child: Entity, parent: Entity) void {
         // Parent the child
         child_node.parent = parent;
         child_node.next_sib = parent_node.first_child;
+        if (!parent_node.first_child.eql(.none)) {
+            parent_node.first_child.getComp(es, Node).?.prev_sib = child;
+        }
         parent_node.first_child = child;
     }
 }

@@ -14,6 +14,8 @@ const gpa = std.testing.allocator;
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 
+const log = false;
+
 test "node immediate" {
     defer Comp.unregisterAll();
 
@@ -55,14 +57,14 @@ test "rand nodes" {
 
 const OracleNode = struct {
     parent: Entity = .none,
-    children: std.AutoArrayHashMapUnmanaged(Entity, void) = .{},
+    children: std.AutoHashMapUnmanaged(Entity, void) = .{},
 
     fn deinit(self: *@This()) void {
         self.children.deinit(gpa);
     }
 };
 
-const Oracle = std.AutoArrayHashMapUnmanaged(Entity, OracleNode);
+const Oracle = std.AutoHashMapUnmanaged(Entity, OracleNode);
 
 fn fuzzNodes(input: []const u8) !void {
     defer Comp.unregisterAll();
@@ -72,11 +74,18 @@ fn fuzzNodes(input: []const u8) !void {
 
     var o: Oracle = .{};
     defer o.deinit(gpa);
-    defer for (o.values()) |*v| {
-        v.deinit();
-    };
+    defer {
+        var iter = o.iterator();
+        while (iter.next()) |item| {
+            item.value_ptr.deinit();
+        }
+    }
+
+    var roots: std.ArrayListUnmanaged(Entity) = .{};
+    defer roots.deinit(gpa);
 
     while (!fz.parser.isEmpty()) {
+        // Modify the hierarchy
         switch (fz.parser.next(enum {
             reserve,
             set_parent,
@@ -85,6 +94,39 @@ fn fuzzNodes(input: []const u8) !void {
             .reserve => try reserve(&fz, &o),
             .set_parent => try setParent(&fz, &o),
             .destroy => try destroy(&fz, &o),
+        }
+
+        // Check the oracle
+        {
+            // Check the total entity count
+            try expectEqual(o.count(), fz.es.count() + fz.es.reserved());
+
+            // Check each entity
+            var iterator = o.iterator();
+            while (iterator.next()) |entry| {
+                // Check the parent
+                const node = entry.key_ptr.getComp(&fz.es, Node);
+                const parent: Entity = if (node) |n| n.parent else .none;
+                try expectEqual(entry.value_ptr.parent, parent);
+
+                // Check the children. We don't bother checking for dups since they would result in
+                // the list being infinitely long and failing the implicit size check.
+                var children = Node.childIterator(&fz.es, entry.key_ptr.*);
+                var prev_sibling: Entity = .none;
+                for (0..entry.value_ptr.children.count()) |_| {
+                    const child = children.next(&fz.es);
+                    if (child.eql(.none)) {
+                        std.debug.print("no children found for {}\n", .{entry.key_ptr.*});
+                    }
+                    try expect(!child.eql(.none));
+                    try expect(entry.value_ptr.children.contains(child));
+
+                    // Validate prev pointers to catch issues sooner
+                    try expectEqual(prev_sibling, child.getComp(&fz.es, Node).?.prev_sib);
+                    prev_sibling = child;
+                }
+                try expect(children.next(&fz.es).eql(.none));
+            }
         }
     }
 }
@@ -110,6 +152,7 @@ fn setParent(fz: *Fuzzer, o: *Oracle) !void {
     // Get a random parent and child
     const parent = fz.randomEntity();
     const child = fz.randomEntity();
+    if (log) std.debug.print("{}.parent = {}\n", .{ child, parent });
 
     // Update the real data
     Node.setParentImmediate(&fz.es, child, parent);
@@ -122,7 +165,7 @@ fn setParent(fz: *Fuzzer, o: *Oracle) !void {
             // If child is an ancestor of parent, move parent up the tree
             if (try isAncestor(fz, o, child, parent)) {
                 const parent_o = o.getPtr(parent).?;
-                try expect(o.getPtr(parent_o.parent).?.children.swapRemove(parent));
+                try expect(o.getPtr(parent_o.parent).?.children.remove(parent));
                 parent_o.parent = child_o.parent;
                 if (!child_o.parent.eql(.none)) {
                     try o.getPtr(child_o.parent).?.children.put(gpa, child, {});
@@ -132,7 +175,7 @@ fn setParent(fz: *Fuzzer, o: *Oracle) !void {
             // Unparent the child
             const prev_parent = child_o.parent;
             const prev_parent_o = if (prev_parent.eql(.none)) null else o.getPtr(prev_parent).?;
-            if (prev_parent_o) |ppo| try expect(ppo.children.swapRemove(child));
+            if (prev_parent_o) |ppo| try expect(ppo.children.remove(child));
             child_o.parent = .none;
 
             // Set the parent
@@ -149,6 +192,7 @@ fn destroy(fz: *Fuzzer, o: *Oracle) !void {
 
     // Get a random entity
     const entity = fz.randomEntity();
+    if (log) std.debug.print("destroy {}\n", .{entity});
 
     // Destroy the real entity
     Node.destroyImmediate(&fz.es, entity);
@@ -159,11 +203,21 @@ fn destroy(fz: *Fuzzer, o: *Oracle) !void {
 
 fn destroyInOracle(fz: *Fuzzer, o: *Oracle, e: Entity) !void {
     if (o.getPtr(e)) |n| {
-        for (n.children.keys()) |c| {
-            try destroyInOracle(fz, o, c);
+        if (!n.parent.eql(.none)) {
+            try expect(o.getPtr(n.parent).?.children.remove(e));
+        }
+    }
+    try destroyInOracleInner(fz, o, e);
+}
+
+fn destroyInOracleInner(fz: *Fuzzer, o: *Oracle, e: Entity) !void {
+    if (o.getPtr(e)) |n| {
+        var iter = n.children.iterator();
+        while (iter.next()) |entry| {
+            try destroyInOracleInner(fz, o, entry.key_ptr.*);
         }
         n.deinit();
-        try expect(o.swapRemove(e));
+        try expect(o.remove(e));
     }
     try fz.destroyInOracle(e);
 }
