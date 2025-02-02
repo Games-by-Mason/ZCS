@@ -46,6 +46,95 @@ test "fuzz nodes" {
     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
 }
 
+// XXX: do on more cores
+test "fuzz nodes 0" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 1" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 2" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 3" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 4" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 5" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 6" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 7" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 8" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 9" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 10" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 11" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 12" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 13" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 14" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 15" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 16" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 17" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 18" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 19" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 20" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 21" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 22" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 23" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 24" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 25" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 26" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 27" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+test "fuzz nodes 28" {
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+}
+
 test "rand nodes" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
@@ -57,14 +146,14 @@ test "rand nodes" {
 
 const OracleNode = struct {
     parent: Entity = .none,
-    children: std.AutoHashMapUnmanaged(Entity, void) = .{},
+    children: std.AutoArrayHashMapUnmanaged(Entity, void) = .{},
 
     fn deinit(self: *@This()) void {
         self.children.deinit(gpa);
     }
 };
 
-const Oracle = std.AutoHashMapUnmanaged(Entity, OracleNode);
+const Oracle = std.AutoArrayHashMapUnmanaged(Entity, OracleNode);
 
 fn fuzzNodes(input: []const u8) !void {
     defer Comp.unregisterAll();
@@ -74,12 +163,9 @@ fn fuzzNodes(input: []const u8) !void {
 
     var o: Oracle = .{};
     defer o.deinit(gpa);
-    defer {
-        var iter = o.iterator();
-        while (iter.next()) |item| {
-            item.value_ptr.deinit();
-        }
-    }
+    defer for (o.values()) |*v| {
+        v.deinit();
+    };
 
     var roots: std.ArrayListUnmanaged(Entity) = .{};
     defer roots.deinit(gpa);
@@ -125,6 +211,7 @@ fn fuzzNodes(input: []const u8) !void {
                     try expectEqual(prev_sibling, child.getComp(&fz.es, Node).?.prev_sib);
                     prev_sibling = child;
                 }
+                // XXX: found a failure here
                 try expect(children.next(&fz.es).eql(.none));
             }
         }
@@ -165,7 +252,7 @@ fn setParent(fz: *Fuzzer, o: *Oracle) !void {
             // If child is an ancestor of parent, move parent up the tree
             if (try isAncestor(fz, o, child, parent)) {
                 const parent_o = o.getPtr(parent).?;
-                try expect(o.getPtr(parent_o.parent).?.children.remove(parent));
+                try expect(o.getPtr(parent_o.parent).?.children.swapRemove(parent));
                 parent_o.parent = child_o.parent;
                 if (!child_o.parent.eql(.none)) {
                     try o.getPtr(child_o.parent).?.children.put(gpa, child, {});
@@ -175,7 +262,7 @@ fn setParent(fz: *Fuzzer, o: *Oracle) !void {
             // Unparent the child
             const prev_parent = child_o.parent;
             const prev_parent_o = if (prev_parent.eql(.none)) null else o.getPtr(prev_parent).?;
-            if (prev_parent_o) |ppo| try expect(ppo.children.remove(child));
+            if (prev_parent_o) |ppo| try expect(ppo.children.swapRemove(child));
             child_o.parent = .none;
 
             // Set the parent
@@ -204,7 +291,7 @@ fn destroy(fz: *Fuzzer, o: *Oracle) !void {
 fn destroyInOracle(fz: *Fuzzer, o: *Oracle, e: Entity) !void {
     if (o.getPtr(e)) |n| {
         if (!n.parent.eql(.none)) {
-            try expect(o.getPtr(n.parent).?.children.remove(e));
+            try expect(o.getPtr(n.parent).?.children.swapRemove(e));
         }
     }
     try destroyInOracleInner(fz, o, e);
@@ -212,12 +299,11 @@ fn destroyInOracle(fz: *Fuzzer, o: *Oracle, e: Entity) !void {
 
 fn destroyInOracleInner(fz: *Fuzzer, o: *Oracle, e: Entity) !void {
     if (o.getPtr(e)) |n| {
-        var iter = n.children.iterator();
-        while (iter.next()) |entry| {
-            try destroyInOracleInner(fz, o, entry.key_ptr.*);
+        for (n.children.keys()) |c| {
+            try destroyInOracleInner(fz, o, c);
         }
         n.deinit();
-        try expect(o.remove(e));
+        try expect(o.swapRemove(e));
     }
     try fz.destroyInOracle(e);
 }
