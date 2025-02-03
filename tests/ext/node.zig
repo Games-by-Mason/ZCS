@@ -43,8 +43,100 @@ test "node immediate" {
 }
 
 test "fuzz nodes" {
-    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+    const failure_1 = &.{ 119, 7, 70, 128, 30, 61, 104, 85, 97, 245, 252, 123, 142, 154, 90, 217, 236, 145, 223, 15, 92, 128, 26, 94, 190, 38, 59, 191, 238, 12, 77, 234 };
+    const failure_2 = &.{ 119, 7, 70, 128, 30, 61, 104, 85, 97, 245, 252, 123, 142, 154, 90, 217, 236, 145, 223, 15, 92, 128, 26, 94, 190, 38, 59, 191, 238, 12, 77, 234 };
+
+    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{ failure_1, failure_2 } });
 }
+
+// XXX: do on more cores
+// test "fuzz nodes 0" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 1" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 2" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 3" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 4" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 5" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 6" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 7" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 8" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 9" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 10" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 11" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 12" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 13" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 14" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 15" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 16" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 17" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 18" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 19" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 20" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 21" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 22" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 23" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 24" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 25" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 26" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 27" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
+// test "fuzz nodes 28" {
+//     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+// }
 
 test "rand nodes" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
@@ -73,12 +165,12 @@ fn fuzzNodes(input: []const u8) !void {
     defer fz.deinit();
 
     var o: Oracle = .{};
-    defer o.deinit(gpa);
     defer {
         var iter = o.iterator();
-        while (iter.next()) |item| {
-            item.value_ptr.deinit();
+        while (iter.next()) |entry| {
+            entry.value_ptr.deinit();
         }
+        o.deinit(gpa);
     }
 
     var roots: std.ArrayListUnmanaged(Entity) = .{};
@@ -107,7 +199,11 @@ fn fuzzNodes(input: []const u8) !void {
                 // Check the parent
                 const node = entry.key_ptr.getComp(&fz.es, Node);
                 const parent: Entity = if (node) |n| n.parent else .none;
-                try expectEqual(entry.value_ptr.parent, parent);
+                if (!entry.value_ptr.parent.eql(parent)) {
+                    // XXX: ...
+                    std.debug.print("failure 1:\n{any}\n", .{fz.parser.input});
+                }
+                try expectEqual(entry.value_ptr.parent, parent); // XXX: failure here --seed=0xb7dbdb23
 
                 // Check the children. We don't bother checking for dups since they would result in
                 // the list being infinitely long and failing the implicit size check.
@@ -124,6 +220,10 @@ fn fuzzNodes(input: []const u8) !void {
                     // Validate prev pointers to catch issues sooner
                     try expectEqual(prev_sibling, child.getComp(&fz.es, Node).?.prev_sib);
                     prev_sibling = child;
+                }
+                // XXX: found a failure here
+                if (!children.next(&fz.es).eql(.none)) {
+                    std.debug.print("failure 2:\n{any}\n", .{fz.parser.input});
                 }
                 try expect(children.next(&fz.es).eql(.none));
             }
