@@ -66,15 +66,8 @@ fn setParentImmediateInner(es: *Entities, child: Entity, parent: Entity, break_c
         const parent_node = parent.getComp(es, Node).?;
 
         // If this would create a cycle, parent the new parent to the child's old parent
-        if (break_cycles) {
-            var curr = parent_node.parent;
-            while (!curr.eql(.none)) {
-                if (curr.eql(child)) {
-                    setParentImmediateInner(es, parent, original_parent, false);
-                    break;
-                }
-                curr = curr.getComp(es, Node).?.parent;
-            }
+        if (break_cycles and isAncestor(es, child, parent_node.parent)) {
+            setParentImmediateInner(es, parent, original_parent, false);
         }
 
         // Parent the child
@@ -121,14 +114,28 @@ pub fn destroyImmediate(es: *Entities, e: Entity) void {
     e.destroyImmediate(es);
 }
 
+/// Returns true if `ancestor` is identical to or is an ancestor of `descendant`, otherwise returns
+/// false.
+pub fn isAncestor(es: *const Entities, ancestor: Entity, descendant: Entity) bool {
+    var curr = descendant;
+    while (!curr.eql(.none)) {
+        if (curr.eql(ancestor)) return true;
+        curr = curr.getComp(es, Node).?.parent;
+    }
+    return false;
+}
+
+/// Returns an iterator over the given entity's immediate children.
 pub fn childIterator(es: *const Entities, e: Entity) ChildIterator {
     const node = e.getComp(es, Node) orelse return .{ .curr = .none };
     return .{ .curr = node.first_child };
 }
 
+/// An iterator over an entity's immediate children.
 const ChildIterator = struct {
     curr: Entity,
 
+    /// Returns the next child, or `.none` if there are none.
     pub fn next(self: *@This(), es: *const Entities) Entity {
         if (self.curr.eql(.none)) return .none;
         const node = self.curr.getComp(es, Node).?;

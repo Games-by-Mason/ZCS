@@ -16,25 +16,41 @@ const expectEqual = std.testing.expectEqual;
 
 const log = false;
 
+fn expectEqualEntity(expected: Entity, actual: Entity) !void {
+    if (!expected.eql(actual)) {
+        if (std.testing.backend_can_print) {
+            std.debug.print("expected {}, found {}\n", .{ expected, actual });
+        }
+        return error.TestExpectedEqual;
+    }
+}
+
 test "node immediate" {
     defer Comp.unregisterAll();
 
-    var es = try Entities.init(gpa, .{ .max_entities = 100, .comp_bytes = 100 });
+    var es = try Entities.init(gpa, .{ .max_entities = 128, .comp_bytes = 256 });
     defer es.deinit(gpa);
 
     const parent = Entity.reserveImmediate(&es);
     const child_1 = Entity.reserveImmediate(&es);
     const child_2 = Entity.reserveImmediate(&es);
+    const descendant = Entity.reserveImmediate(&es);
     Node.setParentImmediate(&es, child_2, parent);
     Node.setParentImmediate(&es, child_1, parent);
+    Node.setParentImmediate(&es, descendant, child_1);
 
-    try expectEqual(parent, child_1.getComp(&es, Node).?.parent);
-    try expectEqual(parent, child_2.getComp(&es, Node).?.parent);
+    try expectEqualEntity(parent, child_1.getComp(&es, Node).?.parent);
+    try expectEqualEntity(parent, child_2.getComp(&es, Node).?.parent);
+    try expect(Node.isAncestor(&es, parent, descendant));
+    try expect(!Node.isAncestor(&es, descendant, parent));
+    try expect(Node.isAncestor(&es, parent, child_1));
+    try expect(Node.isAncestor(&es, parent, child_2));
+    try expect(!Node.isAncestor(&es, child_1, child_2));
 
     var children = Node.childIterator(&es, parent);
-    try expectEqual(child_1, children.next(&es));
-    try expectEqual(child_2, children.next(&es));
-    try expectEqual(Entity.none, children.next(&es));
+    try expectEqualEntity(child_1, children.next(&es));
+    try expectEqualEntity(child_2, children.next(&es));
+    try expectEqualEntity(.none, children.next(&es));
 
     Node.destroyImmediate(&es, parent);
     try expect(!parent.exists(&es));
@@ -79,6 +95,7 @@ const OracleNode = struct {
 
 const Oracle = std.AutoHashMapUnmanaged(Entity, OracleNode);
 
+/// Fuzz random node operations.
 fn fuzzNodes(input: []const u8) !void {
     defer Comp.unregisterAll();
 
@@ -109,13 +126,11 @@ fn fuzzNodes(input: []const u8) !void {
     }
 }
 
-// XXX: check that these are separate processes, not separate threads
-// XXX: check how often this test tests cycles once it passes
-// XXX: see if we can get the normal test to cause cycle more often instead of having a separate test
-// XXX: decide what parenting to self should do
+/// Fuzz random node operations that are likely to create cycles that need breaking. This doesn't
+/// occur very often when there are a large number of entities and entities are frequently removed,
+/// so we bias for it here.
 fn fuzzNodeCycles(input: []const u8) !void {
     defer Comp.unregisterAll();
-
     var fz: Fuzzer = try .init(input);
     defer fz.deinit();
 
@@ -128,12 +143,8 @@ fn fuzzNodeCycles(input: []const u8) !void {
         o.deinit(gpa);
     }
 
-    var roots: std.ArrayListUnmanaged(Entity) = .{};
-    defer roots.deinit(gpa);
-
-    for (0..10) |_| {
-        const entity = try fz.reserveImmediate();
-        try o.put(gpa, entity, .{});
+    for (0..16) |_| {
+        try reserve(&fz, &o);
     }
 
     while (!fz.parser.isEmpty()) {
@@ -152,7 +163,7 @@ fn checkOracle(fz: *const Fuzzer, o: *const Oracle) !void {
         // Check the parent
         const node = entry.key_ptr.getComp(&fz.es, Node);
         const parent: Entity = if (node) |n| n.parent else .none;
-        try expectEqual(entry.value_ptr.parent, parent);
+        try expectEqualEntity(entry.value_ptr.parent, parent);
 
         // Check the children. We don't bother checking for dups since they would result in
         // the list being infinitely long and failing the implicit size check.
@@ -164,16 +175,16 @@ fn checkOracle(fz: *const Fuzzer, o: *const Oracle) !void {
             try expect(entry.value_ptr.children.contains(child));
 
             // Validate prev pointers to catch issues sooner
-            try expectEqual(prev_sibling, child.getComp(&fz.es, Node).?.prev_sib);
+            try expectEqualEntity(prev_sibling, child.getComp(&fz.es, Node).?.prev_sib);
             prev_sibling = child;
         }
-        try expect(children.next(&fz.es).eql(.none));
+        try expectEqualEntity(.none, children.next(&fz.es));
     }
 }
 
 fn reserve(fz: *Fuzzer, o: *Oracle) !void {
     const entity = try fz.reserveImmediate();
-    try o.put(gpa, entity, .{});
+    if (!entity.eql(.none)) try o.put(gpa, entity, .{});
 }
 
 fn isAncestor(fz: *Fuzzer, o: *Oracle, ancestor: Entity, e: Entity) !bool {
@@ -208,7 +219,7 @@ fn setParent(fz: *Fuzzer, o: *Oracle) !void {
                 try expect(o.getPtr(parent_o.parent).?.children.remove(parent));
                 parent_o.parent = child_o.parent;
                 if (!child_o.parent.eql(.none)) {
-                    try o.getPtr(child_o.parent).?.children.put(gpa, child, {});
+                    try o.getPtr(child_o.parent).?.children.put(gpa, parent, {});
                 }
             }
 
