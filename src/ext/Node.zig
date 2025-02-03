@@ -20,8 +20,17 @@ first_child: Entity = .none,
 prev_sib: Entity = .none,
 next_sib: Entity = .none,
 
-/// Parents child and parent immediately. If parent is `.none`, child is unparented.
+/// Parents child and parent immediately.
+///
+/// If parent is `.none`, child is unparented.
+///
+/// If the relationship would result in a cycle, parent is moved up the tree to the level of child
+/// before the parenting is done.
 pub fn setParentImmediate(es: *Entities, child: Entity, parent: Entity) void {
+    setParentImmediateInner(es, child, parent, true);
+}
+
+fn setParentImmediateInner(es: *Entities, child: Entity, parent: Entity, break_cycles: bool) void {
     if (child.eql(parent)) return;
 
     if (!child.exists(es)) return;
@@ -29,6 +38,7 @@ pub fn setParentImmediate(es: *Entities, child: Entity, parent: Entity) void {
         child.changeArchImmediate(es, .{ .add = &.{.init(Node, &.{})} });
     }
     const child_node = child.getComp(es, Node).?;
+    const original_parent = child_node.parent;
 
     // Unparent the child
     if (!child_node.parent.eql(.none)) {
@@ -47,12 +57,25 @@ pub fn setParentImmediate(es: *Entities, child: Entity, parent: Entity) void {
         child_node.parent = .none;
     }
 
-    // Get the parent node
+    // Set the new parent
     if (parent.exists(es)) {
+        // Get node from parent
         if (!parent.hasComp(es, Node)) {
             parent.changeArchImmediate(es, .{ .add = &.{.init(Node, &.{})} });
         }
         const parent_node = parent.getComp(es, Node).?;
+
+        // If this would create a cycle, parent the new parent to the child's old parent
+        if (break_cycles) {
+            var curr = parent_node.parent;
+            while (!curr.eql(.none)) {
+                if (curr.eql(child)) {
+                    setParentImmediateInner(es, parent, original_parent, false);
+                    break;
+                }
+                curr = curr.getComp(es, Node).?.parent;
+            }
+        }
 
         // Parent the child
         child_node.parent = parent;
