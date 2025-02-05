@@ -57,17 +57,24 @@ const View = struct {
     }
 };
 
-/// Parents child and parent immediately.
+/// Parents `child` and `parent` immediately.
 ///
-/// If parent is `.none`, child is unparented.
-///
-/// If the relationship would result in a cycle, parent is moved up the tree to the level of child
-/// before the parenting is done.
+/// * If the relationship would result in a cycle, `parent` is first moved up the tree to the level
+///   of `child`
+/// * If parent is `.none`, child is unparented
+/// * If parent and child are equal, no change is made
+/// * If parent no longer exists, child is destroyed
+/// * If child no longer exists, no change is made
 pub fn setParentImmediate(es: *Entities, child: Entity, parent: Entity.Optional) void {
     if (child.toOptional() == parent) return;
     const child_view: View = View.gop(es, child) orelse return;
     const parent_view: ?View = if (parent.unwrap()) |unwrapped| b: {
-        break :b .gop(es, unwrapped);
+        if (View.gop(es, unwrapped)) |view| {
+            break :b view;
+        } else {
+            destroyImmediate(es, unwrapped);
+            return;
+        }
     } else null;
     setParentImmediateInner(es, child_view, parent_view, true);
 }

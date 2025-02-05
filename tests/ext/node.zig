@@ -196,42 +196,51 @@ fn setParent(fz: *Fuzzer, o: *Oracle) !void {
     const child = fz.randomEntity().unwrap() orelse return;
     if (log) std.debug.print("{}.parent = {}\n", .{ child, parent });
 
-    // Update the real data
     Node.setParentImmediate(&fz.es, child, parent);
+    try setParentInOracle(fz, o, child, parent);
+}
 
-    // Update the oracle
-    if (parent != child.toOptional()) {
-        if (child.exists(&fz.es)) {
-            const child_o = o.getPtr(child).?;
+fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Optional) !void {
+    // Early out if child and parent are the same entity
+    if (parent == child.toOptional()) return;
 
-            // If child is an ancestor of parent, move parent up the tree
-            if (parent.unwrap()) |unwrapped| {
-                if (try isAncestor(fz, o, child, parent)) {
-                    const parent_o = o.getPtr(unwrapped).?;
-                    const parent_parent = parent_o.parent.unwrap().?;
-                    try expect(o.getPtr(parent_parent).?.children.remove(unwrapped));
-                    parent_o.parent = child_o.parent;
-                    if (child_o.parent.unwrap()) |child_parent| {
-                        try o.getPtr(child_parent).?.children.put(gpa, unwrapped, {});
-                    }
-                }
+    // Early out if child doesn't exist
+    if (!child.exists(&fz.es)) return;
+
+    const child_o = o.getPtr(child).?;
+
+    if (parent.unwrap()) |unwrapped| {
+        // If parent doesn't exist, destroy child and early out
+        if (!o.contains(unwrapped)) {
+            return destroyInOracle(fz, o, unwrapped);
+        }
+
+        // If child is an ancestor of parent, break the loop by moving parent up to the same level
+        // of child
+        if (try isAncestor(fz, o, child, parent)) {
+            const parent_o = o.getPtr(unwrapped).?;
+            const parent_parent = parent_o.parent.unwrap().?;
+            try expect(o.getPtr(parent_parent).?.children.remove(unwrapped));
+            parent_o.parent = child_o.parent;
+            if (child_o.parent.unwrap()) |child_parent| {
+                try o.getPtr(child_parent).?.children.put(gpa, unwrapped, {});
             }
+        }
+    }
 
-            // Unparent the child
-            const prev_parent = child_o.parent;
-            if (prev_parent.unwrap()) |unwrapped| {
-                const prev_parent_o = o.getPtr(unwrapped).?;
-                try expect(prev_parent_o.children.remove(child));
-            }
-            child_o.parent = .none;
+    // Unparent the child
+    const prev_parent = child_o.parent;
+    if (prev_parent.unwrap()) |unwrapped| {
+        const prev_parent_o = o.getPtr(unwrapped).?;
+        try expect(prev_parent_o.children.remove(child));
+    }
+    child_o.parent = .none;
 
-            // Set the parent
-            if (parent.unwrap()) |unwrapped| {
-                if (unwrapped.exists(&fz.es)) {
-                    child_o.parent = unwrapped.toOptional();
-                    try o.getPtr(unwrapped).?.children.put(gpa, child, {});
-                }
-            }
+    // Set the parent
+    if (parent.unwrap()) |unwrapped| {
+        if (unwrapped.exists(&fz.es)) {
+            child_o.parent = unwrapped.toOptional();
+            try o.getPtr(unwrapped).?.children.put(gpa, child, {});
         }
     }
 }
