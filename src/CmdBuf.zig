@@ -179,7 +179,7 @@ fn executeOrOverflow(self: *@This(), es: *Entities) bool {
                     }
                 }
 
-                change.entity.changeArchUninitImmediateOrErr(es, .{
+                _ = change.entity.changeArchUninitImmediateOrErr(es, .{
                     .add = add,
                     .remove = remove,
                 }) catch |err| switch (err) {

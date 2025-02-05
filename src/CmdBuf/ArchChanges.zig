@@ -11,7 +11,7 @@ const Comp = zcs.Comp;
 tags: std.ArrayListUnmanaged(SubCmd.Tag),
 args: std.ArrayListUnmanaged(u64),
 comp_bytes: std.ArrayListAlignedUnmanaged(u8, Comp.max_align),
-bound: Entity = .none,
+bound: Entity.Optional = .none,
 
 /// Returns an iterator over the archetype changes.
 pub fn iterator(self: *const @This()) Iterator {

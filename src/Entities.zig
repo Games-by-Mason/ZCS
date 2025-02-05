@@ -23,7 +23,7 @@ const Entities = @This();
 
 const IteratorGeneration = if (std.debug.runtime_safety) u64 else u0;
 
-const Slot = struct {
+pub const Slot = struct {
     arch: CompFlag.Set,
     committed: bool,
 };

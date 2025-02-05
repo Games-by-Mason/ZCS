@@ -27,10 +27,29 @@ const CmdBuf = zcs.CmdBuf;
 /// discouraged as they are not valid while iterating unless otherwise noted and are not thread
 /// safe.
 pub const Entity = packed struct {
-    /// An entity that has never existed, and never will.
-    pub const none: @This() = .{ .key = .none };
+    pub const Optional = packed struct {
+        pub const none: @This() = .{ .key = .none };
 
-    key: SlotMap(CompFlag.Set, .{}).Key,
+        key: SlotMap(Entities.Slot, .{}).Key.Optional,
+
+        /// Unwraps the optional entity into `Entity`, or returns `null` if it is `.none`.
+        pub fn unwrap(self: @This()) ?Entity {
+            if (self.key.unwrap()) |key| return .{ .key = key };
+            return null;
+        }
+
+        /// Default formatting.
+        pub fn format(
+            self: @This(),
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            return self.key.format(fmt, options, writer);
+        }
+    };
+
+    key: SlotMap(Entities.Slot, .{}).Key,
 
     /// Pops a reserved entity.
     ///
@@ -144,11 +163,6 @@ pub const Entity = packed struct {
         const comp_offset = self.key.index * id.size;
         const bytes = comp_buffer.ptr + comp_offset;
         return bytes[0..id.size];
-    }
-
-    /// Returns true if the given entities are the same entity, false otherwise.
-    pub fn eql(self: @This(), other: @This()) bool {
-        return self.key.eql(other.key);
     }
 
     /// Queues a component to be added.
@@ -302,12 +316,15 @@ pub const Entity = packed struct {
     };
 
     /// Adds the listed components and then removes the listed component IDs.
+    ///
+    /// Returns `true` if the change was made, returns `false` if it couldn't be made because the
+    /// entity doesn't exist.
     pub fn changeArchImmediate(
         self: @This(),
         es: *Entities,
         changes: ChangeArchImmediateOptions,
-    ) void {
-        self.changeArchImmediateOrErr(es, changes) catch |err|
+    ) bool {
+        return self.changeArchImmediateOrErr(es, changes) catch |err|
             @panic(@errorName(err));
     }
 
@@ -317,9 +334,9 @@ pub const Entity = packed struct {
         self: @This(),
         es: *Entities,
         changes: ChangeArchImmediateOptions,
-    ) error{ZcsCompOverflow}!void {
+    ) error{ZcsCompOverflow}!bool {
         // Early out if the entity does not exist, also checks some assertions
-        if (!self.exists(es)) return;
+        if (!self.exists(es)) return false;
 
         // Build a set of component types to add/remove
         var add: CompFlag.Set = .{};
@@ -332,8 +349,8 @@ pub const Entity = packed struct {
             remove.insert(types.register(id));
         }
 
-        // Apply the archetype change
-        try self.changeArchUninitImmediateOrErr(es, .{ .add = add, .remove = remove });
+        // Apply the archetype change. We already verified the entity exists.
+        assert(try self.changeArchUninitImmediateOrErr(es, .{ .add = add, .remove = remove }));
 
         // Initialize the components
         for (changes.add) |comp| {
@@ -345,6 +362,8 @@ pub const Entity = packed struct {
                 @memcpy(dest, comp.bytes());
             }
         }
+
+        return true;
     }
 
     /// Options for the uninitialized variants of change archetype.
@@ -355,17 +374,16 @@ pub const Entity = packed struct {
         add: CompFlag.Set = .{},
     };
 
-    /// For internal use. Similar to `changeArchUninitImmediate`, but returns
-    /// `error.ZcsCompOverflow` on failure instead of panicking.
+    /// For internal use. Similar to `changeArchetypeOrErr`, but does not initialize the components.
     pub fn changeArchUninitImmediateOrErr(
         self: @This(),
         es: *Entities,
         options: ChangeArchUninitImmediateOptions,
-    ) error{ZcsCompOverflow}!void {
+    ) error{ZcsCompOverflow}!bool {
         invalidateIterators(es);
 
         // Get the slot
-        const slot = es.slots.get(self.key) orelse return;
+        const slot = es.slots.get(self.key) orelse return false;
 
         // Check if we have enough space
         var added = options.add.differenceWith(options.remove).iterator();
@@ -385,9 +403,16 @@ pub const Entity = packed struct {
         }
         slot.arch = slot.arch.unionWith(options.add);
         slot.arch = slot.arch.differenceWith(options.remove);
+
+        return true;
     }
 
-    /// Default formatting for `Entity`.
+    /// Returns this entity as an optional.
+    pub fn toOptional(self: @This()) Optional {
+        return .{ .key = self.key.toOptional() };
+    }
+
+    /// Default formatting.
     pub fn format(
         self: @This(),
         comptime fmt: []const u8,

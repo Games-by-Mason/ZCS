@@ -79,8 +79,8 @@ test "command buffer some test decode" {
     defer es.deinit(gpa);
 
     // Check some entity equality stuff not tested elsewhere, OrErr more extensively in slot map
-    try expect(Entity.none.eql(.none));
-    try expect(!Entity.none.exists(&es));
+    try expect(Entity.Optional.none == Entity.Optional.none);
+    try expectEqual(null, Entity.Optional.none.unwrap());
 
     var capacity: CmdBuf.GranularCapacity = .init(.{
         .cmds = 4,
@@ -109,17 +109,17 @@ test "command buffer some test decode" {
 
     var iter = es.iterator(.{});
 
-    try expect(iter.next().?.eql(e0));
+    try expect(iter.next().? == e0);
     try expectEqual(null, e0.getComp(&es, RigidBody));
     try expectEqual(null, e0.getComp(&es, Model));
     try expectEqual(null, e0.getComp(&es, Tag));
 
-    try expect(e1.eql(iter.next().?));
+    try expect(e1 == iter.next().?);
     try expectEqual(null, e1.getComp(&es, RigidBody));
     try expectEqual(null, e1.getComp(&es, Model));
     try expectEqual(null, e1.getComp(&es, Tag));
 
-    try expect(e2.eql(iter.next().?));
+    try expect(e2 == iter.next().?);
     try expectEqual(rb, e2.getComp(&es, RigidBody).?.*);
     try expectEqual(null, e2.getComp(&es, Model));
     try expectEqual(null, e2.getComp(&es, Tag));
@@ -128,9 +128,10 @@ test "command buffer some test decode" {
 
     // We don't check eql anywhere else, quickly check it here. The details are tested more
     // extensively on slot map.
-    try expect(e1.eql(e1));
-    try expect(!e1.eql(e2));
-    try expect(!e1.eql(.none));
+    try expect(e1 == e1);
+    try expect(e1 != e2);
+    try expect(e1.toOptional() != Entity.Optional.none);
+    try expect(e1.toOptional().unwrap().? == e1);
 
     e0.remCompCmd(&cmds, RigidBody);
     e1.remCompCmd(&cmds, RigidBody);
@@ -403,7 +404,7 @@ test "command buffer overflow" {
     });
     defer cmds.deinit(gpa, &es);
     const e = Entity.reserveImmediate(&es);
-    e.changeArchImmediate(&es, .{});
+    try expect(e.changeArchImmediate(&es, .{}));
     try e.addCompValCmdOrErr(&cmds, .init(RigidBody, &.{}));
     try e.addCompPtrCmdOrErr(&cmds, .init(RigidBody, &.{}));
     try expect(!e.hasComp(&es, Model));
@@ -547,17 +548,16 @@ test "command buffer worst case capacity" {
     }
 }
 
-// Basically just making sure it compiles
 test "format entity" {
     try std.testing.expectFmt("0xa:0xb", "{}", Entity{ .key = .{
         .index = 10,
         .generation = @enumFromInt(11),
     } });
-    try std.testing.expectFmt("0xc:invalid", "{}", Entity{ .key = .{
-        .index = 12,
-        .generation = .invalid,
-    } });
-    try std.testing.expectFmt(".none", "{}", Entity.none);
+    try std.testing.expectFmt("0xa:0xb", "{}", (Entity{ .key = .{
+        .index = 10,
+        .generation = @enumFromInt(11),
+    } }).toOptional());
+    try std.testing.expectFmt(".none", "{}", Entity.Optional.none);
 }
 
 test "change arch immediate" {
@@ -567,25 +567,58 @@ test "change arch immediate" {
 
     {
         const e = Entity.reserveImmediate(&es);
-        e.changeArchImmediate(&es, .{
+        try expect(e.changeArchImmediate(&es, .{
             .add = &.{ .init(RigidBody, &.{ .mass = 1.0 }), .init(Model, &.{ .vertex_start = 2 }) },
             .remove = &.{compId(RigidBody)},
-        });
+        }));
         try expectEqual(Model{ .vertex_start = 2 }, e.getComp(&es, Model).?.*);
         try expectEqual(null, e.getComp(&es, RigidBody));
+        try expectEqual(null, e.getComp(&es, Tag));
     }
 
     {
         const e = Entity.reserveImmediate(&es);
-        e.changeArchImmediate(&es, .{
+        try expect(e.changeArchImmediate(&es, .{
             .add = &.{
                 .init(RigidBody, &.{ .mass = 0.5 }),
                 .init(Model, &.{ .vertex_start = 20 }),
             },
             .remove = &.{compId(Tag)},
-        });
+        }));
         try expectEqual(RigidBody{ .mass = 0.5 }, e.getComp(&es, RigidBody).?.*);
         try expectEqual(Model{ .vertex_start = 20 }, e.getComp(&es, Model).?.*);
+        try expectEqual(null, e.getComp(&es, Tag));
+    }
+
+    {
+        const e = Entity.reserveImmediate(&es);
+        e.destroyImmediate(&es);
+        try expect(!e.changeArchImmediate(&es, .{
+            .add = &.{
+                .init(RigidBody, &.{ .mass = 0.5 }),
+                .init(Model, &.{ .vertex_start = 20 }),
+            },
+            .remove = &.{compId(Tag)},
+        }));
+        try expectEqual(null, e.getComp(&es, RigidBody));
+        try expectEqual(null, e.getComp(&es, Model));
+        try expectEqual(null, e.getComp(&es, Tag));
+
+        try expect(!e.changeArchImmediate(&es, .{
+            .add = &.{},
+            .remove = &.{},
+        }));
+        try expectEqual(null, e.getComp(&es, RigidBody));
+        try expectEqual(null, e.getComp(&es, Model));
+        try expectEqual(null, e.getComp(&es, Tag));
+
+        try expect(!try e.changeArchUninitImmediateOrErr(&es, .{
+            .add = .{},
+            .remove = .{},
+        }));
+        try expectEqual(null, e.getComp(&es, RigidBody));
+        try expectEqual(null, e.getComp(&es, Model));
+        try expectEqual(null, e.getComp(&es, Tag));
     }
 }
 
@@ -594,7 +627,7 @@ test "getRegistered" {
     var es = try Entities.init(gpa, .{ .max_entities = 100, .comp_bytes = 100 });
     defer es.deinit(gpa);
     const e = Entity.reserveImmediate(&es);
-    e.changeArchImmediate(&es, .{ .remove = &.{ compId(RigidBody), compId(Model) } }); // Register two types
+    try expect(e.changeArchImmediate(&es, .{ .remove = &.{ compId(RigidBody), compId(Model) } })); // Register two types
     _ = compId(i32); // Should not result in a registration
 
     const registered = zcs.Comp.getRegistered();
@@ -628,9 +661,9 @@ test "entity overflow" {
     _ = Entity.reserveImmediate(&es);
     try expectError(error.ZcsEntityOverflow, Entity.reserveImmediateOrErr(&es));
 
-    e0.changeArchImmediate(&es, .{ .add = &.{
+    try expect(e0.changeArchImmediate(&es, .{ .add = &.{
         .init(u32, &0),
-    } });
+    } }));
     try expectError(error.ZcsCompOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u128, &0),
     } }));

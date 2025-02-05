@@ -127,8 +127,8 @@ pub const SubCmd = union(enum) {
 
         switch (sub_cmd) {
             .bind_entity => |entity| {
-                if (changes.bound == entity) return;
-                changes.bound = entity;
+                if (changes.bound == entity.toOptional()) return;
+                changes.bound = entity.toOptional();
                 if (changes.tags.items.len >= changes.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (changes.args.items.len >= changes.args.capacity) return error.ZcsCmdBufOverflow;
                 changes.tags.appendAssumeCapacity(.bind_entity);

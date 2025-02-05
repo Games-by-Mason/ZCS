@@ -295,7 +295,7 @@ pub fn expectedOfArch(self: *@This(), arch: Arch) usize {
     return count;
 }
 
-pub fn reserveImmediate(self: *@This()) !Entity {
+pub fn reserveImmediate(self: *@This()) !Entity.Optional {
     // Skip reserve if we already have a lot of entities to avoid overflowing
     if (self.es.count() + self.es.reserved() > self.es.slots.capacity / 2) {
         return .none;
@@ -304,12 +304,12 @@ pub fn reserveImmediate(self: *@This()) !Entity {
     // Reserve an entity and update the oracle
     const entity = Entity.reserveImmediate(&self.es);
     try self.reserved.putNoClobber(gpa, entity, {});
-    return entity;
+    return entity.toOptional();
 }
 
 pub fn modifyImmediate(self: *@This()) !void {
     // Get a random entity
-    const entity = self.randomEntity();
+    const entity = self.randomEntity().unwrap() orelse return;
 
     // Generate random component values
     const rb = self.parser.next(RigidBody);
@@ -329,7 +329,7 @@ pub fn modifyImmediate(self: *@This()) !void {
     }
 }
 
-pub fn randomEntity(self: *@This()) Entity {
+pub fn randomEntity(self: *@This()) Entity.Optional {
     // Sometimes return .none
     if (self.parser.next(u8) < 10) return .none;
 
@@ -341,17 +341,17 @@ pub fn randomEntity(self: *@This()) Entity {
         .reserved => {
             if (self.reserved.count() == 0) return .none;
             const index = self.parser.nextLessThan(usize, self.reserved.count());
-            return self.reserved.keys()[index];
+            return self.reserved.keys()[index].toOptional();
         },
         .committed => {
             if (self.committed.count() == 0) return .none;
             const index = self.parser.nextLessThan(usize, self.committed.count());
-            return self.committed.keys()[index];
+            return self.committed.keys()[index].toOptional();
         },
         .destroyed => {
             if (self.destroyed.count() == 0) return .none;
             const index = self.parser.nextLessThan(usize, self.destroyed.count());
-            return self.destroyed.keys()[index];
+            return self.destroyed.keys()[index].toOptional();
         },
     }
 }

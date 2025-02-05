@@ -176,7 +176,7 @@ fn destroy(fz: *Fuzzer, cmds: *CmdBuf) !void {
     if (fz.shouldSkipDestroy()) return;
 
     // Destroy a random entity
-    const entity = fz.randomEntity();
+    const entity = fz.randomEntity().unwrap() orelse return;
     entity.destroyCmd(cmds);
 
     // Destroy the entity in the oracle as well, displacing an existing
@@ -193,7 +193,7 @@ fn destroy(fz: *Fuzzer, cmds: *CmdBuf) !void {
 
 fn changeArch(fz: *Fuzzer, cmds: *CmdBuf) !void {
     // Get a random entity
-    const entity = fz.randomEntity();
+    const entity = fz.randomEntity().unwrap() orelse return;
 
     // Get the oracle if any, committing it if needed
     if (fz.reserved.swapRemove(entity)) {

@@ -9,16 +9,53 @@
 //! at the correct times, whereas the command buffer approach is just requires you process the
 //! command buffer before executing it.
 
+const std = @import("std");
+const assert = std.debug.assert;
+
 const zcs = @import("../root.zig");
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 
 const Node = @This();
 
-parent: Entity = .none,
-first_child: Entity = .none,
-prev_sib: Entity = .none,
-next_sib: Entity = .none,
+parent: Entity.Optional = .none,
+first_child: Entity.Optional = .none,
+prev_sib: Entity.Optional = .none,
+next_sib: Entity.Optional = .none,
+
+const View = struct {
+    entity: Entity,
+    node: *Node,
+
+    fn init(es: *const Entities, entity: Entity) ?View {
+        return .{
+            .entity = entity,
+            .node = entity.getComp(es, Node) orelse return null,
+        };
+    }
+
+    fn gop(es: *Entities, entity: Entity) ?View {
+        return .{
+            .entity = entity,
+            .node = entity.getComp(es, Node) orelse b: {
+                if (!entity.changeArchImmediate(es, .{ .add = &.{.init(Node, &.{})} })) {
+                    return null;
+                }
+                break :b entity.getComp(es, Node).?;
+            },
+        };
+    }
+
+    fn getParent(self: @This(), es: *const Entities) ?View {
+        const parent = self.node.parent.unwrap() orelse return null;
+        return @This().init(es, parent).?;
+    }
+
+    fn getPrevSib(self: @This(), es: *const Entities) ?View {
+        const prev_sib = self.node.prev_sib.unwrap() orelse return null;
+        return @This().init(es, prev_sib).?;
+    }
+};
 
 /// Parents child and parent immediately.
 ///
@@ -26,57 +63,57 @@ next_sib: Entity = .none,
 ///
 /// If the relationship would result in a cycle, parent is moved up the tree to the level of child
 /// before the parenting is done.
-pub fn setParentImmediate(es: *Entities, child: Entity, parent: Entity) void {
-    setParentImmediateInner(es, child, parent, true);
+pub fn setParentImmediate(es: *Entities, child: Entity, parent: Entity.Optional) void {
+    if (child.toOptional() == parent) return;
+    const child_view: View = View.gop(es, child) orelse return;
+    const parent_view: ?View = if (parent.unwrap()) |unwrapped| b: {
+        break :b .gop(es, unwrapped);
+    } else null;
+    setParentImmediateInner(es, child_view, parent_view, true);
 }
 
-fn setParentImmediateInner(es: *Entities, child: Entity, parent: Entity, break_cycles: bool) void {
-    if (child.eql(parent)) return;
-
-    if (!child.exists(es)) return;
-    if (!child.hasComp(es, Node)) {
-        child.changeArchImmediate(es, .{ .add = &.{.init(Node, &.{})} });
-    }
-    const child_node = child.getComp(es, Node).?;
-    const original_parent = child_node.parent;
+fn setParentImmediateInner(
+    es: *Entities,
+    child: View,
+    optional_parent: ?View,
+    break_cycles: bool,
+) void {
+    const original_parent = child.node.parent;
 
     // Unparent the child
-    if (!child_node.parent.eql(.none)) {
-        const curr_parent = child_node.parent.getComp(es, Node).?;
-
-        if (child_node.prev_sib.eql(.none)) {
-            curr_parent.first_child = child_node.next_sib;
+    if (child.getParent(es)) |curr_parent| {
+        if (child.getPrevSib(es)) |prev_sib| {
+            prev_sib.node.next_sib = child.node.next_sib;
         } else {
-            child_node.prev_sib.getComp(es, Node).?.next_sib = child_node.next_sib;
+            curr_parent.node.first_child = child.node.next_sib;
         }
-        if (!child_node.next_sib.eql(.none)) {
-            child_node.next_sib.getComp(es, Node).?.prev_sib = child_node.prev_sib;
-            child_node.next_sib = .none;
+        if (child.node.next_sib.unwrap()) |next_sib| {
+            next_sib.getComp(es, Node).?.prev_sib = child.node.prev_sib;
+            child.node.next_sib = .none;
         }
-        child_node.prev_sib = .none;
-        child_node.parent = .none;
+        child.node.prev_sib = .none;
+        child.node.parent = .none;
     }
 
     // Set the new parent
-    if (parent.exists(es)) {
-        // Get node from parent
-        if (!parent.hasComp(es, Node)) {
-            parent.changeArchImmediate(es, .{ .add = &.{.init(Node, &.{})} });
-        }
-        const parent_node = parent.getComp(es, Node).?;
-
-        // If this would create a cycle, parent the new parent to the child's old parent
-        if (break_cycles and isAncestor(es, child, parent_node.parent)) {
-            setParentImmediateInner(es, parent, original_parent, false);
+    if (optional_parent) |parent| {
+        // If this relationship would create a cycle, parent the new parent to the child's original
+        // parent
+        if (break_cycles and isAncestor(es, child.entity, parent.node.parent)) {
+            const op: ?View = if (original_parent.unwrap()) |unwrapped| b: {
+                const op = View.init(es, unwrapped).?;
+                break :b op;
+            } else null;
+            setParentImmediateInner(es, parent, op, false);
         }
 
         // Parent the child
-        child_node.parent = parent;
-        child_node.next_sib = parent_node.first_child;
-        if (!parent_node.first_child.eql(.none)) {
-            parent_node.first_child.getComp(es, Node).?.prev_sib = child;
+        child.node.parent = parent.entity.toOptional();
+        child.node.next_sib = parent.node.first_child;
+        if (parent.node.first_child.unwrap()) |first_child| {
+            first_child.getComp(es, Node).?.prev_sib = child.entity.toOptional();
         }
-        parent_node.first_child = child;
+        parent.node.first_child = child.entity.toOptional();
     }
 }
 
@@ -87,25 +124,22 @@ pub fn destroyImmediate(es: *Entities, e: Entity) void {
         setParentImmediate(es, e, .none);
 
         // Destroy all our children depth first
-        var curr = node.first_child;
-        if (!curr.eql(.none)) {
-            var curr_node = curr.getComp(es, Node).?;
-            while (!curr.eql(e)) {
-                if (!curr_node.first_child.eql(.none)) {
-                    curr = curr_node.first_child;
-                    curr_node = curr.getComp(es, Node).?;
+        if (node.first_child.unwrap()) |start| {
+            var curr = View.init(es, start).?;
+            while (true) {
+                if (curr.node.first_child.unwrap()) |first_child| {
+                    curr = View.init(es, first_child).?;
                 } else {
                     const prev = curr;
-                    if (!curr_node.next_sib.eql(.none)) {
-                        curr = curr_node.next_sib;
-                        curr_node = curr.getComp(es, Node).?;
+                    if (curr.node.next_sib.unwrap()) |next_sib| {
+                        curr = View.init(es, next_sib).?;
                     } else {
-                        curr = curr_node.parent;
-                        curr_node = curr.getComp(es, Node).?;
-                        curr_node.first_child = .none;
+                        curr = View.init(es, curr.node.parent.unwrap().?).?;
+                        curr.node.first_child = .none;
                     }
-                    prev.destroyImmediate(es);
+                    prev.entity.destroyImmediate(es);
                 }
+                if (curr.entity == e) break;
             }
         }
     }
@@ -116,11 +150,11 @@ pub fn destroyImmediate(es: *Entities, e: Entity) void {
 
 /// Returns true if `ancestor` is identical to or is an ancestor of `descendant`, otherwise returns
 /// false.
-pub fn isAncestor(es: *const Entities, ancestor: Entity, descendant: Entity) bool {
+pub fn isAncestor(es: *const Entities, ancestor: Entity, descendant: Entity.Optional) bool {
     var curr = descendant;
-    while (!curr.eql(.none)) {
-        if (curr.eql(ancestor)) return true;
-        curr = curr.getComp(es, Node).?.parent;
+    while (curr.unwrap()) |unwrapped| {
+        if (unwrapped == ancestor) return true;
+        curr = unwrapped.getComp(es, Node).?.parent;
     }
     return false;
 }
@@ -133,14 +167,13 @@ pub fn childIterator(es: *const Entities, e: Entity) ChildIterator {
 
 /// An iterator over an entity's immediate children.
 const ChildIterator = struct {
-    curr: Entity,
+    curr: Entity.Optional,
 
     /// Returns the next child, or `.none` if there are none.
-    pub fn next(self: *@This(), es: *const Entities) Entity {
-        if (self.curr.eql(.none)) return .none;
-        const node = self.curr.getComp(es, Node).?;
-        const result = self.curr;
+    pub fn next(self: *@This(), es: *const Entities) ?Entity {
+        const entity = self.curr.unwrap() orelse return null;
+        const node = entity.getComp(es, Node).?;
         self.curr = node.next_sib;
-        return result;
+        return entity;
     }
 };
