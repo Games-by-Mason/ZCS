@@ -124,7 +124,7 @@ fn setParentImmediateInner(
     if (optional_parent) |parent| {
         // If this relationship would create a cycle, parent the new parent to the child's original
         // parent
-        if (break_cycles and isAncestor(es, child.entity, parent.node.parent)) {
+        if (break_cycles and isAncestorOf(es, child.entity, parent.entity)) {
             const op: ?View = if (original_parent.unwrap()) |unwrapped| b: {
                 const op = unwrapped.view(es, View).?;
                 break :b op;
@@ -173,15 +173,15 @@ pub fn destroyImmediate(es: *Entities, e: Entity) void {
     e.destroyImmediate(es);
 }
 
-/// Returns true if `ancestor` is identical to or is an ancestor of `descendant`, otherwise returns
-/// false.
-pub fn isAncestor(es: *const Entities, ancestor: Entity, descendant: Entity.Optional) bool {
-    var curr = descendant;
-    while (curr.unwrap()) |unwrapped| {
-        if (unwrapped == ancestor) return true;
-        curr = unwrapped.getComp(es, Node).?.parent;
+/// Returns true if `ancestor` is an ancestor of `descendant`, otherwise returns false. Entities
+/// cannot be ancestors of themselves.
+pub fn isAncestorOf(es: *const Entities, ancestor: Entity, descendant: Entity) bool {
+    const dview = descendant.view(es, View) orelse return false;
+    var curr = dview.getParent(es) orelse return false;
+    while (true) {
+        if (curr.entity == ancestor) return true;
+        curr = curr.getParent(es) orelse return false;
     }
-    return false;
 }
 
 /// Returns an iterator over the given entity's immediate children.

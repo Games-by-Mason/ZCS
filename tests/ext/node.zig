@@ -22,6 +22,7 @@ test "node immediate" {
     var es = try Entities.init(gpa, .{ .max_entities = 128, .comp_bytes = 256 });
     defer es.deinit(gpa);
 
+    const empty = Entity.reserveImmediate(&es);
     const parent = Entity.reserveImmediate(&es);
     const child_1 = Entity.reserveImmediate(&es);
     const child_2 = Entity.reserveImmediate(&es);
@@ -30,13 +31,18 @@ test "node immediate" {
     Node.setParentImmediate(&es, child_1, parent.toOptional());
     Node.setParentImmediate(&es, descendant, child_1.toOptional());
 
+    try expect(!Node.isAncestorOf(&es, empty, child_1));
+    try expect(!Node.isAncestorOf(&es, child_1, empty));
+    try expect(!Node.isAncestorOf(&es, empty, empty));
+
     try expectEqualEntity(parent, child_1.getComp(&es, Node).?.parent.unwrap().?);
     try expectEqualEntity(parent, child_2.getComp(&es, Node).?.parent.unwrap().?);
-    try expect(Node.isAncestor(&es, parent, descendant.toOptional()));
-    try expect(!Node.isAncestor(&es, descendant, parent.toOptional()));
-    try expect(Node.isAncestor(&es, parent, child_1.toOptional()));
-    try expect(Node.isAncestor(&es, parent, child_2.toOptional()));
-    try expect(!Node.isAncestor(&es, child_1, child_2.toOptional()));
+    try expect(!Node.isAncestorOf(&es, parent, parent));
+    try expect(Node.isAncestorOf(&es, parent, descendant));
+    try expect(!Node.isAncestorOf(&es, descendant, parent));
+    try expect(Node.isAncestorOf(&es, parent, child_1));
+    try expect(Node.isAncestorOf(&es, parent, child_2));
+    try expect(!Node.isAncestorOf(&es, child_1, child_2));
 
     var children = Node.childIterator(&es, parent);
     try expectEqualEntity(child_1, children.next(&es).?);
@@ -47,6 +53,12 @@ test "node immediate" {
     try expect(!parent.exists(&es));
     try expect(!child_1.exists(&es));
     try expect(!child_2.exists(&es));
+
+    try expect(!Node.isAncestorOf(&es, child_1, child_2));
+    try expect(!Node.isAncestorOf(&es, child_1, child_1));
+    try expect(!Node.isAncestorOf(&es, child_1, empty));
+    try expect(!Node.isAncestorOf(&es, empty, child_1));
+    try expect(!Node.isAncestorOf(&es, empty, empty));
 }
 
 test "fuzz nodes" {
@@ -177,12 +189,10 @@ fn reserve(fz: *Fuzzer, o: *Oracle) !void {
     try o.put(gpa, entity, .{});
 }
 
-fn isAncestor(fz: *Fuzzer, o: *Oracle, ancestor: Entity, descendant: Entity.Optional) !bool {
+fn isAncestorOf(fz: *Fuzzer, o: *Oracle, ancestor: Entity, descendant: Entity) !bool {
     if (!ancestor.exists(&fz.es)) return false;
-    if (descendant.unwrap()) |unwrapped| {
-        if (!o.contains(unwrapped)) return false;
-    }
-    var c = descendant;
+    const descendant_o = o.get(descendant) orelse return false;
+    var c = descendant_o.parent;
     while (true) {
         if (c == ancestor.toOptional()) return true;
         const unwrapped = c.unwrap() orelse return false;
@@ -217,7 +227,7 @@ fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Opti
 
         // If child is an ancestor of parent, break the loop by moving parent up to the same level
         // of child
-        if (try isAncestor(fz, o, child, parent)) {
+        if (try isAncestorOf(fz, o, child, unwrapped)) {
             const parent_o = o.getPtr(unwrapped).?;
             const parent_parent = parent_o.parent.unwrap().?;
             try expect(o.getPtr(parent_parent).?.children.remove(unwrapped));
