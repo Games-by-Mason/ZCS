@@ -13,6 +13,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const zcs = @import("../root.zig");
+const view = zcs.view;
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 
@@ -27,12 +28,7 @@ const View = struct {
     entity: Entity,
     node: *Node,
 
-    fn init(es: *const Entities, entity: Entity) ?View {
-        return .{
-            .entity = entity,
-            .node = entity.getComp(es, Node) orelse return null,
-        };
-    }
+    pub const init = view.Mixins(@This()).init;
 
     fn gop(es: *Entities, entity: Entity) ?View {
         return .{
@@ -69,8 +65,8 @@ pub fn setParentImmediate(es: *Entities, child: Entity, parent: Entity.Optional)
     if (child.toOptional() == parent) return;
     const child_view: View = View.gop(es, child) orelse return;
     const parent_view: ?View = if (parent.unwrap()) |unwrapped| b: {
-        if (View.gop(es, unwrapped)) |view| {
-            break :b view;
+        if (View.gop(es, unwrapped)) |v| {
+            break :b v;
         } else {
             destroyImmediate(es, unwrapped);
             return;

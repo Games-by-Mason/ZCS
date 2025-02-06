@@ -18,6 +18,7 @@ const Comp = zcs.Comp;
 const slot_map = @import("slot_map");
 const SlotMap = slot_map.SlotMap;
 const Entity = zcs.Entity;
+const view = zcs.view;
 
 const Entities = @This();
 
@@ -95,25 +96,6 @@ pub fn reserved(self: @This()) usize {
     return self.reserved_entities;
 }
 
-/// If `T` is a pointer to a component, returns the component type. Otherwise returns null.
-fn ComponentFromPointer(T: type) ?type {
-    const pointer = switch (@typeInfo(T)) {
-        .pointer => |pointer| pointer,
-        .optional => |optional| switch (@typeInfo(optional.child)) {
-            .pointer => |pointer| pointer,
-            else => return null,
-        },
-        else => return null,
-    };
-
-    if (pointer.size != .one) return null;
-    if (pointer.alignment != @alignOf(pointer.child)) return null;
-    if (pointer.sentinel() != null) return null;
-    if (@typeInfo(pointer.child) == .optional) return null;
-
-    return pointer.child;
-}
-
 /// Returns an iterator over all entities that have at least the components in `required_comps` in
 /// an implementation defined order.
 pub fn iterator(
@@ -158,27 +140,18 @@ pub const Iterator = struct {
     }
 };
 
-/// Similar to `iterator`, but returns a view with pointers to the requested components.
-///
-/// `View` must be a struct whose fields are all either type `Entity` or are pointers to registered
-/// component types. Pointers can be set to optional to make a component type optional.
+/// Similar to `iterator`, but returns a `view` with pointers to the requested components.
 pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
-    var base: View = undefined;
+    var base: view.Comps(View) = undefined;
     var required_comps: CompFlag.Set = .{};
-    inline for (@typeInfo(View).@"struct".fields) |field| {
-        if (field.type == Entity) {
-            @field(base, field.name).key.index = 0;
-        } else {
-            const T = ComponentFromPointer(field.type) orelse {
-                @compileError("view field is not Entity or pointer to a component: " ++ @typeName(field.type));
-            };
+    inline for (@typeInfo(view.Comps(View)).@"struct".fields) |field| {
+        const T = view.UnwrapField(field.type);
 
-            const flag = types.register(compId(T));
-            if (@typeInfo(field.type) != .optional) {
-                required_comps.insert(flag);
-            }
-            @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(flag)]);
+        const flag = types.register(compId(T));
+        if (@typeInfo(field.type) != .optional) {
+            required_comps.insert(flag);
         }
+        @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(flag)]);
     }
 
     return .{
@@ -198,20 +171,18 @@ pub fn ViewIterator(View: type) type {
     return struct {
         es: *const Entities,
         entity_iterator: Iterator,
-        base: View,
+        base: view.Comps(View),
 
         /// Advances the iterator, returning the next view.
         pub fn next(self: *@This()) ?View {
             while (self.entity_iterator.next()) |entity| {
-                var view: View = self.base;
+                var result: View = undefined;
                 inline for (@typeInfo(View).@"struct".fields) |field| {
                     if (field.type == Entity) {
-                        @field(view, field.name) = entity;
+                        @field(result, field.name) = entity;
                     } else {
                         // Get the component type
-                        const T = ComponentFromPointer(field.type) orelse {
-                            comptime unreachable; // Checked during iterator init
-                        };
+                        const T = view.UnwrapField(field.type);
 
                         // Get the slot
                         const slot = self.es.slots.values[entity.key.index];
@@ -225,17 +196,18 @@ pub fn ViewIterator(View: type) type {
                             slot.arch.contains(compId(T).flag.?))
                         {
                             // We have the component, pass it to the caller
-                            const base = @intFromPtr(@field(view, field.name));
+                            const base = @intFromPtr(@field(self.base, field.name));
                             const offset = entity.key.index * @sizeOf(T);
-                            @field(view, field.name) = @ptrFromInt(base + offset);
+                            const comp: *T = @ptrFromInt(base + offset);
+                            @field(result, field.name) = comp;
                         } else {
                             // This component is optional and we don't have it, set our result to
                             // null
-                            @field(view, field.name) = null;
+                            @field(result, field.name) = null;
                         }
                     }
                 }
-                return view;
+                return result;
             }
 
             return null;

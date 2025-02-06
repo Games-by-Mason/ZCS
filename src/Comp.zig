@@ -70,20 +70,7 @@ pub const Meta = struct {
 
     /// Returns the type ID of the given type.
     pub inline fn init(comptime T: type) *@This() {
-        if (@typeInfo(T) == .optional) {
-            // There's nothing technically wrong with this, but if we allowed it then the change arch
-            // functions couldn't use optionals to allow deciding at runtime whether or not to create a
-            // component.
-            //
-            // Furthermore, it would be difficult to distinguish syntactically whether an
-            // optional component was missing or null.
-            //
-            // Instead, optional components should be represented by a struct with an optional
-            // field, or a tagged union.
-            @compileError("component types may not be optional: " ++ @typeName(T));
-        }
-
-        comptime assert(@alignOf(T) <= Comp.max_align);
+        comptime types.assertValidComponentType(T);
 
         return &struct {
             var id: @typeInfo(Comp.Id).pointer.child = .{

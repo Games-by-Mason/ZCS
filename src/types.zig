@@ -1,6 +1,8 @@
 //! For internal use. Types and functions for managing component type registration.
 
 const std = @import("std");
+const assert = std.debug.assert;
+
 const zcs = @import("root.zig");
 const Comp = zcs.Comp;
 
@@ -64,4 +66,17 @@ pub fn register(id: Comp.Id) CompFlag {
 
     // Return the registered flag
     return flag;
+}
+
+/// Asserts at comptime that the given type is valid as a component type.
+pub fn assertValidComponentType(T: type) void {
+    // Storing optionals, pointers, and Entities directly as components would create
+    // ambiguities when creating entity views. It's unfortunate that we have to disallow
+    // them, but the extra typing to wrap them in the rare case that you need this ability
+    // is expected to be well worth it for the convenience views provide.
+    if (@typeInfo(T) == .optional or T == zcs.Entity) {
+        @compileError("unsupported component type '" ++ @typeName(T) ++ "'; consider wrapping in struct");
+    }
+
+    comptime assert(@alignOf(T) <= Comp.max_align);
 }
