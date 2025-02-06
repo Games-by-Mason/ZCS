@@ -156,7 +156,7 @@ test "command buffer some test decode" {
 }
 
 fn isInCompBytes(cmds: CmdBuf, ptr: *const anyopaque) bool {
-    const comp_bytes = cmds.arch_changes.comp_bytes.items;
+    const comp_bytes = cmds.comp_bytes.items;
     const start = @intFromPtr(comp_bytes.ptr);
     const end = start + comp_bytes.len;
     const addr = @intFromPtr(ptr);
@@ -214,7 +214,7 @@ test "command buffer interning" {
     e0.addCompPtrCmd(&cmds, .init(Model, &model_interned));
 
     // Test the results
-    var iter = cmds.arch_changes.iterator();
+    var iter = cmds.iterator();
 
     {
         const cmd = iter.next().?;
@@ -312,7 +312,7 @@ test "command buffer overflow" {
 
         try expectEqual(1.0, cmds.worstCaseUsage());
 
-        var iter = cmds.arch_changes.iterator();
+        var iter = cmds.iterator();
         try expectEqual(null, iter.next());
     }
 
@@ -338,7 +338,7 @@ test "command buffer overflow" {
 
         try expectEqual(1, cmds.destroy.items.len);
         try expectEqual(e, cmds.destroy.items[0]);
-        var iter = cmds.arch_changes.iterator();
+        var iter = cmds.iterator();
         try expectEqual(null, iter.next());
     }
 
@@ -368,7 +368,7 @@ test "command buffer overflow" {
 
         try expectEqual(1, cmds.destroy.items.len);
         try expectEqual(e, cmds.destroy.items[0]);
-        var iter = cmds.arch_changes.iterator();
+        var iter = cmds.iterator();
         const arch_change = iter.next().?;
         var ops = arch_change.iterator();
         const create_rb = ops.next().?.add;

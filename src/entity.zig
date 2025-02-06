@@ -216,8 +216,8 @@ pub const Entity = packed struct {
         errdefer cmds.* = restore;
 
         // Issue the subcommands
-        try SubCmd.encode(&cmds.arch_changes, .{ .bind_entity = self });
-        try SubCmd.encode(&cmds.arch_changes, .{ .add_comp_val = comp });
+        try SubCmd.encode(cmds, .{ .bind_entity = self });
+        try SubCmd.encode(cmds, .{ .add_comp_val = comp });
     }
 
     /// Similar to `addCompCmd`, but doesn't require compile time types and forces the component to
@@ -239,8 +239,8 @@ pub const Entity = packed struct {
         errdefer cmds.* = restore;
 
         // Issue the subcommands
-        try SubCmd.encode(&cmds.arch_changes, .{ .bind_entity = self });
-        try SubCmd.encode(&cmds.arch_changes, .{ .add_comp_ptr = comp });
+        try SubCmd.encode(cmds, .{ .bind_entity = self });
+        try SubCmd.encode(cmds, .{ .add_comp_ptr = comp });
     }
 
     /// Queues the given component to be removed. Has no effect if the component is not present, or
@@ -288,8 +288,8 @@ pub const Entity = packed struct {
         errdefer cmds.* = restore;
 
         // Issue the subcommands
-        try SubCmd.encode(&cmds.arch_changes, .{ .bind_entity = self });
-        try SubCmd.encode(&cmds.arch_changes, .{ .remove_comp = id });
+        try SubCmd.encode(cmds, .{ .bind_entity = self });
+        try SubCmd.encode(cmds, .{ .remove_comp = id });
     }
 
     /// Queues the entity to be committed. Has no effect if it has already been committed, called
@@ -307,7 +307,7 @@ pub const Entity = packed struct {
         errdefer cmds.* = restore;
 
         // Issue the subcommand
-        try SubCmd.encode(&cmds.arch_changes, .{ .bind_entity = self });
+        try SubCmd.encode(cmds, .{ .bind_entity = self });
     }
 
     pub const ChangeArchImmediateOptions = struct {
