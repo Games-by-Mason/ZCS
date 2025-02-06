@@ -53,6 +53,23 @@ pub fn UnwrapField(T: type) type {
     return C;
 }
 
+/// If the type is optional, returns it. Otherwise makes it optional and returns it.
+///
+/// See `makeOptional`.
+pub fn AsOptional(T: type) type {
+    return switch (@typeInfo(T)) {
+        .optional => T,
+        else => ?T,
+    };
+}
+
+/// Given an optional value, returns it unchanged. Given a non-optional value, returns it as an
+/// optional. Useful for referencing components on a view that may or may not be optional from a
+/// mixin.
+pub fn asOptional(self: anytype) AsOptional(@TypeOf(self)) {
+    return self;
+}
+
 /// Mixins for use with views.
 ///
 /// Here's an example of how to use a mixin:
@@ -62,15 +79,24 @@ pub fn UnwrapField(T: type) type {
 ///     foo: *Foo,
 /// };
 /// ```
-pub fn Mixins(View: type) type {
+///
+/// User defined components may provide their own mixins by following this pattern.
+///
+/// By convention, node fields are named after their types (but with snake case), and entity fields
+/// are named `entity`. User defined mixins may assume these conventions are upheld, and may assume
+/// the presence of other mixins.
+///
+/// If a user defined mixin should support both optional and non optional components of a given
+/// type, see the convention set by `ext.Node.Mixins.getNode`.
+pub fn Mixins(Self: type) type {
     return struct {
         /// Initializes the view, or returns `null` if the entity does not exist or is missing any
         /// required components.
-        pub fn init(es: *const Entities, e: Entity) ?View {
+        pub fn init(es: *const Entities, e: Entity) ?Self {
             // Check if entity has the required components
             const slot = es.slots.get(e.key) orelse return null;
             var view_arch: types.CompFlag.Set = .{};
-            inline for (@typeInfo(View).@"struct".fields) |field| {
+            inline for (@typeInfo(Self).@"struct".fields) |field| {
                 if (field.type != Entity and @typeInfo(field.type) != .optional) {
                     const Unwrapped = UnwrapField(field.type);
                     const flag = compId(Unwrapped).flag orelse return null;
@@ -80,8 +106,8 @@ pub fn Mixins(View: type) type {
             if (!slot.arch.supersetOf(view_arch)) return null;
 
             // Fill in the view
-            var result: View = undefined;
-            inline for (@typeInfo(View).@"struct".fields) |field| {
+            var result: Self = undefined;
+            inline for (@typeInfo(Self).@"struct".fields) |field| {
                 const Unwrapped = UnwrapField(field.type);
                 if (Unwrapped == Entity) {
                     @field(result, field.name) = e;

@@ -24,13 +24,43 @@ first_child: Entity.Optional = .none,
 prev_sib: Entity.Optional = .none,
 next_sib: Entity.Optional = .none,
 
-const View = struct {
+/// View mixins for working with nodes.
+pub fn Mixins(Self: type) type {
+    return struct {
+        pub fn getParent(self: Self, es: *const Entities) ?Self {
+            const node = view.asOptional(self.node) orelse return null;
+            const parent = node.parent.unwrap() orelse return null;
+            return Self.init(es, parent).?;
+        }
+
+        pub fn getFirstChild(self: Self, es: *const Entities) ?Self {
+            const node = view.asOptional(self.node) orelse return null;
+            const first_child = node.first_child.unwrap() orelse return null;
+            return Self.init(es, first_child).?;
+        }
+
+        pub fn getPrevSib(self: Self, es: *const Entities) ?Self {
+            const node = view.asOptional(self.node) orelse return null;
+            const prev_sib = node.prev_sib.unwrap() orelse return null;
+            return Self.init(es, prev_sib).?;
+        }
+
+        pub fn getNextSib(self: Self, es: *const Entities) ?Self {
+            const node = view.asOptional(self.node) orelse return null;
+            const next_sib = node.next_sib.unwrap() orelse return null;
+            return Self.init(es, next_sib).?;
+        }
+    };
+}
+
+/// A view of an entity containing a node.
+pub const View = struct {
     entity: Entity,
     node: *Node,
 
     pub const init = view.Mixins(@This()).init;
 
-    fn gop(es: *Entities, entity: Entity) ?View {
+    pub fn gop(es: *Entities, entity: Entity) ?View {
         return .{
             .entity = entity,
             .node = entity.getComp(es, Node) orelse b: {
@@ -42,15 +72,10 @@ const View = struct {
         };
     }
 
-    fn getParent(self: @This(), es: *const Entities) ?View {
-        const parent = self.node.parent.unwrap() orelse return null;
-        return @This().init(es, parent).?;
-    }
-
-    fn getPrevSib(self: @This(), es: *const Entities) ?View {
-        const prev_sib = self.node.prev_sib.unwrap() orelse return null;
-        return @This().init(es, prev_sib).?;
-    }
+    pub const getParent = Mixins(@This()).getParent;
+    pub const getFirstChild = Mixins(@This()).getFirstChild;
+    pub const getPrevSib = Mixins(@This()).getPrevSib;
+    pub const getNextSib = Mixins(@This()).getNextSib;
 };
 
 /// Parents `child` and `parent` immediately.
