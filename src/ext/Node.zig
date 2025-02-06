@@ -24,58 +24,55 @@ first_child: Entity.Optional = .none,
 prev_sib: Entity.Optional = .none,
 next_sib: Entity.Optional = .none,
 
-/// View mixins for working with nodes.
-pub fn Mixins(Self: type) type {
-    return struct {
-        pub fn getParent(self: Self, es: *const Entities) ?Self {
-            const node = view.asOptional(self.node) orelse return null;
-            const parent = node.parent.unwrap() orelse return null;
-            return Self.init(es, parent).?;
-        }
-
-        pub fn getFirstChild(self: Self, es: *const Entities) ?Self {
-            const node = view.asOptional(self.node) orelse return null;
-            const first_child = node.first_child.unwrap() orelse return null;
-            return Self.init(es, first_child).?;
-        }
-
-        pub fn getPrevSib(self: Self, es: *const Entities) ?Self {
-            const node = view.asOptional(self.node) orelse return null;
-            const prev_sib = node.prev_sib.unwrap() orelse return null;
-            return Self.init(es, prev_sib).?;
-        }
-
-        pub fn getNextSib(self: Self, es: *const Entities) ?Self {
-            const node = view.asOptional(self.node) orelse return null;
-            const next_sib = node.next_sib.unwrap() orelse return null;
-            return Self.init(es, next_sib).?;
-        }
-    };
-}
-
 /// A view of an entity containing a node.
 pub const View = struct {
     entity: Entity,
     node: *Node,
 
-    pub const init = view.Mixins(@This()).init;
-
-    pub fn gop(es: *Entities, entity: Entity) ?View {
-        return .{
-            .entity = entity,
-            .node = entity.getComp(es, Node) orelse b: {
-                if (!entity.changeArchImmediate(es, .{ .add = &.{.init(Node, &.{})} })) {
-                    return null;
-                }
-                break :b entity.getComp(es, Node).?;
-            },
-        };
-    }
-
+    pub const initOrAddNodeImmediate = Mixins(@This()).initOrAddNodeImmediate;
+    pub const initOrAddNodeImmediateOrErr = Mixins(@This()).initOrAddNodeImmediateOrErr;
     pub const getParent = Mixins(@This()).getParent;
     pub const getFirstChild = Mixins(@This()).getFirstChild;
     pub const getPrevSib = Mixins(@This()).getPrevSib;
     pub const getNextSib = Mixins(@This()).getNextSib;
+
+    /// View mixins for working with custom views that contain nodes.
+    pub fn Mixins(Self: type) type {
+        return struct {
+            pub fn initOrAddNodeImmediate(e: Entity, es: *Entities) ?Self {
+                return @This().initOrAddNodeImmediateOrErr(e, es) catch |err|
+                    @panic(@errorName(err));
+            }
+
+            pub fn initOrAddNodeImmediateOrErr(e: Entity, es: *Entities) error{ZcsCompOverflow}!?Self {
+                return e.viewOrAddCompsImmediateOrErr(es, Self, .{ .node = &Node{} });
+            }
+
+            pub fn getParent(self: Self, es: *const Entities) ?Self {
+                const node = view.asOptional(self.node) orelse return null;
+                const parent = node.parent.unwrap() orelse return null;
+                return parent.view(es, Self).?;
+            }
+
+            pub fn getFirstChild(self: Self, es: *const Entities) ?Self {
+                const node = view.asOptional(self.node) orelse return null;
+                const first_child = node.first_child.unwrap() orelse return null;
+                return first_child.view(es, Self).?;
+            }
+
+            pub fn getPrevSib(self: Self, es: *const Entities) ?Self {
+                const node = view.asOptional(self.node) orelse return null;
+                const prev_sib = node.prev_sib.unwrap() orelse return null;
+                return prev_sib.view(es, Self).?;
+            }
+
+            pub fn getNextSib(self: Self, es: *const Entities) ?Self {
+                const node = view.asOptional(self.node) orelse return null;
+                const next_sib = node.next_sib.unwrap() orelse return null;
+                return next_sib.view(es, Self).?;
+            }
+        };
+    }
 };
 
 /// Parents `child` and `parent` immediately.
@@ -88,9 +85,9 @@ pub const View = struct {
 /// * If child no longer exists, no change is made
 pub fn setParentImmediate(es: *Entities, child: Entity, parent: Entity.Optional) void {
     if (child.toOptional() == parent) return;
-    const child_view: View = View.gop(es, child) orelse return;
+    const child_view: View = View.initOrAddNodeImmediate(child, es) orelse return;
     const parent_view: ?View = if (parent.unwrap()) |unwrapped| b: {
-        if (View.gop(es, unwrapped)) |v| {
+        if (View.initOrAddNodeImmediate(unwrapped, es)) |v| {
             break :b v;
         } else {
             destroyImmediate(es, unwrapped);
@@ -129,7 +126,7 @@ fn setParentImmediateInner(
         // parent
         if (break_cycles and isAncestor(es, child.entity, parent.node.parent)) {
             const op: ?View = if (original_parent.unwrap()) |unwrapped| b: {
-                const op = View.init(es, unwrapped).?;
+                const op = unwrapped.view(es, View).?;
                 break :b op;
             } else null;
             setParentImmediateInner(es, parent, op, false);
@@ -153,16 +150,16 @@ pub fn destroyImmediate(es: *Entities, e: Entity) void {
 
         // Destroy all our children depth first
         if (node.first_child.unwrap()) |start| {
-            var curr = View.init(es, start).?;
+            var curr = start.view(es, View).?;
             while (true) {
                 if (curr.node.first_child.unwrap()) |first_child| {
-                    curr = View.init(es, first_child).?;
+                    curr = first_child.view(es, View).?;
                 } else {
                     const prev = curr;
                     if (curr.node.next_sib.unwrap()) |next_sib| {
-                        curr = View.init(es, next_sib).?;
+                        curr = next_sib.view(es, View).?;
                     } else {
-                        curr = View.init(es, curr.node.parent.unwrap().?).?;
+                        curr = curr.node.parent.unwrap().?.view(es, View).?;
                         curr.node.first_child = .none;
                     }
                     prev.entity.destroyImmediate(es);

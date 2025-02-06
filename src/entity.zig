@@ -412,6 +412,92 @@ pub const Entity = packed struct {
         return .{ .key = self.key.toOptional() };
     }
 
+    /// Initializes a `view`, returning `null` if this entity does not exist or is missing any
+    /// required components.
+    pub fn view(self: @This(), es: *const Entities, View: type) ?View {
+        // Check if entity has the required components
+        const slot = es.slots.get(self.key) orelse return null;
+        var view_arch: types.CompFlag.Set = .{};
+        inline for (@typeInfo(View).@"struct".fields) |field| {
+            if (field.type != Entity and @typeInfo(field.type) != .optional) {
+                const Unwrapped = zcs.view.UnwrapField(field.type);
+                const flag = compId(Unwrapped).flag orelse return null;
+                view_arch.insert(flag);
+            }
+        }
+        if (!slot.arch.supersetOf(view_arch)) return null;
+
+        // Fill in the view and return it
+        return self.viewAssumeArch(es, View);
+    }
+
+    /// Similar to `view`, but will attempt to fill in any non-optional missing components with
+    /// the defaults from the `comps` view if present.
+    pub fn viewOrAddCompsImmediate(
+        self: @This(),
+        es: *Entities,
+        View: type,
+        comps: anytype,
+    ) ?View {
+        return self.viewOrAddCompsImmediateOrErr(es, View, comps) catch |err|
+            @panic(@errorName(err));
+    }
+
+    /// Similar to `viewOrAddCompsImmediate` but returns, but returns `error.ZcsCompOverflow`
+    /// on failure instead of panicking.
+    pub fn viewOrAddCompsImmediateOrErr(
+        self: @This(),
+        es: *Entities,
+        View: type,
+        comps: anytype,
+    ) error{ZcsCompOverflow}!?View {
+        // Figure out which components are missing
+        const slot = es.slots.get(self.key) orelse return null;
+        var view_arch: types.CompFlag.Set = .{};
+        inline for (@typeInfo(View).@"struct".fields) |field| {
+            if (field.type != Entity and @typeInfo(field.type) != .optional) {
+                const Unwrapped = zcs.view.UnwrapField(field.type);
+                const flag = types.register(compId(Unwrapped));
+                view_arch.insert(flag);
+            }
+        }
+        const missing = view_arch.differenceWith(slot.arch);
+        if (!slot.arch.supersetOf(view_arch)) {
+            assert(try self.changeArchUninitImmediateOrErr(es, .{ .add = missing }));
+        }
+
+        // Create the view
+        const result = self.viewAssumeArch(es, View);
+
+        // Fill in any uninitialized components and return the result
+        inline for (@typeInfo(View).@"struct".fields) |field| {
+            const Unwrapped = zcs.view.UnwrapField(field.type);
+            if (@hasField(@TypeOf(comps), field.name) and missing.contains(compId(Unwrapped).flag.?)) {
+                @field(result, field.name).* = @field(comps, field.name).*;
+            }
+        }
+        return result;
+    }
+
+    fn viewAssumeArch(self: @This(), es: *const Entities, View: type) View {
+        var result: View = undefined;
+        inline for (@typeInfo(View).@"struct".fields) |field| {
+            const Unwrapped = zcs.view.UnwrapField(field.type);
+            if (Unwrapped == Entity) {
+                @field(result, field.name) = self;
+                continue;
+            }
+
+            const comp = self.getComp(es, Unwrapped);
+            if (@typeInfo(field.type) == .optional) {
+                @field(result, field.name) = comp;
+            } else {
+                @field(result, field.name) = comp.?;
+            }
+        }
+        return result;
+    }
+
     /// Default formatting.
     pub fn format(
         self: @This(),

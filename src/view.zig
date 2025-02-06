@@ -6,6 +6,8 @@
 //! memory.
 //!
 //! This file provides infrastructure to support entity views.
+//!
+//! See `ext.Node.View.Mixins` for an example of adding methods to a view in a composable way.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -68,60 +70,4 @@ pub fn AsOptional(T: type) type {
 /// mixin.
 pub fn asOptional(self: anytype) AsOptional(@TypeOf(self)) {
     return self;
-}
-
-/// Mixins for use with views.
-///
-/// Here's an example of how to use a mixin:
-/// ```
-/// const MyView = struct {
-///     pub const init = zcs.view.Mixins(@This()).init; // Add an init function!
-///     foo: *Foo,
-/// };
-/// ```
-///
-/// User defined components may provide their own mixins by following this pattern.
-///
-/// By convention, node fields are named after their types (but with snake case), and entity fields
-/// are named `entity`. User defined mixins may assume these conventions are upheld, and may assume
-/// the presence of other mixins.
-///
-/// If a user defined mixin should support both optional and non optional components of a given
-/// type, see the convention set by `ext.Node.Mixins.getNode`.
-pub fn Mixins(Self: type) type {
-    return struct {
-        /// Initializes the view, or returns `null` if the entity does not exist or is missing any
-        /// required components.
-        pub fn init(es: *const Entities, e: Entity) ?Self {
-            // Check if entity has the required components
-            const slot = es.slots.get(e.key) orelse return null;
-            var view_arch: types.CompFlag.Set = .{};
-            inline for (@typeInfo(Self).@"struct".fields) |field| {
-                if (field.type != Entity and @typeInfo(field.type) != .optional) {
-                    const Unwrapped = UnwrapField(field.type);
-                    const flag = compId(Unwrapped).flag orelse return null;
-                    view_arch.insert(flag);
-                }
-            }
-            if (!slot.arch.supersetOf(view_arch)) return null;
-
-            // Fill in the view
-            var result: Self = undefined;
-            inline for (@typeInfo(Self).@"struct".fields) |field| {
-                const Unwrapped = UnwrapField(field.type);
-                if (Unwrapped == Entity) {
-                    @field(result, field.name) = e;
-                    continue;
-                }
-
-                const comp = e.getComp(es, Unwrapped);
-                if (@typeInfo(field.type) == .optional) {
-                    @field(result, field.name) = comp;
-                } else {
-                    @field(result, field.name) = comp.?;
-                }
-            }
-            return result;
-        }
-    };
 }
