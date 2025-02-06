@@ -451,6 +451,46 @@ pub const Entity = packed struct {
         View: type,
         comps: anytype,
     ) error{ZcsCompOverflow}!?View {
+        // Create the view, possibly leaving some components uninitialized
+        const result = (try self.viewOrAddCompsUninitImmediateOrErr(es, View)) orelse return null;
+
+        // Fill in any uninitialized components and return the view
+        inline for (@typeInfo(View).@"struct".fields) |field| {
+            const Unwrapped = zcs.view.UnwrapField(field.type);
+            if (@hasField(@TypeOf(comps), field.name) and
+                result.uninitialized.contains(compId(Unwrapped).flag.?))
+            {
+                @field(result.view, field.name).* = @field(comps, field.name).*;
+            }
+        }
+        return result.view;
+    }
+
+    /// The result of a `viewOrAddUninit*` call.
+    pub fn VoaUninitResult(View: type) type {
+        return struct {
+            uninitialized: types.CompFlag.Set,
+            view: View,
+        };
+    }
+
+    /// Similar to `viewOrAddCompsImmediate`, but leaves the added components uninitialized.
+    pub fn viewOrAddCompsUninitImmediate(
+        self: @This(),
+        es: *Entities,
+        View: type,
+    ) ?VoaUninitResult(View) {
+        return self.viewOrAddCompsUninitImmediate(es, View) catch |err|
+            @panic(@errorName(err));
+    }
+
+    /// Similar to `viewOrAddCompsImmediate`, but returns `error.ZcsCompOverflow` on failure instead
+    /// of panicking.
+    pub fn viewOrAddCompsUninitImmediateOrErr(
+        self: @This(),
+        es: *Entities,
+        View: type,
+    ) error{ZcsCompOverflow}!?VoaUninitResult(View) {
         // Figure out which components are missing
         const slot = es.slots.get(self.key) orelse return null;
         var view_arch: types.CompFlag.Set = .{};
@@ -461,24 +501,19 @@ pub const Entity = packed struct {
                 view_arch.insert(flag);
             }
         }
-        const missing = view_arch.differenceWith(slot.arch);
+        const uninitialized = view_arch.differenceWith(slot.arch);
         if (!slot.arch.supersetOf(view_arch)) {
-            assert(try self.changeArchUninitImmediateOrErr(es, .{ .add = missing }));
+            assert(try self.changeArchUninitImmediateOrErr(es, .{ .add = uninitialized }));
         }
 
-        // Create the view
-        const result = self.viewAssumeArch(es, View);
-
-        // Fill in any uninitialized components and return the result
-        inline for (@typeInfo(View).@"struct".fields) |field| {
-            const Unwrapped = zcs.view.UnwrapField(field.type);
-            if (@hasField(@TypeOf(comps), field.name) and missing.contains(compId(Unwrapped).flag.?)) {
-                @field(result, field.name).* = @field(comps, field.name).*;
-            }
-        }
-        return result;
+        // Create and return the view
+        return .{
+            .view = self.viewAssumeArch(es, View),
+            .uninitialized = uninitialized,
+        };
     }
 
+    /// Returns a view, asserts that the archetype is compatible.
     fn viewAssumeArch(self: @This(), es: *const Entities, View: type) View {
         var result: View = undefined;
         inline for (@typeInfo(View).@"struct".fields) |field| {
