@@ -72,13 +72,13 @@ fn run(input: []const u8, saturated: bool) !void {
 
     for (0..saturated_count) |_| {
         const e = Entity.reserveImmediate(&fz.es);
-        e.destroyImmediate(&fz.es);
+        try expect(e.destroyImmediate(&fz.es));
         const Key = @FieldType(Entities, "slots").Key;
         const Generation = @FieldType(Key, "generation");
         const invalid = @intFromEnum(Generation.invalid);
         fz.es.slots.generations[e.key.index] = @enumFromInt(invalid - 1);
         const e2 = Entity.reserveImmediate(&fz.es);
-        e2.destroyImmediate(&fz.es);
+        try expect(e2.destroyImmediate(&fz.es));
         try expect(!e.exists(&fz.es));
         try expect(!e2.exists(&fz.es));
         try expect(!e.committed(&fz.es));

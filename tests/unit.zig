@@ -596,7 +596,7 @@ test "change arch immediate" {
 
     {
         const e = Entity.reserveImmediate(&es);
-        e.destroyImmediate(&es);
+        try expect(e.destroyImmediate(&es));
         try expect(!e.changeArchImmediate(&es, .{
             .add = &.{
                 .init(RigidBody, &.{ .mass = 0.5 }),

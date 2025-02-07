@@ -72,7 +72,7 @@ pub fn initGranularCapacity(
 
 /// Destroys the command buffer.
 pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
-    for (self.reserved.items) |entity| entity.destroyImmediate(es);
+    for (self.reserved.items) |entity| assert(entity.destroyImmediate(es));
     self.reserved.deinit(gpa);
     self.comp_bytes.deinit(gpa);
     self.args.deinit(gpa);
@@ -131,71 +131,13 @@ pub fn execute(self: *@This(), es: *Entities) void {
         @panic(@errorName(err));
 }
 
-/// Similar to `execute`, but returns `error.ZcsEntityOverflow` on failure instead of panicking.
-///
-/// On overflow, all work that doesn't trigger an overflow is still completed regardless of order
-/// relative to the overflowing work.
+/// Similar to `execute`, but returns `error.ZcsEntityOverflow` on failure instead of panicking. On
+/// error, the command buffer will be partially executed.
 pub fn executeOrErr(self: *@This(), es: *Entities) error{ZcsCompOverflow}!void {
-    if (!self.executeOrOverflow(es)) return error.ZcsCompOverflow;
-}
-
-/// Submits the command buffer, returns true on success false on overflow. Pulled out into a
-/// separate function to avoid accidentally using `try` and returning before processing all
-/// commands.
-fn executeOrOverflow(self: *@This(), es: *Entities) bool {
-    var overflow = false;
-
     var cmds = self.iterator();
     while (cmds.next()) |cmd| {
-        switch (cmd) {
-            .destroy => |entity| entity.destroyImmediate(es),
-            .change_arch => |change| if (change.entity.exists(es)) {
-                var add: CompFlag.Set = .{};
-                var remove: CompFlag.Set = .{};
-
-                {
-                    var ops = change.iterator();
-                    while (ops.next()) |op| {
-                        switch (op) {
-                            .remove => |id| if (id.flag) |flag| {
-                                add.remove(flag);
-                                remove.insert(flag);
-                            },
-                            .add => |comp| {
-                                const flag = types.register(comp.id);
-                                add.insert(flag);
-                                remove.remove(flag);
-                            },
-                        }
-                    }
-
-                    _ = change.entity.changeArchUninitImmediateOrErr(es, .{
-                        .add = add,
-                        .remove = remove,
-                    }) catch |err| switch (err) {
-                        error.ZcsCompOverflow => {
-                            overflow = true;
-                            continue;
-                        },
-                    };
-                }
-
-                {
-                    var ops = change.iterator();
-                    while (ops.next()) |op| {
-                        switch (op) {
-                            .add => |comp| if (change.entity.getCompFromId(es, comp.id)) |dest| {
-                                @memcpy(dest, comp.bytes());
-                            },
-                            .remove => {},
-                        }
-                    }
-                }
-            },
-        }
+        _ = try cmd.executeOrErr(es);
     }
-
-    return !overflow;
 }
 
 /// Worst case capacity for a command buffer.
@@ -245,8 +187,23 @@ pub const Cmd = union(enum) {
     change_arch: ChangeArch,
     destroy: Entity,
 
-    /// A single archetype change, encoded as a sequence of archetype change operations. Change
-    /// operations are grouped per entity for efficient execution.
+    /// Executes the command. Returns true if the command executes, false if the entity does not
+    /// exist.
+    pub fn execute(self: @This(), es: *Entities) bool {
+        return self.executeOrErr(es) catch |err|
+            @panic(@errorName(err));
+    }
+
+    /// Similar to `execute`, but returns `error.ZcsCompOverflow` on overflow instead of panicking.
+    pub fn executeOrErr(self: @This(), es: *Entities) error{ZcsCompOverflow}!bool {
+        switch (self) {
+            .change_arch => |change_arch| return change_arch.executeOrErr(es),
+            .destroy => |entity| return entity.destroyImmediate(es),
+        }
+    }
+
+    /// A single archetype change command, encoded as a sequence of archetype change operations.
+    /// Change operations are grouped per entity for efficient execution.
     pub const ChangeArch = struct {
         /// The bound entity.
         entity: Entity,
@@ -259,6 +216,62 @@ pub const Cmd = union(enum) {
                 .decoder = self.decoder,
                 .parent = self.parent,
             };
+        }
+
+        /// Executes the change archetype command. Returns true if the change was made, false if the
+        /// entity does not exist.
+        pub fn execute(self: @This(), es: *Entities) bool {
+            self.executeOrErr(es) catch |err|
+                @panic(@errorName(err));
+        }
+
+        /// Similar to `execute`, but returns `error.ZcsCompOverflow` on overflow instead of
+        /// panicking.
+        pub fn executeOrErr(self: @This(), es: *Entities) error{ZcsCompOverflow}!bool {
+            // Figure out which components we need to add/remove
+            var add: CompFlag.Set = .{};
+            var remove: CompFlag.Set = .{};
+            {
+                var ops = self.iterator();
+                while (ops.next()) |op| {
+                    switch (op) {
+                        .remove => |id| if (id.flag) |flag| {
+                            add.remove(flag);
+                            remove.insert(flag);
+                        },
+                        .add => |comp| {
+                            const flag = types.register(comp.id);
+                            add.insert(flag);
+                            remove.remove(flag);
+                        },
+                    }
+                }
+            }
+
+            // Change the archetype without initializing the components, early out if it doesn't
+            // exist
+            {
+                const exists = try self.entity.changeArchUninitImmediateOrErr(es, .{
+                    .add = add,
+                    .remove = remove,
+                });
+                if (!exists) return false;
+            }
+
+            // Initialize the components and return success
+            {
+                var ops = self.iterator();
+                while (ops.next()) |op| {
+                    switch (op) {
+                        .add => |comp| if (self.entity.getCompFromId(es, comp.id)) |dest| {
+                            @memcpy(dest, comp.bytes());
+                        },
+                        .remove => {},
+                    }
+                }
+            }
+
+            return true;
         }
 
         /// An individual operation that's part of an archetype change.

@@ -109,12 +109,15 @@ pub const Entity = packed struct {
     /// Similar to `destroyCmd`, but destroys the entity immediately. Prefer `destroyCmd`.
     ///
     /// Invalidates iterators.
-    pub fn destroyImmediate(self: @This(), es: *Entities) void {
+    pub fn destroyImmediate(self: @This(), es: *Entities) bool {
         invalidateIterators(es);
         if (es.slots.get(self.key)) |slot| {
             if (!slot.committed) es.reserved_entities -= 1;
             es.live.unset(self.key.index);
             es.slots.remove(self.key);
+            return true;
+        } else {
+            return false;
         }
     }
 

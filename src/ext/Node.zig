@@ -75,7 +75,8 @@ pub const View = struct {
     }
 };
 
-/// Parents `child` and `parent` immediately.
+/// Parents `child` and `parent` immediately. Returns true if the child exists after this operation,
+/// false otherwise.
 ///
 /// * If the relationship would result in a cycle, `parent` is first moved up the tree to the level
 ///   of `child`
@@ -83,18 +84,36 @@ pub const View = struct {
 /// * If parent and child are equal, no change is made
 /// * If parent no longer exists, child is destroyed
 /// * If child no longer exists, no change is made
-pub fn setParentImmediate(es: *Entities, child: Entity, parent: Entity.Optional) void {
-    if (child.toOptional() == parent) return;
-    const child_view: View = View.initOrAddNodeImmediate(child, es) orelse return;
+pub fn setParentImmediate(es: *Entities, child: Entity, parent: Entity.Optional) bool {
+    return setParentImmediateOrErr(es, child, parent) catch |err|
+        @panic(@errorName(err));
+}
+
+/// Similar to `setParentImmediate`, but returns `error.ZcsCompOverflow` on error instead of
+/// panicking. On error, an empty node may have been added as a component to some entities, but the
+/// hierarchy is left unchanged.
+pub fn setParentImmediateOrErr(
+    es: *Entities,
+    child: Entity,
+    parent: Entity.Optional,
+) error{ZcsCompOverflow}!bool {
+    // Early out if the child and parent are the same
+    if (child.toOptional() == parent) return child.exists(es);
+
+    // Get the child view or return false if the child doesn't exist
+    const child_view: View = try View.initOrAddNodeImmediateOrErr(child, es) orelse return false;
+
+    // Get the parent view, or destroy the child if the parent view doesn't exist
     const parent_view: ?View = if (parent.unwrap()) |unwrapped| b: {
-        if (View.initOrAddNodeImmediate(unwrapped, es)) |v| {
+        if (try View.initOrAddNodeImmediateOrErr(unwrapped, es)) |v| {
             break :b v;
         } else {
-            destroyImmediate(es, unwrapped);
-            return;
+            assert(destroyImmediate(es, child));
+            return false;
         }
     } else null;
     setParentImmediateInner(es, child_view, parent_view, true);
+    return true;
 }
 
 fn setParentImmediateInner(
@@ -142,11 +161,12 @@ fn setParentImmediateInner(
     }
 }
 
-/// Destroys an entity and all of its children.
-pub fn destroyImmediate(es: *Entities, e: Entity) void {
+/// Destroys an entity and all of its children. Returns true if the entity was destroyed, false if
+/// it didn't exist.
+pub fn destroyImmediate(es: *Entities, e: Entity) bool {
     if (e.getComp(es, Node)) |node| {
         // Unparent ourselves
-        setParentImmediate(es, e, .none);
+        assert(setParentImmediate(es, e, .none));
 
         // Destroy all our children depth first
         if (node.first_child.unwrap()) |start| {
@@ -162,7 +182,7 @@ pub fn destroyImmediate(es: *Entities, e: Entity) void {
                         curr = curr.node.parent.unwrap().?.view(es, View).?;
                         curr.node.first_child = .none;
                     }
-                    prev.entity.destroyImmediate(es);
+                    assert(prev.entity.destroyImmediate(es));
                 }
                 if (curr.entity == e) break;
             }
@@ -170,7 +190,7 @@ pub fn destroyImmediate(es: *Entities, e: Entity) void {
     }
 
     // Destroy ourselves
-    e.destroyImmediate(es);
+    return e.destroyImmediate(es);
 }
 
 /// Returns true if `ancestor` is an ancestor of `descendant`, otherwise returns false. Entities

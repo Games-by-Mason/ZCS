@@ -27,9 +27,9 @@ test "node immediate" {
     const child_1 = Entity.reserveImmediate(&es);
     const child_2 = Entity.reserveImmediate(&es);
     const descendant = Entity.reserveImmediate(&es);
-    Node.setParentImmediate(&es, child_2, parent.toOptional());
-    Node.setParentImmediate(&es, child_1, parent.toOptional());
-    Node.setParentImmediate(&es, descendant, child_1.toOptional());
+    try expect(Node.setParentImmediate(&es, child_2, parent.toOptional()));
+    try expect(Node.setParentImmediate(&es, child_1, parent.toOptional()));
+    try expect(Node.setParentImmediate(&es, descendant, child_1.toOptional()));
 
     try expect(!Node.isAncestorOf(&es, empty, child_1));
     try expect(!Node.isAncestorOf(&es, child_1, empty));
@@ -49,7 +49,7 @@ test "node immediate" {
     try expectEqualEntity(child_2, children.next(&es).?);
     try expectEqual(null, children.next(&es));
 
-    Node.destroyImmediate(&es, parent);
+    try expect(Node.destroyImmediate(&es, parent));
     try expect(!parent.exists(&es));
     try expect(!child_1.exists(&es));
     try expect(!child_2.exists(&es));
@@ -156,7 +156,7 @@ fn fuzzNodeCycles(input: []const u8) !void {
     }
 }
 
-fn checkOracle(fz: *const Fuzzer, o: *const Oracle) !void {
+fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
     // Check the total entity count
     try expectEqual(o.count(), fz.es.count() + fz.es.reserved());
 
@@ -206,7 +206,9 @@ fn setParent(fz: *Fuzzer, o: *Oracle) !void {
     const child = fz.randomEntity().unwrap() orelse return;
     if (log) std.debug.print("{}.parent = {}\n", .{ child, parent });
 
-    Node.setParentImmediate(&fz.es, child, parent);
+    const result = Node.setParentImmediate(&fz.es, child, parent);
+    const exists_after = child.exists(&fz.es);
+    try expectEqual(exists_after, result);
     try setParentInOracle(fz, o, child, parent);
 }
 
@@ -215,14 +217,14 @@ fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Opti
     if (parent == child.toOptional()) return;
 
     // Early out if child doesn't exist
-    if (!child.exists(&fz.es)) return;
+    if (!o.contains(child)) return;
 
     const child_o = o.getPtr(child).?;
 
     if (parent.unwrap()) |unwrapped| {
         // If parent doesn't exist, destroy child and early out
         if (!o.contains(unwrapped)) {
-            return destroyInOracle(fz, o, unwrapped);
+            return destroyInOracle(fz, o, child);
         }
 
         // If child is an ancestor of parent, break the loop by moving parent up to the same level
@@ -263,7 +265,7 @@ fn destroy(fz: *Fuzzer, o: *Oracle) !void {
     if (log) std.debug.print("destroy {}\n", .{entity});
 
     // Destroy the real entity
-    Node.destroyImmediate(&fz.es, entity);
+    _ = Node.destroyImmediate(&fz.es, entity);
 
     // Destroy it in the oracle
     try destroyInOracle(fz, o, entity);
