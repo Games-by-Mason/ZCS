@@ -14,8 +14,11 @@ const assert = std.debug.assert;
 
 const zcs = @import("../root.zig");
 const view = zcs.view;
+const types = zcs.types;
+const compId = zcs.compId;
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
+const CmdBuf = zcs.CmdBuf;
 
 const Node = @This();
 
@@ -222,3 +225,67 @@ const ChildIterator = struct {
         return entity;
     }
 };
+
+/// Should be run before executing a command buffer command.
+pub fn beforeExecute(cmd: CmdBuf.Cmd, es: *Entities) error{ZcsCompOverflow}!void {
+    beforeExecuteOrErr(cmd, es) catch |err|
+        @panic(@errorName(err));
+}
+
+/// Similar to `beforeExecute`, but returns `error.ZcsCompOverflow` on error instead of panicking.
+pub fn beforeExecuteOrErr(cmd: CmdBuf.Cmd, es: *Entities) error{ZcsCompOverflow}!void {
+    if (cmd.getRemove().contains(types.register(compId(Node)))) {
+        destroyImmediate(cmd.getEntity(), es);
+    }
+}
+
+/// Should be run after executing a command buffer command.
+pub fn afterExecute(cmd: CmdBuf.Cmd, es: *Entities) error{ZcsCompOverflow}!void {
+    afterExecuteOrErr(cmd, es) catch |err|
+        @panic(@errorName(err));
+}
+
+/// Similar to `afterExecute`, but returns `error.ZcsCompOverflow` on error instead of panicking.
+pub fn afterExecuteOrErr(cmd: CmdBuf.Cmd, es: *Entities) error{ZcsCompOverflow}!void {
+    if (cmd.getAdd().contains(types.register(Node))) {
+        switch (cmd) {
+            .change_arch => |change_arch| {
+                // Iterate over the added components, applying any requested transformations.
+                var iter = cmd.iterator();
+                while (iter.next()) |comp| {
+                    if (comp.as(Node)) |cmd_node| {
+                        // Adding a node with the parent set is treated as a set parent command. No
+                        // other fields are allowed to be set.
+                        assert(cmd_node.first_child == .none);
+                        assert(cmd_node.prev_sib == .none);
+                        assert(cmd_node.next_sib == .none);
+
+                        // Clear the manually set parent, and then apply it properly via set parent.
+                        if (change_arch.entity.getComp(Node)) |node| {
+                            node.parent = .none;
+                        }
+                        setParentImmediateOrErr(es, change_arch.entity, cmd_node.parent);
+                    }
+                }
+            },
+            .destroy => unreachable,
+        }
+    }
+}
+
+/// Executes a command buffer, applying the node transformations along the way. This is provided as
+/// an example, in practice you likely want to copy this code directly into your code base so that
+/// other systems can also hook into the command buffer iterator.
+pub fn execute(cmds: *const CmdBuf, es: *Entities) void {
+    executeOrErr(cmds, es) catch |err|
+        @panic(@errorName(err));
+}
+
+/// Similar to `execute`, but returns `error.ZcsCompOverflow` on error instead of panicking. On
+/// error, the command buffer will be partially executed.
+pub fn executeOrErr(cmds: *const CmdBuf, es: *Entities) error{ZcsCompOverflow}!void {
+    var iter = cmds.iter();
+    while (iter.next()) |cmd| {
+        try cmd.execute(es);
+    }
+}

@@ -187,6 +187,22 @@ pub const Cmd = union(enum) {
     change_arch: ChangeArch,
     destroy: Entity,
 
+    /// Gets the component types this command adds.
+    pub fn getAdd(self: @This()) CompFlag.Set {
+        return switch (self) {
+            .change_arch => |change_arch| change_arch.add,
+            .destroy => |entity| entity.getArch(),
+        };
+    }
+
+    /// Gets the component types this command removes.
+    pub fn getRemove(self: @This()) CompFlag.Set {
+        return switch (self) {
+            .change_arch => |change_arch| change_arch.remove,
+            .destroy => .{},
+        };
+    }
+
     /// Executes the command. Returns true if the command executes, false if the entity does not
     /// exist.
     pub fn execute(self: @This(), es: *Entities) bool {
@@ -208,13 +224,13 @@ pub const Cmd = union(enum) {
         /// The bound entity.
         entity: Entity,
         decoder: SubCmd.Decoder,
-        parent: *CmdBuf.Iterator,
+        add: CompFlag.Set,
+        remove: CompFlag.Set,
 
         /// An iterator over the operations that make up this archetype change.
         pub fn iterator(self: @This()) @This().Iterator {
             return .{
                 .decoder = self.decoder,
-                .parent = self.parent,
             };
         }
 
@@ -228,46 +244,22 @@ pub const Cmd = union(enum) {
         /// Similar to `execute`, but returns `error.ZcsCompOverflow` on overflow instead of
         /// panicking.
         pub fn executeOrErr(self: @This(), es: *Entities) error{ZcsCompOverflow}!bool {
-            // Figure out which components we need to add/remove
-            var add: CompFlag.Set = .{};
-            var remove: CompFlag.Set = .{};
-            {
-                var ops = self.iterator();
-                while (ops.next()) |op| {
-                    switch (op) {
-                        .remove => |id| if (id.flag) |flag| {
-                            add.remove(flag);
-                            remove.insert(flag);
-                        },
-                        .add => |comp| {
-                            const flag = types.register(comp.id);
-                            add.insert(flag);
-                            remove.remove(flag);
-                        },
-                    }
-                }
-            }
-
             // Change the archetype without initializing the components, early out if it doesn't
             // exist
-            {
-                const exists = try self.entity.changeArchUninitImmediateOrErr(es, .{
-                    .add = add,
-                    .remove = remove,
-                });
-                if (!exists) return false;
-            }
+            const exists = try self.entity.changeArchUninitImmediateOrErr(es, .{
+                .add = self.add,
+                .remove = self.remove,
+            });
+            if (!exists) return false;
 
             // Initialize the components and return success
-            {
-                var ops = self.iterator();
-                while (ops.next()) |op| {
-                    switch (op) {
-                        .add => |comp| if (self.entity.getCompFromId(es, comp.id)) |dest| {
-                            @memcpy(dest, comp.bytes());
-                        },
-                        .remove => {},
-                    }
+            var ops = self.iterator();
+            while (ops.next()) |op| {
+                switch (op) {
+                    .add => |comp| if (self.entity.getCompFromId(es, comp.id)) |dest| {
+                        @memcpy(dest, comp.bytes());
+                    },
+                    .remove => {},
                 }
             }
 
@@ -283,7 +275,6 @@ pub const Cmd = union(enum) {
         /// An iterator over the archetype change operations.
         pub const Iterator = struct {
             decoder: SubCmd.Decoder,
-            parent: *CmdBuf.Iterator,
 
             /// Returns the next operation, or `null` if there are none.
             pub fn next(self: *@This()) ?Op {
@@ -295,12 +286,6 @@ pub const Cmd = union(enum) {
                         .remove_comp => .{ .remove = self.decoder.next().?.remove_comp },
                         .bind_entity, .destroy_entity => break,
                     };
-
-                    // If we're ahead of the parent iterator, fast forward it. This isn't necessary but saves
-                    // us from parsing the same subcommands multiple times.
-                    if (self.decoder.tag_index > self.parent.decoder.tag_index) {
-                        self.parent.decoder = self.decoder;
-                    }
 
                     // Return the operation.
                     return op;
@@ -325,12 +310,46 @@ pub const Iterator = struct {
         while (self.decoder.next()) |subcmd| {
             switch (subcmd) {
                 .destroy_entity => |entity| return .{ .destroy = entity },
-                .bind_entity => |entity| return .{ .change_arch = .{
-                    .entity = entity,
-                    .decoder = self.decoder,
-                    .parent = self,
-                } },
-                else => {},
+                .bind_entity => |entity| {
+                    // Save the encoder state for the command
+                    const op_decoder = self.decoder;
+
+                    // Read the add/remove commands preemptively, this makes for a nicer API since
+                    // in practice we're always going to read them at least once. This doesn't add
+                    // an extra pass since we would already need to do one pass to gather the set
+                    // and one to get the component data.
+                    var ops: Cmd.ChangeArch.Iterator = .{ .decoder = self.decoder };
+                    var add: CompFlag.Set = .{};
+                    var remove: CompFlag.Set = .{};
+                    while (ops.next()) |op| {
+                        switch (op) {
+                            .remove => |id| if (id.flag) |flag| {
+                                add.remove(flag);
+                                remove.insert(flag);
+                            },
+                            .add => |comp| {
+                                const flag = types.register(comp.id);
+                                add.insert(flag);
+                                remove.remove(flag);
+                            },
+                        }
+                    }
+
+                    // Fast-forward our decoder past the add/remove commands
+                    self.decoder = ops.decoder;
+
+                    // Return the archetype change command
+                    return .{ .change_arch = .{
+                        .entity = entity,
+                        .decoder = op_decoder,
+                        .add = add,
+                        .remove = remove,
+                    } };
+                },
+                .add_comp_ptr, .add_comp_val, .remove_comp => {
+                    // The API doesn't allow encoding these commands without an entity bound
+                    unreachable;
+                },
             }
         }
 
