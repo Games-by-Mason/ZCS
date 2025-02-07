@@ -3,7 +3,7 @@
 const std = @import("std");
 const zcs = @import("zcs");
 
-const Fuzzer = @import("../Fuzzer.zig");
+const Fuzzer = @import("../EntitiesFuzzer.zig");
 
 const Entity = zcs.Entity;
 const Entities = zcs.Entities;

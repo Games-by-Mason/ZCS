@@ -18,9 +18,9 @@ const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const Comp = zcs.Comp;
 
+const CmdBuf = @This();
 const SubCmd = @import("CmdBuf/sub_cmd.zig").SubCmd;
 
-destroy: std.ArrayListUnmanaged(Entity),
 tags: std.ArrayListUnmanaged(SubCmd.Tag),
 args: std.ArrayListUnmanaged(u64),
 comp_bytes: std.ArrayListAlignedUnmanaged(u8, Comp.max_align),
@@ -56,9 +56,6 @@ pub fn initGranularCapacity(
     );
     errdefer comp_bytes.deinit(gpa);
 
-    var destroy: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacity.destroy);
-    errdefer destroy.deinit(gpa);
-
     var reserved: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacity.reserved);
     errdefer reserved.deinit(gpa);
     for (0..reserved.capacity) |_| {
@@ -66,7 +63,6 @@ pub fn initGranularCapacity(
     }
 
     return .{
-        .destroy = destroy,
         .reserved = reserved,
         .tags = tags,
         .args = args,
@@ -78,7 +74,6 @@ pub fn initGranularCapacity(
 pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
     for (self.reserved.items) |entity| entity.destroyImmediate(es);
     self.reserved.deinit(gpa);
-    self.destroy.deinit(gpa);
     self.comp_bytes.deinit(gpa);
     self.args.deinit(gpa);
     self.tags.deinit(gpa);
@@ -94,7 +89,6 @@ pub fn clear(self: *@This(), es: *Entities) void {
 /// Similar to `clear`, but returns `error.ZcsEntityOverflow` when failing to refill the reserved
 /// entity list instead of panicking.
 pub fn clearOrErr(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
-    self.destroy.clearRetainingCapacity();
     self.comp_bytes.clearRetainingCapacity();
     self.args.clearRetainingCapacity();
     self.tags.clearRetainingCapacity();
@@ -113,7 +107,6 @@ pub fn worstCaseUsage(self: @This()) f32 {
     else
         reserved_used / @as(f32, @floatFromInt(self.reserved.capacity));
     return @max(
-        usage(self.destroy),
         usage(self.comp_bytes),
         usage(self.args),
         usage(self.tags),
@@ -152,60 +145,56 @@ pub fn executeOrErr(self: *@This(), es: *Entities) error{ZcsCompOverflow}!void {
 fn executeOrOverflow(self: *@This(), es: *Entities) bool {
     var overflow = false;
 
-    // Execute the destroys first since they might make some of the archetype changes redundant
-    for (self.destroy.items) |entity| {
-        entity.destroyImmediate(es);
-    }
+    var cmds = self.iterator();
+    while (cmds.next()) |cmd| {
+        switch (cmd) {
+            .destroy => |entity| entity.destroyImmediate(es),
+            .change_arch => |change| if (change.entity.exists(es)) {
+                var add: CompFlag.Set = .{};
+                var remove: CompFlag.Set = .{};
 
-    // Execute the archetype changes
-    var changes = self.iterator();
-    while (changes.next()) |change| {
-        if (change.entity.exists(es)) {
-            var add: CompFlag.Set = .{};
-            var remove: CompFlag.Set = .{};
-
-            {
-                var ops = change.iterator();
-                while (ops.next()) |op| {
-                    switch (op) {
-                        .remove => |id| if (id.flag) |flag| {
-                            add.remove(flag);
-                            remove.insert(flag);
-                        },
-                        .add => |comp| {
-                            const flag = types.register(comp.id);
-                            add.insert(flag);
-                            remove.remove(flag);
-                        },
+                {
+                    var ops = change.iterator();
+                    while (ops.next()) |op| {
+                        switch (op) {
+                            .remove => |id| if (id.flag) |flag| {
+                                add.remove(flag);
+                                remove.insert(flag);
+                            },
+                            .add => |comp| {
+                                const flag = types.register(comp.id);
+                                add.insert(flag);
+                                remove.remove(flag);
+                            },
+                        }
                     }
+
+                    _ = change.entity.changeArchUninitImmediateOrErr(es, .{
+                        .add = add,
+                        .remove = remove,
+                    }) catch |err| switch (err) {
+                        error.ZcsCompOverflow => {
+                            overflow = true;
+                            continue;
+                        },
+                    };
                 }
 
-                _ = change.entity.changeArchUninitImmediateOrErr(es, .{
-                    .add = add,
-                    .remove = remove,
-                }) catch |err| switch (err) {
-                    error.ZcsCompOverflow => {
-                        overflow = true;
-                        continue;
-                    },
-                };
-            }
-
-            {
-                var ops = change.iterator();
-                while (ops.next()) |op| {
-                    switch (op) {
-                        .add => |comp| if (change.entity.getCompFromId(es, comp.id)) |dest| {
-                            @memcpy(dest, comp.bytes());
-                        },
-                        .remove => {},
+                {
+                    var ops = change.iterator();
+                    while (ops.next()) |op| {
+                        switch (op) {
+                            .add => |comp| if (change.entity.getCompFromId(es, comp.id)) |dest| {
+                                @memcpy(dest, comp.bytes());
+                            },
+                            .remove => {},
+                        }
                     }
                 }
-            }
+            },
         }
     }
 
-    // Return whether or not we overflowed
     return !overflow;
 }
 
@@ -222,7 +211,6 @@ pub const GranularCapacity = struct {
     tags: usize,
     args: usize,
     comp_bytes: usize,
-    destroy: usize,
     reserved: usize,
 
     /// Estimates the granular capacity from worst case capacity.
@@ -240,9 +228,6 @@ pub const GranularCapacity = struct {
         // well.
         const args_cap = cap.cmds * 3;
 
-        // The most destroys we could do is the number of commands.
-        const destroy_cap = cap.cmds;
-
         // The most creates we could do is the number of commands.
         const reserved_cap = cap.cmds;
 
@@ -250,84 +235,92 @@ pub const GranularCapacity = struct {
             .tags = tags_cap,
             .args = args_cap,
             .comp_bytes = comp_bytes_cap,
-            .destroy = destroy_cap,
             .reserved = reserved_cap,
         };
     }
 };
 
-/// An individual operation that's part of an archetype change.
-pub const ArchChangeOp = union(enum) {
-    add: Comp,
-    remove: Comp.Id,
-};
+/// A single decoded command.
+pub const Cmd = union(enum) {
+    change_arch: ChangeArch,
+    destroy: Entity,
 
-/// A single command, encoded as a sequence of archetype change operations. Change operations are
-/// grouped per entity for efficient execution.
-pub const Cmd = struct {
-    /// The bound entity.
-    entity: Entity,
-    decoder: SubCmd.Decoder,
-    parent: *Iterator,
+    /// A single archetype change, encoded as a sequence of archetype change operations. Change
+    /// operations are grouped per entity for efficient execution.
+    pub const ChangeArch = struct {
+        /// The bound entity.
+        entity: Entity,
+        decoder: SubCmd.Decoder,
+        parent: *CmdBuf.Iterator,
 
-    /// An iterator over the operations that make up this archetype change.
-    pub fn iterator(self: @This()) ArchChangeOpIterator {
-        return .{
-            .decoder = self.decoder,
-            .parent = self.parent,
+        /// An iterator over the operations that make up this archetype change.
+        pub fn iterator(self: @This()) @This().Iterator {
+            return .{
+                .decoder = self.decoder,
+                .parent = self.parent,
+            };
+        }
+
+        /// An individual operation that's part of an archetype change.
+        pub const Op = union(enum) {
+            add: Comp,
+            remove: Comp.Id,
         };
-    }
+
+        /// An iterator over the archetype change operations.
+        pub const Iterator = struct {
+            decoder: SubCmd.Decoder,
+            parent: *CmdBuf.Iterator,
+
+            /// Returns the next operation, or `null` if there are none.
+            pub fn next(self: *@This()) ?Op {
+                while (self.decoder.peekTag()) |tag| {
+                    // Get the next operation
+                    const op: Op = switch (tag) {
+                        .add_comp_val => .{ .add = self.decoder.next().?.add_comp_val },
+                        .add_comp_ptr => .{ .add = self.decoder.next().?.add_comp_ptr },
+                        .remove_comp => .{ .remove = self.decoder.next().?.remove_comp },
+                        .bind_entity, .destroy_entity => break,
+                    };
+
+                    // If we're ahead of the parent iterator, fast forward it. This isn't necessary but saves
+                    // us from parsing the same subcommands multiple times.
+                    if (self.decoder.tag_index > self.parent.decoder.tag_index) {
+                        self.parent.decoder = self.decoder;
+                    }
+
+                    // Return the operation.
+                    return op;
+                }
+                return null;
+            }
+        };
+    };
 };
 
-/// An iterator over archetype change commands.
+/// An iterator over the encoded commands.
 pub const Iterator = struct {
     decoder: SubCmd.Decoder,
 
-    /// Returns the next archetype changed command, or `null` if there is none.
+    /// Returns the next command, or `null` if there is none.
     pub fn next(self: *@This()) ?Cmd {
+        _ = SubCmd.rename_when_changing_encoding;
+
         // We just return bind operations here, `Cmd` handles the add/remove commands. If the first
         // bind is `.none` it's elided, and we end up skipping the initial add/removes, but that's
         // fine since adding/removing to `.none` is a noop anyway.
         while (self.decoder.next()) |subcmd| {
             switch (subcmd) {
-                .bind_entity => |entity| return .{
+                .destroy_entity => |entity| return .{ .destroy = entity },
+                .bind_entity => |entity| return .{ .change_arch = .{
                     .entity = entity,
                     .decoder = self.decoder,
                     .parent = self,
-                },
+                } },
                 else => {},
             }
         }
 
-        return null;
-    }
-};
-
-/// An iterator over an archetype change command's operations.
-pub const ArchChangeOpIterator = struct {
-    decoder: SubCmd.Decoder,
-    parent: *Iterator,
-
-    /// Returns the next operation, or `null` if there are none.
-    pub fn next(self: *@This()) ?ArchChangeOp {
-        while (self.decoder.peekTag()) |tag| {
-            // Get the next operation
-            const op: ArchChangeOp = switch (tag) {
-                .add_comp_val => .{ .add = self.decoder.next().?.add_comp_val },
-                .add_comp_ptr => .{ .add = self.decoder.next().?.add_comp_ptr },
-                .remove_comp => .{ .remove = self.decoder.next().?.remove_comp },
-                .bind_entity => break,
-            };
-
-            // If we're ahead of the parent iterator, fast forward it. This isn't necessary but saves
-            // us from parsing the same subcommands multiple times.
-            if (self.decoder.tag_index > self.parent.decoder.tag_index) {
-                self.parent.decoder = self.decoder;
-            }
-
-            // Return the operation.
-            return op;
-        }
         return null;
     }
 };

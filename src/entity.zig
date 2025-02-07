@@ -103,13 +103,7 @@ pub const Entity = packed struct {
     /// Similar to `destroyCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
     pub fn destroyCmdOrErr(self: @This(), cmds: *CmdBuf) error{ZcsCmdBufOverflow}!void {
-        // Check capacity
-        if (cmds.destroy.items.len >= cmds.destroy.capacity) {
-            return error.ZcsCmdBufOverflow;
-        }
-
-        // Queue the command
-        cmds.destroy.appendAssumeCapacity(self);
+        try SubCmd.encode(cmds, .{ .destroy_entity = self });
     }
 
     /// Similar to `destroyCmd`, but destroys the entity immediately. Prefer `destroyCmd`.
@@ -298,7 +292,6 @@ pub const Entity = packed struct {
         self.commitCmdOrErr(cmds) catch |err|
             @panic(@errorName(err));
     }
-
     /// Similar to `commitCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
     pub fn commitCmdOrErr(self: @This(), cmds: *CmdBuf) error{ZcsCmdBufOverflow}!void {

@@ -12,6 +12,9 @@ const Entities = zcs.Entities;
 /// For internal use. Archetype change commands are composed of a sequence of one  or more
 /// subcommands which are then encoded in a compact form.
 pub const SubCmd = union(enum) {
+    /// Destroys the given entity. Clears the bound entity if there is one to ease decoding, this
+    /// guarantees that all archetype changes start with a bind.
+    destroy_entity: Entity,
     /// Binds an existing entity.
     bind_entity: Entity,
     /// Queues components to be added by value. ID is passed as an argument, component data is
@@ -41,6 +44,10 @@ pub const SubCmd = union(enum) {
             // Decode the next subcommand
             if (self.nextTag()) |tag| {
                 switch (tag) {
+                    .destroy_entity => {
+                        const entity: Entity = @bitCast(self.nextArg().?);
+                        return .{ .destroy_entity = entity };
+                    },
                     .bind_entity => {
                         const entity: Entity = @bitCast(self.nextArg().?);
                         return .{ .bind_entity = entity };
@@ -123,6 +130,13 @@ pub const SubCmd = union(enum) {
         _ = SubCmd.rename_when_changing_encoding;
 
         switch (sub_cmd) {
+            .destroy_entity => |entity| {
+                if (cmds.tags.items.len >= cmds.tags.capacity) return error.ZcsCmdBufOverflow;
+                if (cmds.args.items.len >= cmds.args.capacity) return error.ZcsCmdBufOverflow;
+                cmds.tags.appendAssumeCapacity(.destroy_entity);
+                cmds.args.appendAssumeCapacity(@bitCast(entity));
+                cmds.bound = .none;
+            },
             .bind_entity => |entity| {
                 if (cmds.bound == entity.toOptional()) return;
                 cmds.bound = entity.toOptional();

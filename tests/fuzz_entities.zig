@@ -1,19 +1,20 @@
-//! Fuzz tests.
+//! Fuzz tests for `Entities`.
 
 const std = @import("std");
 const zcs = @import("zcs");
 
 const gpa = std.testing.allocator;
 
-const Fuzzer = @import("Fuzzer.zig");
+const Fuzzer = @import("EntitiesFuzzer.zig");
 const Comp = zcs.Comp;
 const Entity = zcs.Entity;
 const Entities = zcs.Entities;
 const CmdBuf = zcs.CmdBuf;
 
-const RigidBody = Fuzzer.RigidBody;
-const Model = Fuzzer.Model;
-const Tag = Fuzzer.Tag;
+const comps = @import("comps.zig");
+const RigidBody = comps.RigidBody;
+const Model = comps.Model;
+const Tag = comps.Tag;
 
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;

@@ -69,7 +69,7 @@ const Components = struct {
     tag: ?Tag = null,
 };
 
-test "command buffer some test decode" {
+test "command buffer test execute" {
     defer Comp.unregisterAll();
 
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
@@ -95,12 +95,14 @@ test "command buffer some test decode" {
     const e0 = Entity.reserveImmediate(&es);
     const e1 = Entity.reserveImmediate(&es);
     const e2 = Entity.reserveImmediate(&es);
+    const e3 = Entity.reserveImmediate(&es);
     e0.commitCmd(&cmds);
     e1.commitCmd(&cmds);
     const rb = RigidBody.random(rand);
     const model = Model.random(rand);
+    e3.destroyCmd(&cmds);
     e2.addCompCmd(&cmds, RigidBody, rb);
-    try expectEqual(3, es.reserved());
+    try expectEqual(4, es.reserved());
     try expectEqual(0, es.count());
     cmds.execute(&es);
     try expectEqual(0, es.reserved());
@@ -194,6 +196,7 @@ test "command buffer interning" {
 
     const e0: Entity = .reserveImmediate(&es);
     const e1: Entity = .reserveImmediate(&es);
+    const e2: Entity = .reserveImmediate(&es);
 
     // Automatic interning
     e0.addCompCmd(&cmds, Model, model_value);
@@ -209,6 +212,9 @@ test "command buffer interning" {
     e1.addCompValCmd(&cmds, .init(Model, &model_interned));
     e1.addCompValCmd(&cmds, .init(RigidBody, &rb_value));
 
+    // Throw in a destroy for good measure
+    e2.destroyCmd(&cmds);
+
     // Explicit interning
     e0.addCompPtrCmd(&cmds, .init(RigidBody, &rb_interned));
     e0.addCompPtrCmd(&cmds, .init(Model, &model_interned));
@@ -217,7 +223,7 @@ test "command buffer interning" {
     var iter = cmds.iterator();
 
     {
-        const cmd = iter.next().?;
+        const cmd = iter.next().?.change_arch;
         try expectEqual(e0, cmd.entity);
         var ops = cmd.iterator();
         const comp1 = ops.next().?.add;
@@ -228,7 +234,7 @@ test "command buffer interning" {
         try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
     }
     {
-        const cmd = iter.next().?;
+        const cmd = iter.next().?.change_arch;
         try expectEqual(e1, cmd.entity);
         var ops = cmd.iterator();
         const comp1 = ops.next().?.add;
@@ -240,7 +246,7 @@ test "command buffer interning" {
         try expectEqual(null, ops.next());
     }
     {
-        const cmd = iter.next().?;
+        const cmd = iter.next().?.change_arch;
         try expectEqual(e0, cmd.entity);
         var ops = cmd.iterator();
         const comp1 = ops.next().?.add;
@@ -252,7 +258,7 @@ test "command buffer interning" {
         try expectEqual(null, ops.next());
     }
     {
-        const cmd = iter.next().?;
+        const cmd = iter.next().?.change_arch;
         try expectEqual(e1, cmd.entity);
         var ops = cmd.iterator();
         const comp1 = ops.next().?.add;
@@ -263,8 +269,9 @@ test "command buffer interning" {
         try expectEqual(rb_value, comp2.as(RigidBody).?.*);
         try expectEqual(null, ops.next());
     }
+    try expectEqual(e2, iter.next().?.destroy);
     {
-        const cmd = iter.next().?;
+        const cmd = iter.next().?.change_arch;
         try expectEqual(e0, cmd.entity);
         var ops = cmd.iterator();
         const comp1 = ops.next().?.add;
@@ -296,7 +303,6 @@ test "command buffer overflow" {
             .tags = 0,
             .args = 100,
             .comp_bytes = 100,
-            .destroy = 0,
             .reserved = 0,
         });
         defer cmds.deinit(gpa, &es);
@@ -322,7 +328,6 @@ test "command buffer overflow" {
             .tags = 100,
             .args = 0,
             .comp_bytes = 100,
-            .destroy = 100,
             .reserved = 0,
         });
         defer cmds.deinit(gpa, &es);
@@ -332,12 +337,14 @@ test "command buffer overflow" {
             Entity.reserveImmediate(&es).commitCmdOrErr(&cmds),
         );
         const e = Entity.reserveImmediate(&es);
-        e.destroyCmd(&cmds);
+        const tags = cmds.tags.items.len;
+        const args = cmds.args.items.len;
+        try expectError(error.ZcsCmdBufOverflow, e.destroyCmdOrErr(&cmds));
+        try expectEqual(tags, cmds.tags.items.len);
+        try expectEqual(args, cmds.args.items.len);
 
         try expectEqual(1.0, cmds.worstCaseUsage());
 
-        try expectEqual(1, cmds.destroy.items.len);
-        try expectEqual(e, cmds.destroy.items[0]);
         var iter = cmds.iterator();
         try expectEqual(null, iter.next());
     }
@@ -348,7 +355,6 @@ test "command buffer overflow" {
             .tags = 100,
             .args = 100,
             .comp_bytes = @sizeOf(RigidBody) * 2 - 1,
-            .destroy = 100,
             .reserved = 0,
         });
         defer cmds.deinit(gpa, &es);
@@ -366,15 +372,15 @@ test "command buffer overflow" {
 
         try expectEqual(@as(f32, @sizeOf(RigidBody)) / @as(f32, @sizeOf(RigidBody) * 2 - 1), cmds.worstCaseUsage());
 
-        try expectEqual(1, cmds.destroy.items.len);
-        try expectEqual(e, cmds.destroy.items[0]);
         var iter = cmds.iterator();
-        const arch_change = iter.next().?;
+        const arch_change = iter.next().?.change_arch;
         var ops = arch_change.iterator();
         const create_rb = ops.next().?.add;
         try expectEqual(compId(RigidBody), create_rb.id);
         try expectEqual(rb, create_rb.as(RigidBody).?.*);
         try expectEqual(null, ops.next());
+        const destroy = iter.next().?.destroy;
+        try expectEqual(e, destroy);
         try expectEqual(null, iter.next());
     }
 
@@ -384,7 +390,6 @@ test "command buffer overflow" {
             .tags = 100,
             .args = 100,
             .comp_bytes = @sizeOf(RigidBody) * 2 - 1,
-            .destroy = 100,
             .reserved = 2,
         });
         defer cmds.deinit(gpa, &es);
@@ -399,7 +404,6 @@ test "command buffer overflow" {
         .tags = 100,
         .args = 100,
         .comp_bytes = @sizeOf(RigidBody) * 2 - 1,
-        .destroy = 100,
         .reserved = 0,
     });
     defer cmds.deinit(gpa, &es);
@@ -514,7 +518,7 @@ test "command buffer worst case capacity" {
 
     // Destroy
     {
-        for (0..cb_capacity / 2) |i| {
+        for (0..cb_capacity) |i| {
             const e: Entity = .{ .key = .{
                 .index = @intCast(i),
                 .generation = @enumFromInt(0),
@@ -525,7 +529,7 @@ test "command buffer worst case capacity" {
         try expect(cmds.worstCaseUsage() < 1.0);
         cmds.clear(&es);
 
-        for (0..cb_capacity) |i| {
+        for (0..cb_capacity * 2) |i| {
             const e: Entity = .{ .key = .{
                 .index = @intCast(i),
                 .generation = @enumFromInt(0),
