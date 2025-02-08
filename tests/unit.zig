@@ -11,8 +11,10 @@ const expectError = std.testing.expectError;
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const CmdBuf = zcs.CmdBuf;
-const Comp = zcs.Comp;
-const compId = zcs.compId;
+const Any = zcs.Any;
+const CompFlag = zcs.CompFlag;
+const TypeInfo = zcs.TypeInfo;
+const typeId = zcs.typeId;
 
 const RigidBody = struct {
     position: [2]f32 = .{ 1.0, 2.0 },
@@ -70,7 +72,7 @@ const Components = struct {
 };
 
 test "command buffer test execute" {
-    defer Comp.unregisterAll();
+    defer CompFlag.unregisterAll();
 
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
@@ -84,7 +86,7 @@ test "command buffer test execute" {
 
     var capacity: CmdBuf.GranularCapacity = .init(.{
         .cmds = 4,
-        .avg_comp_bytes = @sizeOf(RigidBody),
+        .avg_any_bytes = @sizeOf(RigidBody),
     });
     capacity.reserved = 0;
     var cmds = try CmdBuf.initGranularCapacity(gpa, &es, capacity);
@@ -157,17 +159,17 @@ test "command buffer test execute" {
     try expectEqual(null, e2.getComp(&es, Tag));
 }
 
-fn isInCompBytes(cmds: CmdBuf, ptr: *const anyopaque) bool {
-    const comp_bytes = cmds.comp_bytes.items;
-    const start = @intFromPtr(comp_bytes.ptr);
-    const end = start + comp_bytes.len;
+fn isInAnyBytes(cmds: CmdBuf, ptr: *const anyopaque) bool {
+    const any_bytes = cmds.any_bytes.items;
+    const start = @intFromPtr(any_bytes.ptr);
+    const end = start + any_bytes.len;
     const addr = @intFromPtr(ptr);
     return addr >= start and addr < end;
 }
 
 // Verify that components are interned appropriately
 test "command buffer interning" {
-    defer Comp.unregisterAll();
+    defer CompFlag.unregisterAll();
     // Assumed by this test (affects cmds submission order.) If this fails, just adjust the types to
     // make it true and the rest of the test should pass.
     comptime assert(@alignOf(RigidBody) > @alignOf(Model));
@@ -179,7 +181,7 @@ test "command buffer interning" {
     var es = try Entities.init(gpa, .{ .max_entities = 100, .comp_bytes = 100 });
     defer es.deinit(gpa);
 
-    var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .avg_comp_bytes = @sizeOf(RigidBody) });
+    var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .avg_any_bytes = @sizeOf(RigidBody) });
     defer cmds.deinit(gpa, &es);
 
     const rb_interned: RigidBody = .{
@@ -223,62 +225,102 @@ test "command buffer interning" {
     var iter = cmds.iterator();
 
     {
-        const cmd = iter.next().?.change_arch;
+        const cmd = iter.next().?;
+        try expect(!cmd.destroy);
         try expectEqual(e0, cmd.entity);
+        try expectEqual(CompFlag.set(&.{
+            CompFlag.registerImmediate(typeId(Model)),
+            CompFlag.registerImmediate(typeId(RigidBody)),
+        }), cmd.add);
+        try expectEqual(CompFlag.set(&.{}), cmd.remove);
         var ops = cmd.iterator();
         const comp1 = ops.next().?.add;
-        try expect(isInCompBytes(cmds, comp1.as(Model).?));
+        try expect(isInAnyBytes(cmds, comp1.as(Model).?));
         try expectEqual(model_value, comp1.as(Model).?.*);
         const comp2 = ops.next().?.add;
-        try expect(!isInCompBytes(cmds, comp2.as(RigidBody).?));
+        try expect(!isInAnyBytes(cmds, comp2.as(RigidBody).?));
         try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
     }
     {
-        const cmd = iter.next().?.change_arch;
+        const cmd = iter.next().?;
+        try expect(!cmd.destroy);
+        try expectEqual(CompFlag.set(&.{
+            CompFlag.registerImmediate(typeId(Model)),
+            CompFlag.registerImmediate(typeId(RigidBody)),
+        }), cmd.add);
+        try expectEqual(CompFlag.set(&.{}), cmd.remove);
         try expectEqual(e1, cmd.entity);
         var ops = cmd.iterator();
         const comp1 = ops.next().?.add;
-        try expect(isInCompBytes(cmds, comp1.as(Model).?)); // By value because it's too small!
+        try expect(isInAnyBytes(cmds, comp1.as(Model).?)); // By value because it's too small!
         try expectEqual(model_interned, comp1.as(Model).?.*);
         const comp2 = ops.next().?.add;
-        try expect(isInCompBytes(cmds, comp2.as(RigidBody).?));
+        try expect(isInAnyBytes(cmds, comp2.as(RigidBody).?));
         try expectEqual(rb_value, comp2.as(RigidBody).?.*);
         try expectEqual(null, ops.next());
     }
     {
-        const cmd = iter.next().?.change_arch;
+        const cmd = iter.next().?;
+        try expect(!cmd.destroy);
+        try expectEqual(CompFlag.set(&.{
+            CompFlag.registerImmediate(typeId(Model)),
+            CompFlag.registerImmediate(typeId(RigidBody)),
+        }), cmd.add);
+        try expectEqual(CompFlag.set(&.{}), cmd.remove);
         try expectEqual(e0, cmd.entity);
         var ops = cmd.iterator();
         const comp1 = ops.next().?.add;
-        try expect(isInCompBytes(cmds, comp1.as(Model).?));
+        try expect(isInAnyBytes(cmds, comp1.as(Model).?));
         try expectEqual(model_value, comp1.as(Model).?.*);
         const comp2 = ops.next().?.add;
-        try expect(isInCompBytes(cmds, comp2.as(RigidBody).?));
+        try expect(isInAnyBytes(cmds, comp2.as(RigidBody).?));
         try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
         try expectEqual(null, ops.next());
     }
     {
-        const cmd = iter.next().?.change_arch;
+        const cmd = iter.next().?;
+        try expect(!cmd.destroy);
+        try expectEqual(CompFlag.set(&.{
+            CompFlag.registerImmediate(typeId(Model)),
+            CompFlag.registerImmediate(typeId(RigidBody)),
+        }), cmd.add);
+        try expectEqual(CompFlag.set(&.{}), cmd.remove);
         try expectEqual(e1, cmd.entity);
         var ops = cmd.iterator();
         const comp1 = ops.next().?.add;
-        try expect(isInCompBytes(cmds, comp1.as(Model).?));
+        try expect(isInAnyBytes(cmds, comp1.as(Model).?));
         try expectEqual(model_interned, comp1.as(Model).?.*);
         const comp2 = ops.next().?.add;
-        try expect(isInCompBytes(cmds, comp2.as(RigidBody).?));
+        try expect(isInAnyBytes(cmds, comp2.as(RigidBody).?));
         try expectEqual(rb_value, comp2.as(RigidBody).?.*);
         try expectEqual(null, ops.next());
     }
-    try expectEqual(e2, iter.next().?.destroy);
     {
-        const cmd = iter.next().?.change_arch;
+        const cmd = iter.next().?;
+        try expect(cmd.destroy);
+        try expectEqual(CompFlag.set(&.{}), cmd.add);
+        try expectEqual(CompFlag.set(&.{}), cmd.remove);
+        try expectEqual(e2, cmd.entity);
+        try expectEqual(CompFlag.Set.initEmpty(), cmd.add);
+        try expectEqual(CompFlag.Set.initEmpty(), cmd.remove);
+        var ops = cmd.iterator();
+        try expectEqual(null, ops.next());
+    }
+    {
+        const cmd = iter.next().?;
+        try expect(!cmd.destroy);
+        try expectEqual(CompFlag.set(&.{
+            CompFlag.registerImmediate(typeId(Model)),
+            CompFlag.registerImmediate(typeId(RigidBody)),
+        }), cmd.add);
+        try expectEqual(CompFlag.set(&.{}), cmd.remove);
         try expectEqual(e0, cmd.entity);
         var ops = cmd.iterator();
         const comp1 = ops.next().?.add;
-        try expect(!isInCompBytes(cmds, comp1.as(RigidBody).?));
+        try expect(!isInAnyBytes(cmds, comp1.as(RigidBody).?));
         try expectEqual(rb_interned, comp1.as(RigidBody).?.*);
         const comp2 = ops.next().?.add;
-        try expect(!isInCompBytes(cmds, comp2.as(Model).?));
+        try expect(!isInAnyBytes(cmds, comp2.as(Model).?));
         try expectEqual(model_interned, comp2.as(Model).?.*);
         try expectEqual(null, ops.next());
     }
@@ -287,7 +329,7 @@ test "command buffer interning" {
 }
 
 test "command buffer overflow" {
-    defer Comp.unregisterAll();
+    defer CompFlag.unregisterAll();
     // Not very exhaustive, but checks that command buffers return the overflow error on failure to
     // append, and on submits that fail.
 
@@ -302,7 +344,7 @@ test "command buffer overflow" {
         var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
             .tags = 0,
             .args = 100,
-            .comp_bytes = 100,
+            .any_bytes = 100,
             .reserved = 0,
         });
         defer cmds.deinit(gpa, &es);
@@ -327,7 +369,7 @@ test "command buffer overflow" {
         var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
             .tags = 100,
             .args = 0,
-            .comp_bytes = 100,
+            .any_bytes = 100,
             .reserved = 0,
         });
         defer cmds.deinit(gpa, &es);
@@ -354,7 +396,7 @@ test "command buffer overflow" {
         var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
             .tags = 100,
             .args = 100,
-            .comp_bytes = @sizeOf(RigidBody) * 2 - 1,
+            .any_bytes = @sizeOf(RigidBody) * 2 - 1,
             .reserved = 0,
         });
         defer cmds.deinit(gpa, &es);
@@ -373,14 +415,27 @@ test "command buffer overflow" {
         try expectEqual(@as(f32, @sizeOf(RigidBody)) / @as(f32, @sizeOf(RigidBody) * 2 - 1), cmds.worstCaseUsage());
 
         var iter = cmds.iterator();
-        const arch_change = iter.next().?.change_arch;
-        var ops = arch_change.iterator();
-        const create_rb = ops.next().?.add;
-        try expectEqual(compId(RigidBody), create_rb.id);
-        try expectEqual(rb, create_rb.as(RigidBody).?.*);
-        try expectEqual(null, ops.next());
-        const destroy = iter.next().?.destroy;
-        try expectEqual(e, destroy);
+
+        {
+            const cmd = iter.next().?;
+            try expect(!cmd.destroy);
+            var ops = cmd.iterator();
+            const create_rb = ops.next().?.add;
+            try expectEqual(typeId(RigidBody), create_rb.id);
+            try expectEqual(rb, create_rb.as(RigidBody).?.*);
+            try expectEqual(null, ops.next());
+        }
+
+        {
+            const cmd = iter.next().?;
+            try expectEqual(e, cmd.entity);
+            try expectEqual(CompFlag.set(&.{}), cmd.add);
+            try expectEqual(CompFlag.set(&.{}), cmd.remove);
+            var ops = cmd.iterator();
+            try expectEqual(null, ops.next());
+            try expect(cmd.destroy);
+        }
+
         try expectEqual(null, iter.next());
     }
 
@@ -389,7 +444,7 @@ test "command buffer overflow" {
         var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
             .tags = 100,
             .args = 100,
-            .comp_bytes = @sizeOf(RigidBody) * 2 - 1,
+            .any_bytes = @sizeOf(RigidBody) * 2 - 1,
             .reserved = 2,
         });
         defer cmds.deinit(gpa, &es);
@@ -403,7 +458,7 @@ test "command buffer overflow" {
     var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
         .tags = 100,
         .args = 100,
-        .comp_bytes = @sizeOf(RigidBody) * 2 - 1,
+        .any_bytes = @sizeOf(RigidBody) * 2 - 1,
         .reserved = 0,
     });
     defer cmds.deinit(gpa, &es);
@@ -422,7 +477,7 @@ test "command buffer overflow" {
 
 // Verify that command buffers don't overflow before their estimated capacity
 test "command buffer worst case capacity" {
-    defer Comp.unregisterAll();
+    defer CompFlag.unregisterAll();
 
     const cb_capacity = 600;
 
@@ -432,7 +487,7 @@ test "command buffer worst case capacity" {
     });
     defer es.deinit(gpa);
 
-    var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = cb_capacity, .avg_comp_bytes = 22 });
+    var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = cb_capacity, .avg_any_bytes = 22 });
     defer cmds.deinit(gpa, &es);
 
     // Change archetype
@@ -565,7 +620,7 @@ test "format entity" {
 }
 
 test "change arch immediate" {
-    defer Comp.unregisterAll();
+    defer CompFlag.unregisterAll();
     var es = try Entities.init(gpa, .{ .max_entities = 100, .comp_bytes = 100 });
     defer es.deinit(gpa);
 
@@ -573,7 +628,7 @@ test "change arch immediate" {
         const e = Entity.reserveImmediate(&es);
         try expect(e.changeArchImmediate(&es, .{
             .add = &.{ .init(RigidBody, &.{ .mass = 1.0 }), .init(Model, &.{ .vertex_start = 2 }) },
-            .remove = &.{compId(RigidBody)},
+            .remove = CompFlag.set(&.{CompFlag.registerImmediate(typeId(RigidBody))}),
         }));
         try expectEqual(Model{ .vertex_start = 2 }, e.getComp(&es, Model).?.*);
         try expectEqual(null, e.getComp(&es, RigidBody));
@@ -587,7 +642,7 @@ test "change arch immediate" {
                 .init(RigidBody, &.{ .mass = 0.5 }),
                 .init(Model, &.{ .vertex_start = 20 }),
             },
-            .remove = &.{compId(Tag)},
+            .remove = CompFlag.set(&.{CompFlag.registerImmediate(typeId(Tag))}),
         }));
         try expectEqual(RigidBody{ .mass = 0.5 }, e.getComp(&es, RigidBody).?.*);
         try expectEqual(Model{ .vertex_start = 20 }, e.getComp(&es, Model).?.*);
@@ -602,16 +657,13 @@ test "change arch immediate" {
                 .init(RigidBody, &.{ .mass = 0.5 }),
                 .init(Model, &.{ .vertex_start = 20 }),
             },
-            .remove = &.{compId(Tag)},
+            .remove = CompFlag.set(&.{CompFlag.registerImmediate(typeId(Tag))}),
         }));
         try expectEqual(null, e.getComp(&es, RigidBody));
         try expectEqual(null, e.getComp(&es, Model));
         try expectEqual(null, e.getComp(&es, Tag));
 
-        try expect(!e.changeArchImmediate(&es, .{
-            .add = &.{},
-            .remove = &.{},
-        }));
+        try expect(!e.changeArchImmediate(&es, .{}));
         try expectEqual(null, e.getComp(&es, RigidBody));
         try expectEqual(null, e.getComp(&es, Model));
         try expectEqual(null, e.getComp(&es, Tag));
@@ -626,37 +678,42 @@ test "change arch immediate" {
     }
 }
 
-test "getRegistered" {
-    defer Comp.unregisterAll();
+test "getAll" {
+    defer CompFlag.unregisterAll();
     var es = try Entities.init(gpa, .{ .max_entities = 100, .comp_bytes = 100 });
     defer es.deinit(gpa);
     const e = Entity.reserveImmediate(&es);
-    try expect(e.changeArchImmediate(&es, .{ .remove = &.{ compId(RigidBody), compId(Model) } })); // Register two types
-    _ = compId(i32); // Should not result in a registration
+    // Should register two types
+    try expect(e.changeArchImmediate(&es, .{ .add = &.{
+        Any.init(RigidBody, &.{}),
+        Any.init(Model, &.{}),
+    } }));
+    // Should not result in a registration
+    _ = typeId(i32);
 
-    const registered = zcs.Comp.getRegistered();
+    const registered = CompFlag.getAll();
     try std.testing.expectEqual(2, registered.len);
     for (registered, 0..) |id, i| {
-        if (id == compId(RigidBody)) {
-            try expectEqual(id.*, Comp.Meta{
+        if (id == typeId(RigidBody)) {
+            try expectEqual(id.*, TypeInfo{
                 .name = @typeName(RigidBody),
                 .size = @sizeOf(RigidBody),
                 .alignment = @alignOf(RigidBody),
-                .flag = @enumFromInt(i),
+                .comp_flag = @enumFromInt(i),
             });
-        } else if (id == compId(Model)) {
-            try expectEqual(id.*, Comp.Meta{
+        } else if (id == typeId(Model)) {
+            try expectEqual(id.*, TypeInfo{
                 .name = @typeName(Model),
                 .size = @sizeOf(Model),
                 .alignment = @alignOf(Model),
-                .flag = @enumFromInt(i),
+                .comp_flag = @enumFromInt(i),
             });
         } else std.debug.panic("unexpected registration: {}", .{id.*});
     }
 }
 
 test "entity overflow" {
-    defer Comp.unregisterAll();
+    defer CompFlag.unregisterAll();
     var es = try Entities.init(gpa, .{ .max_entities = 3, .comp_bytes = 4 });
     defer es.deinit(gpa);
 

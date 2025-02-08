@@ -11,10 +11,9 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const zcs = @import("root.zig");
-const types = @import("types.zig");
-const CompFlag = types.CompFlag;
-const compId = zcs.compId;
-const Comp = zcs.Comp;
+const typeId = zcs.typeId;
+const Any = zcs.Any;
+const CompFlag = zcs.CompFlag;
 const slot_map = @import("slot_map");
 const SlotMap = slot_map.SlotMap;
 const Entity = zcs.Entity;
@@ -24,13 +23,15 @@ const Entities = @This();
 
 const IteratorGeneration = if (std.debug.runtime_safety) u64 else u0;
 
+const max_align = zcs.TypeInfo.max_align;
+
 pub const Slot = struct {
     arch: CompFlag.Set,
     committed: bool,
 };
 
 slots: SlotMap(Slot, .{}),
-comps: *[CompFlag.max][]align(Comp.max_align) u8,
+comps: *[CompFlag.max][]align(max_align) u8,
 live: std.DynamicBitSetUnmanaged,
 iterator_generation: IteratorGeneration = 0,
 reserved_entities: usize = 0,
@@ -48,13 +49,13 @@ pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
     var slots = try SlotMap(Slot, .{}).init(gpa, capacity.max_entities);
     errdefer slots.deinit(gpa);
 
-    const comps = try gpa.create([CompFlag.max][]align(Comp.max_align) u8);
+    const comps = try gpa.create([CompFlag.max][]align(max_align) u8);
     errdefer gpa.destroy(comps);
 
     comptime var comps_init = 0;
     errdefer for (0..comps_init) |i| gpa.free(comps[i]);
     inline for (comps) |*comp| {
-        comp.* = try gpa.alignedAlloc(u8, Comp.max_align, capacity.comp_bytes);
+        comp.* = try gpa.alignedAlloc(u8, max_align, capacity.comp_bytes);
         comps_init += 1;
     }
 
@@ -122,6 +123,8 @@ pub const Iterator = struct {
         if (self.generation != self.es.iterator_generation) {
             @panic("called next after iterator was invalidated");
         }
+        // Keep in mind that in view iterator, we're using max index to indicate that the iterator
+        // is invalid.
         while (self.index < self.es.slots.next_index) {
             const index = self.index;
             self.index += 1;
@@ -144,22 +147,25 @@ pub const Iterator = struct {
 pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
     var base: view.Comps(View) = undefined;
     var required_comps: CompFlag.Set = .{};
-    inline for (@typeInfo(view.Comps(View)).@"struct".fields) |field| {
+    const valid = inline for (@typeInfo(view.Comps(View)).@"struct".fields) |field| {
         const T = view.UnwrapField(field.type);
-
-        const flag = types.register(compId(T));
         if (@typeInfo(field.type) != .optional) {
-            required_comps.insert(flag);
+            if (typeId(T).comp_flag) |flag| {
+                required_comps.insert(flag);
+            } else break false;
         }
-        @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(flag)]);
-    }
+
+        if (typeId(T).comp_flag) |flag| {
+            @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(flag)]);
+        }
+    } else true;
 
     return .{
         .es = self,
         .entity_iterator = .{
             .es = self,
             .required_comps = required_comps,
-            .index = 0,
+            .index = if (valid) 0 else std.math.maxInt(@FieldType(Iterator, "index")),
             .generation = self.iterator_generation,
         },
         .base = base,
@@ -188,13 +194,20 @@ pub fn ViewIterator(View: type) type {
                         const slot = self.es.slots.values[entity.key.index];
                         assert(slot.committed);
 
-                        // Check if the field is required. If it is then we must have the component
-                        // since the normal iterator gave us the entity. If it's optional, check for
-                        // ourselves if we have it. We can unwrap the flag because the iterator
-                        // initialization code registers the types it's given.
-                        if (@typeInfo(field.type) != .optional or
-                            slot.arch.contains(compId(T).flag.?))
-                        {
+                        // Check if we have the component or not
+                        const has_comp = if (@typeInfo(field.type) == .optional) b: {
+                            // If the component type isn't registered, we definitely don't have it
+                            const flag = typeId(T).comp_flag orelse break :b false;
+
+                            // If it has a flag, check if we have it
+                            break :b slot.arch.contains(flag);
+                        } else b: {
+                            // If the component isn't optional, we can assume we have it
+                            break :b true;
+                        };
+
+                        // Set the field's comp pointer
+                        if (has_comp) {
                             // We have the component, pass it to the caller
                             const base = @intFromPtr(@field(self.base, field.name));
                             const offset = entity.key.index * @sizeOf(T);
@@ -211,12 +224,6 @@ pub fn ViewIterator(View: type) type {
             }
 
             return null;
-        }
-
-        /// Destroys the current entity without invalidating this iterator. May invalidate other
-        /// iterators.
-        pub fn destroyCurrentImmediately(self: *@This(), es: *Entities) void {
-            self.entity_iterator.destroyCurrentImmediately(es);
         }
     };
 }

@@ -12,11 +12,9 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const zcs = @import("root.zig");
-const types = @import("types.zig");
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
-const Comp = zcs.Comp;
-const compId = zcs.compId;
+const Any = zcs.Any;
 
 /// Given a view type, returns a new view type with all the same component fields but no entity
 /// fields.
@@ -51,7 +49,7 @@ pub fn UnwrapField(T: type) type {
 
     // Get the component type, assert it's a valid component type and return it
     const C = @typeInfo(Ptr).pointer.child;
-    types.assertValidComponentType(C);
+    zcs.TypeInfo.checkType(C);
     return C;
 }
 

@@ -13,7 +13,6 @@ const Parser = @import("Parser.zig");
 const Entities = zcs.Entities;
 const CmdBuf = zcs.CmdBuf;
 const Entity = zcs.Entity;
-const Comp = zcs.Comp;
 const typeId = zcs.typeId;
 
 const comps = @import("comps.zig");

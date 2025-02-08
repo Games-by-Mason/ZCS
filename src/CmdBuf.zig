@@ -12,18 +12,18 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const zcs = @import("root.zig");
-const types = @import("types.zig");
-const CompFlag = types.CompFlag;
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
-const Comp = zcs.Comp;
+const Any = zcs.Any;
+const TypeId = zcs.TypeId;
+const CompFlag = zcs.CompFlag;
 
 const CmdBuf = @This();
 const SubCmd = @import("CmdBuf/sub_cmd.zig").SubCmd;
 
 tags: std.ArrayListUnmanaged(SubCmd.Tag),
 args: std.ArrayListUnmanaged(u64),
-comp_bytes: std.ArrayListAlignedUnmanaged(u8, Comp.max_align),
+any_bytes: std.ArrayListAlignedUnmanaged(u8, zcs.TypeInfo.max_align),
 bound: Entity.Optional = .none,
 reserved: std.ArrayListUnmanaged(Entity),
 
@@ -50,11 +50,11 @@ pub fn initGranularCapacity(
     var args: std.ArrayListUnmanaged(u64) = try .initCapacity(gpa, capacity.args);
     errdefer args.deinit(gpa);
 
-    var comp_bytes: std.ArrayListAlignedUnmanaged(u8, Comp.max_align) = try .initCapacity(
+    var any_bytes: std.ArrayListAlignedUnmanaged(u8, zcs.TypeInfo.max_align) = try .initCapacity(
         gpa,
-        capacity.comp_bytes,
+        capacity.any_bytes,
     );
-    errdefer comp_bytes.deinit(gpa);
+    errdefer any_bytes.deinit(gpa);
 
     var reserved: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacity.reserved);
     errdefer reserved.deinit(gpa);
@@ -66,7 +66,7 @@ pub fn initGranularCapacity(
         .reserved = reserved,
         .tags = tags,
         .args = args,
-        .comp_bytes = comp_bytes,
+        .any_bytes = any_bytes,
     };
 }
 
@@ -74,7 +74,7 @@ pub fn initGranularCapacity(
 pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
     for (self.reserved.items) |entity| assert(entity.destroyImmediate(es));
     self.reserved.deinit(gpa);
-    self.comp_bytes.deinit(gpa);
+    self.any_bytes.deinit(gpa);
     self.args.deinit(gpa);
     self.tags.deinit(gpa);
     self.* = undefined;
@@ -89,7 +89,7 @@ pub fn clear(self: *@This(), es: *Entities) void {
 /// Similar to `clear`, but returns `error.ZcsEntityOverflow` when failing to refill the reserved
 /// entity list instead of panicking.
 pub fn clearOrErr(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
-    self.comp_bytes.clearRetainingCapacity();
+    self.any_bytes.clearRetainingCapacity();
     self.args.clearRetainingCapacity();
     self.tags.clearRetainingCapacity();
     self.bound = .none;
@@ -107,7 +107,7 @@ pub fn worstCaseUsage(self: @This()) f32 {
     else
         reserved_used / @as(f32, @floatFromInt(self.reserved.capacity));
     return @max(
-        usage(self.comp_bytes),
+        usage(self.any_bytes),
         usage(self.args),
         usage(self.tags),
         reserved_usage,
@@ -144,15 +144,15 @@ pub fn executeOrErr(self: *@This(), es: *Entities) error{ZcsCompOverflow}!void {
 pub const Capacity = struct {
     /// Space for at least this many commands will be reserved.
     cmds: usize,
-    /// Space for an average of at least this many bytes per component will be reserved.
-    avg_comp_bytes: usize,
+    /// Space for an average of at least this many bytes per `Any` will be reserved.
+    avg_any_bytes: usize,
 };
 
 /// Per buffer capacity. Prefer `Capacity`.
 pub const GranularCapacity = struct {
     tags: usize,
     args: usize,
-    comp_bytes: usize,
+    any_bytes: usize,
     reserved: usize,
 
     /// Estimates the granular capacity from worst case capacity.
@@ -160,7 +160,7 @@ pub const GranularCapacity = struct {
         _ = SubCmd.rename_when_changing_encoding;
 
         // Each command can have at most one component's worth of component data.
-        const comp_bytes_cap = (cap.avg_comp_bytes + Comp.max_align) * cap.cmds;
+        const comp_bytes_cap = (cap.avg_any_bytes + zcs.TypeInfo.max_align) * cap.cmds;
 
         // Each command can have at most two tags
         const tags_cap = cap.cmds * 2;
@@ -176,83 +176,51 @@ pub const GranularCapacity = struct {
         return .{
             .tags = tags_cap,
             .args = args_cap,
-            .comp_bytes = comp_bytes_cap,
+            .any_bytes = comp_bytes_cap,
             .reserved = reserved_cap,
         };
     }
 };
 
 /// A single decoded command.
-pub const Cmd = union(enum) {
-    change_arch: ChangeArch,
-    destroy: Entity,
+pub const Cmd = struct {
+    /// The bound entity.
+    entity: Entity,
+    decoder: SubCmd.Decoder,
+    add: CompFlag.Set,
+    remove: CompFlag.Set,
+    destroy: bool,
 
-    /// Gets the component types this command adds.
-    pub fn getAdd(self: @This()) CompFlag.Set {
-        return switch (self) {
-            .change_arch => |change_arch| change_arch.add,
-            .destroy => |entity| entity.getArch(),
+    /// An iterator over the operations that make up this command.
+    pub fn iterator(self: @This()) @This().Iterator {
+        return .{
+            .decoder = self.decoder,
         };
     }
 
-    /// Gets the component types this command removes.
-    pub fn getRemove(self: @This()) CompFlag.Set {
-        return switch (self) {
-            .change_arch => |change_arch| change_arch.remove,
-            .destroy => .{},
-        };
-    }
-
-    /// Executes the command. Returns true if the command executes, false if the entity does not
-    /// exist.
-    pub fn execute(self: @This(), es: *Entities) bool {
-        return self.executeOrErr(es) catch |err|
+    /// Executes the change archetype command.
+    pub fn execute(self: @This(), es: *Entities) void {
+        self.executeOrErr(es) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `execute`, but returns `error.ZcsCompOverflow` on overflow instead of panicking.
-    pub fn executeOrErr(self: @This(), es: *Entities) error{ZcsCompOverflow}!bool {
-        switch (self) {
-            .change_arch => |change_arch| return change_arch.executeOrErr(es),
-            .destroy => |entity| return entity.destroyImmediate(es),
-        }
-    }
-
-    /// A single archetype change command, encoded as a sequence of archetype change operations.
-    /// Change operations are grouped per entity for efficient execution.
-    pub const ChangeArch = struct {
-        /// The bound entity.
-        entity: Entity,
-        decoder: SubCmd.Decoder,
-        add: CompFlag.Set,
-        remove: CompFlag.Set,
-
-        /// An iterator over the operations that make up this archetype change.
-        pub fn iterator(self: @This()) @This().Iterator {
-            return .{
-                .decoder = self.decoder,
-            };
+    /// Similar to `execute`, but returns `error.ZcsCompOverflow` on overflow instead of
+    /// panicking.
+    pub fn executeOrErr(self: @This(), es: *Entities) error{ZcsCompOverflow}!void {
+        // If the entity is set for destruction, destroy it and early out
+        if (self.destroy) {
+            _ = self.entity.destroyImmediate(es);
+            return;
         }
 
-        /// Executes the change archetype command. Returns true if the change was made, false if the
-        /// entity does not exist.
-        pub fn execute(self: @This(), es: *Entities) bool {
-            self.executeOrErr(es) catch |err|
-                @panic(@errorName(err));
-        }
-
-        /// Similar to `execute`, but returns `error.ZcsCompOverflow` on overflow instead of
-        /// panicking.
-        pub fn executeOrErr(self: @This(), es: *Entities) error{ZcsCompOverflow}!bool {
-            // Change the archetype without initializing the components, early out if it doesn't
-            // exist
-            const exists = try self.entity.changeArchUninitImmediateOrErr(es, .{
-                .add = self.add,
-                .remove = self.remove,
-            });
-            if (!exists) return false;
-
-            // Initialize the components and return success
+        // Otherwise issue the change archetype command.  If no changes were requested, this will
+        // still commit the entity.
+        if (try self.entity.changeArchUninitImmediateOrErr(es, .{
+            .add = self.add,
+            .remove = self.remove,
+        })) {
+            // Iterate over the ops and add the added components, unless they were subsequently
+            // removed
             var ops = self.iterator();
             while (ops.next()) |op| {
                 switch (op) {
@@ -262,37 +230,35 @@ pub const Cmd = union(enum) {
                     .remove => {},
                 }
             }
-
-            return true;
         }
+    }
 
-        /// An individual operation that's part of an archetype change.
-        pub const Op = union(enum) {
-            add: Comp,
-            remove: Comp.Id,
-        };
+    /// An individual operation that's part of an archetype change.
+    pub const Op = union(enum) {
+        add: Any,
+        remove: TypeId,
+    };
 
-        /// An iterator over the archetype change operations.
-        pub const Iterator = struct {
-            decoder: SubCmd.Decoder,
+    /// An iterator over the archetype change operations.
+    pub const Iterator = struct {
+        decoder: SubCmd.Decoder,
 
-            /// Returns the next operation, or `null` if there are none.
-            pub fn next(self: *@This()) ?Op {
-                while (self.decoder.peekTag()) |tag| {
-                    // Get the next operation
-                    const op: Op = switch (tag) {
-                        .add_comp_val => .{ .add = self.decoder.next().?.add_comp_val },
-                        .add_comp_ptr => .{ .add = self.decoder.next().?.add_comp_ptr },
-                        .remove_comp => .{ .remove = self.decoder.next().?.remove_comp },
-                        .bind_entity, .destroy_entity => break,
-                    };
+        /// Returns the next operation, or `null` if there are none.
+        pub fn next(self: *@This()) ?Op {
+            while (self.decoder.peekTag()) |tag| {
+                // Get the next operation
+                const op: Op = switch (tag) {
+                    .add_comp_val => .{ .add = self.decoder.next().?.add_comp_val },
+                    .add_comp_ptr => .{ .add = self.decoder.next().?.add_comp_ptr },
+                    .remove_comp => .{ .remove = self.decoder.next().?.remove_comp },
+                    .bind_entity, .destroy_entity => break,
+                };
 
-                    // Return the operation.
-                    return op;
-                }
-                return null;
+                // Return the operation.
+                return op;
             }
-        };
+            return null;
+        }
     };
 };
 
@@ -309,7 +275,13 @@ pub const Iterator = struct {
         // fine since adding/removing to `.none` is a noop anyway.
         while (self.decoder.next()) |subcmd| {
             switch (subcmd) {
-                .destroy_entity => |entity| return .{ .destroy = entity },
+                .destroy_entity => |entity| return .{
+                    .entity = entity,
+                    .destroy = true,
+                    .decoder = self.decoder,
+                    .add = .{},
+                    .remove = .{},
+                },
                 .bind_entity => |entity| {
                     // Save the encoder state for the command
                     const op_decoder = self.decoder;
@@ -318,17 +290,17 @@ pub const Iterator = struct {
                     // in practice we're always going to read them at least once. This doesn't add
                     // an extra pass since we would already need to do one pass to gather the set
                     // and one to get the component data.
-                    var ops: Cmd.ChangeArch.Iterator = .{ .decoder = self.decoder };
+                    var ops: Cmd.Iterator = .{ .decoder = self.decoder };
                     var add: CompFlag.Set = .{};
                     var remove: CompFlag.Set = .{};
                     while (ops.next()) |op| {
                         switch (op) {
-                            .remove => |id| if (id.flag) |flag| {
+                            .remove => |id| if (id.comp_flag) |flag| {
                                 add.remove(flag);
                                 remove.insert(flag);
                             },
                             .add => |comp| {
-                                const flag = types.register(comp.id);
+                                const flag = CompFlag.registerImmediate(comp.id);
                                 add.insert(flag);
                                 remove.remove(flag);
                             },
@@ -339,12 +311,13 @@ pub const Iterator = struct {
                     self.decoder = ops.decoder;
 
                     // Return the archetype change command
-                    return .{ .change_arch = .{
+                    return .{
                         .entity = entity,
                         .decoder = op_decoder,
                         .add = add,
                         .remove = remove,
-                    } };
+                        .destroy = false,
+                    };
                 },
                 .add_comp_ptr, .add_comp_val, .remove_comp => {
                     // The API doesn't allow encoding these commands without an entity bound

@@ -7,7 +7,8 @@ const Fuzzer = @import("../EntitiesFuzzer.zig");
 
 const Entity = zcs.Entity;
 const Entities = zcs.Entities;
-const Comp = zcs.Comp;
+const Any = zcs.Any;
+const CompFlag = zcs.CompFlag;
 const Node = zcs.ext.Node;
 
 const gpa = std.testing.allocator;
@@ -17,7 +18,7 @@ const expectEqual = std.testing.expectEqual;
 const log = false;
 
 test "node immediate" {
-    defer Comp.unregisterAll();
+    defer CompFlag.unregisterAll();
 
     var es = try Entities.init(gpa, .{ .max_entities = 128, .comp_bytes = 256 });
     defer es.deinit(gpa);
@@ -100,7 +101,7 @@ const Oracle = std.AutoHashMapUnmanaged(Entity, OracleNode);
 
 /// Fuzz random node operations.
 fn fuzzNodes(input: []const u8) !void {
-    defer Comp.unregisterAll();
+    defer CompFlag.unregisterAll();
 
     var fz: Fuzzer = try .init(input);
     defer fz.deinit();
@@ -133,7 +134,7 @@ fn fuzzNodes(input: []const u8) !void {
 /// occur very often when there are a large number of entities and entities are frequently removed,
 /// so we bias for it here.
 fn fuzzNodeCycles(input: []const u8) !void {
-    defer Comp.unregisterAll();
+    defer CompFlag.unregisterAll();
     var fz: Fuzzer = try .init(input);
     defer fz.deinit();
 

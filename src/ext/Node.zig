@@ -15,7 +15,7 @@ const assert = std.debug.assert;
 const zcs = @import("../root.zig");
 const view = zcs.view;
 const types = zcs.types;
-const compId = zcs.compId;
+const typeId = zcs.typeId;
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const CmdBuf = zcs.CmdBuf;
@@ -234,7 +234,7 @@ pub fn beforeExecute(cmd: CmdBuf.Cmd, es: *Entities) error{ZcsCompOverflow}!void
 
 /// Similar to `beforeExecute`, but returns `error.ZcsCompOverflow` on error instead of panicking.
 pub fn beforeExecuteOrErr(cmd: CmdBuf.Cmd, es: *Entities) error{ZcsCompOverflow}!void {
-    if (cmd.getRemove().contains(types.register(compId(Node)))) {
+    if (cmd.getRemove().contains(types.register(typeId(Node)))) {
         destroyImmediate(cmd.getEntity(), es);
     }
 }

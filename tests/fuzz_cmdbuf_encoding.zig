@@ -6,7 +6,9 @@ const zcs = @import("zcs");
 const gpa = std.testing.allocator;
 
 const Entities = zcs.Entities;
-const Comp = zcs.Comp;
+const Any = zcs.Any;
+const CompFlag = zcs.CompFlag;
+const TypeId = zcs.TypeId;
 const Entity = zcs.Entity;
 const CmdBuf = zcs.CmdBuf;
 
@@ -42,8 +44,8 @@ const OracleCmd = union(enum) {
     destroy: Entity,
     change_arch: struct {
         const Op = union(enum) {
-            add: Comp,
-            remove: Comp.Id,
+            add: Any,
+            remove: TypeId,
         };
         entity: Entity,
         ops: std.ArrayListUnmanaged(Op) = .empty,
@@ -103,7 +105,7 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
 
     var cmds: CmdBuf = try .init(gpa, &es, .{
         .cmds = cmds_capacity,
-        .avg_comp_bytes = @sizeOf(RigidBody),
+        .avg_any_bytes = @sizeOf(RigidBody),
     });
     defer cmds.deinit(gpa, &es);
 
@@ -163,21 +165,21 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
                                 .rb => {
                                     const val = try gpa.create(RigidBody);
                                     val.* = parser.next(RigidBody);
-                                    const comp: Comp = .init(RigidBody, val);
+                                    const comp: Any = .init(RigidBody, val);
                                     e.addCompValCmd(&cmds, comp);
                                     try oracle_cmd.ops.append(gpa, .{ .add = comp });
                                 },
                                 .model => {
                                     const val = try gpa.create(Model);
                                     val.* = parser.next(Model);
-                                    const comp: Comp = .init(Model, val);
+                                    const comp: Any = .init(Model, val);
                                     e.addCompValCmd(&cmds, comp);
                                     try oracle_cmd.ops.append(gpa, .{ .add = comp });
                                 },
                                 .tag => {
                                     const val = try gpa.create(Tag);
                                     val.* = parser.next(Tag);
-                                    const comp: Comp = .init(Tag, val);
+                                    const comp: Any = .init(Tag, val);
                                     e.addCompValCmd(&cmds, comp);
                                     try oracle_cmd.ops.append(gpa, .{ .add = comp });
                                 },
@@ -186,21 +188,21 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
                                 .rb => {
                                     const val = try gpa.create(RigidBody);
                                     val.* = RigidBody.interned[parser.nextLessThan(u8, RigidBody.interned.len)];
-                                    const comp: Comp = .init(RigidBody, val);
+                                    const comp: Any = .init(RigidBody, val);
                                     e.addCompPtrCmd(&cmds, comp);
                                     try oracle_cmd.ops.append(gpa, .{ .add = comp });
                                 },
                                 .model => {
                                     const val = try gpa.create(Model);
                                     val.* = Model.interned[parser.nextLessThan(u8, Model.interned.len)];
-                                    const comp: Comp = .init(Model, val);
+                                    const comp: Any = .init(Model, val);
                                     e.addCompPtrCmd(&cmds, comp);
                                     try oracle_cmd.ops.append(gpa, .{ .add = comp });
                                 },
                                 .tag => {
                                     const val = try gpa.create(Tag);
                                     val.* = Tag.interned[parser.nextLessThan(u8, Tag.interned.len)];
-                                    const comp: Comp = .init(Tag, val);
+                                    const comp: Any = .init(Tag, val);
                                     e.addCompPtrCmd(&cmds, comp);
                                     try oracle_cmd.ops.append(gpa, .{ .add = comp });
                                 },
@@ -212,19 +214,19 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
                                 .rb => {
                                     e.remCompCmd(&cmds, RigidBody);
                                     try oracle_cmd.ops.append(gpa, .{
-                                        .remove = zcs.compId(RigidBody),
+                                        .remove = zcs.typeId(RigidBody),
                                     });
                                 },
                                 .model => {
                                     e.remCompCmd(&cmds, Model);
                                     try oracle_cmd.ops.append(gpa, .{
-                                        .remove = zcs.compId(Model),
+                                        .remove = zcs.typeId(Model),
                                     });
                                 },
                                 .tag => {
                                     e.remCompCmd(&cmds, Tag);
                                     try oracle_cmd.ops.append(gpa, .{
-                                        .remove = zcs.compId(Tag),
+                                        .remove = zcs.typeId(Tag),
                                     });
                                 },
                             },
@@ -240,10 +242,17 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
         for (oracle.items) |expected| {
             switch (expected) {
                 .destroy => |expected_entity| {
-                    try expectEqual(expected_entity, iter.next().?.destroy);
+                    const cmd = iter.next().?;
+                    try expect(cmd.destroy);
+                    try expectEqual(expected_entity, cmd.entity);
+                    try expectEqual(CompFlag.Set.initEmpty(), cmd.remove);
+                    try expectEqual(CompFlag.Set.initEmpty(), cmd.add);
+                    var ops = cmd.iterator();
+                    try expectEqual(null, ops.next());
                 },
                 .change_arch => |oracle_cmd| {
-                    const cmd = iter.next().?.change_arch;
+                    const cmd = iter.next().?;
+                    try expect(!cmd.destroy);
                     try expectEqual(oracle_cmd.entity, cmd.entity);
                     var ops = cmd.iterator();
                     for (oracle_cmd.ops.items) |oracle_op| {

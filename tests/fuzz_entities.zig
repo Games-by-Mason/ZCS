@@ -6,7 +6,8 @@ const zcs = @import("zcs");
 const gpa = std.testing.allocator;
 
 const Fuzzer = @import("EntitiesFuzzer.zig");
-const Comp = zcs.Comp;
+const Any = zcs.Any;
+const CompFlag = zcs.CompFlag;
 const Entity = zcs.Entity;
 const Entities = zcs.Entities;
 const CmdBuf = zcs.CmdBuf;
@@ -57,14 +58,14 @@ fn fuzzCmdBufSaturated(input: []const u8) !void {
 }
 
 fn run(input: []const u8, saturated: bool) !void {
-    defer Comp.unregisterAll();
+    defer CompFlag.unregisterAll();
 
     var fz: Fuzzer = try .init(input);
     defer fz.deinit();
 
     var cmds: CmdBuf = try .init(gpa, &fz.es, .{
         .cmds = cmds_capacity,
-        .avg_comp_bytes = @sizeOf(RigidBody),
+        .avg_any_bytes = @sizeOf(RigidBody),
     });
     defer cmds.deinit(gpa, &fz.es);
 

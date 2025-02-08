@@ -4,17 +4,16 @@ const assert = std.debug.assert;
 const zcs = @import("root.zig");
 const slot_map = @import("slot_map");
 
-const compId = zcs.compId;
+const typeId = zcs.typeId;
 
 const SubCmd = @import("CmdBuf/sub_cmd.zig").SubCmd;
 
-const types = @import("types.zig");
-const CompFlag = types.CompFlag;
-
 const SlotMap = slot_map.SlotMap;
 const Entities = zcs.Entities;
-const Comp = zcs.Comp;
+const Any = zcs.Any;
+const CompFlag = zcs.CompFlag;
 const CmdBuf = zcs.CmdBuf;
+const TypeId = zcs.TypeId;
 
 /// An entity.
 ///
@@ -135,12 +134,12 @@ pub const Entity = packed struct {
     /// Returns true if the entity has the given component type, false otherwise or if the entity
     /// has been destroyed.
     pub fn hasComp(self: @This(), es: *const Entities, T: type) bool {
-        return self.hasCompId(es, compId(T));
+        return self.hastypeId(es, typeId(T));
     }
 
     /// Similar to `hasComp`, but operates on component IDs instead of types.
-    pub fn hasCompId(self: @This(), es: *const Entities, id: Comp.Id) bool {
-        const flag = id.flag orelse return false;
+    pub fn hastypeId(self: @This(), es: *const Entities, id: TypeId) bool {
+        const flag = id.comp_flag orelse return false;
         const arch = self.getArch(es);
         return arch.contains(flag);
     }
@@ -148,14 +147,14 @@ pub const Entity = packed struct {
     /// Retrieves the given component type. Returns null if the entity does not have this component
     /// or has been destroyed.
     pub fn getComp(self: @This(), es: *const Entities, T: type) ?*T {
-        const untyped = self.getCompFromId(es, compId(T)) orelse return null;
+        const untyped = self.getCompFromId(es, typeId(T)) orelse return null;
         return @alignCast(@ptrCast(untyped));
     }
 
     /// Similar to `getComp`, but operates on component IDs instead of types.
-    pub fn getCompFromId(self: @This(), es: *const Entities, id: Comp.Id) ?[]u8 {
-        const flag = id.flag orelse return null;
-        if (!self.hasCompId(es, id)) return null;
+    pub fn getCompFromId(self: @This(), es: *const Entities, id: TypeId) ?[]u8 {
+        const flag = id.comp_flag orelse return null;
+        if (!self.hastypeId(es, id)) return null;
         const comp_buffer = es.comps[@intFromEnum(flag)];
         const comp_offset = self.key.index * id.size;
         const bytes = comp_buffer.ptr + comp_offset;
@@ -196,7 +195,7 @@ pub const Entity = packed struct {
 
     /// Similar to `addCompCmd`, but doesn't require compile time types and forces the component to
     /// be copied by value. Prefer `addCompCmd`.
-    pub fn addCompValCmd(self: @This(), cmds: *CmdBuf, comp: Comp) void {
+    pub fn addCompValCmd(self: @This(), cmds: *CmdBuf, comp: Any) void {
         self.addCompValCmdOrErr(cmds, comp) catch |err|
             @panic(@errorName(err));
     }
@@ -206,7 +205,7 @@ pub const Entity = packed struct {
     pub fn addCompValCmdOrErr(
         self: @This(),
         cmds: *CmdBuf,
-        comp: Comp,
+        comp: Any,
     ) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cmds.*;
@@ -219,7 +218,7 @@ pub const Entity = packed struct {
 
     /// Similar to `addCompCmd`, but doesn't require compile time types and forces the component to
     /// be copied by pointer. Prefer `addCompCmd`.
-    pub fn addCompPtrCmd(self: @This(), cmds: *CmdBuf, comp: Comp) void {
+    pub fn addCompPtrCmd(self: @This(), cmds: *CmdBuf, comp: Any) void {
         self.addCompPtrCmdOrErr(cmds, comp) catch |err|
             @panic(@errorName(err));
     }
@@ -229,7 +228,7 @@ pub const Entity = packed struct {
     pub fn addCompPtrCmdOrErr(
         self: @This(),
         cmds: *CmdBuf,
-        comp: Comp,
+        comp: Any,
     ) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cmds.*;
@@ -260,25 +259,25 @@ pub const Entity = packed struct {
         cmds: *CmdBuf,
         T: type,
     ) error{ZcsCmdBufOverflow}!void {
-        try self.remCompIdCmdOrErr(cmds, compId(T));
+        try self.remtypeIdCmdOrErr(cmds, typeId(T));
     }
 
     /// Similar to `remCompCmd`, but doesn't require compile time types.
-    pub fn remCompIdCmd(
+    pub fn remtypeIdCmd(
         self: @This(),
         cmds: *CmdBuf,
-        id: Comp.Id,
+        id: TypeId,
     ) void {
-        self.remCompIdCmdOrErr(cmds, id) catch |err|
+        self.remtypeIdCmdOrErr(cmds, id) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `remCompCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
-    pub fn remCompIdCmdOrErr(
+    pub fn remtypeIdCmdOrErr(
         self: @This(),
         cmds: *CmdBuf,
-        id: Comp.Id,
+        id: TypeId,
     ) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cmds.*;
@@ -307,8 +306,8 @@ pub const Entity = packed struct {
     }
 
     pub const ChangeArchImmediateOptions = struct {
-        add: []const Comp = &.{},
-        remove: []const Comp.Id = &.{},
+        add: []const Any = &.{},
+        remove: CompFlag.Set = .initEmpty(),
     };
 
     /// Adds the listed components and then removes the listed component IDs.
@@ -337,22 +336,20 @@ pub const Entity = packed struct {
         // Build a set of component types to add/remove
         var add: CompFlag.Set = .{};
         for (changes.add) |comp| {
-            add.insert(types.register(comp.id));
-        }
-
-        var remove: CompFlag.Set = .{};
-        for (changes.remove) |id| {
-            remove.insert(types.register(id));
+            add.insert(CompFlag.registerImmediate(comp.id));
         }
 
         // Apply the archetype change. We already verified the entity exists.
-        assert(try self.changeArchUninitImmediateOrErr(es, .{ .add = add, .remove = remove }));
+        assert(try self.changeArchUninitImmediateOrErr(es, .{
+            .add = add,
+            .remove = changes.remove,
+        }));
 
         // Initialize the components
         for (changes.add) |comp| {
             // Unwrapping the flag is safe because we already registered it above
-            const flag = comp.id.flag.?;
-            if (!remove.contains(flag)) {
+            const flag = comp.id.comp_flag.?;
+            if (!changes.remove.contains(flag)) {
                 // Unwrapping the component is safe because we added it above
                 const dest = self.getCompFromId(es, comp.id).?;
                 @memcpy(dest, comp.bytes());
@@ -370,7 +367,7 @@ pub const Entity = packed struct {
         add: CompFlag.Set = .{},
     };
 
-    /// For internal use. Similar to `changeArchetypeOrErr`, but does not initialize the components.
+    /// Similar to `changeArchetypeOrErr`, but does not initialize the components.
     pub fn changeArchUninitImmediateOrErr(
         self: @This(),
         es: *Entities,
@@ -384,7 +381,7 @@ pub const Entity = packed struct {
         // Check if we have enough space
         var added = options.add.differenceWith(options.remove).iterator();
         while (added.next()) |flag| {
-            const id = types.registered.get(@intFromEnum(flag));
+            const id = flag.getId();
             const comp_buffer = es.comps[@intFromEnum(flag)];
             const comp_offset = self.key.index * id.size;
             if (id.size > 0 and comp_offset + id.size > comp_buffer.len) {
@@ -413,11 +410,11 @@ pub const Entity = packed struct {
     pub fn view(self: @This(), es: *const Entities, View: type) ?View {
         // Check if entity has the required components
         const slot = es.slots.get(self.key) orelse return null;
-        var view_arch: types.CompFlag.Set = .{};
+        var view_arch: CompFlag.Set = .{};
         inline for (@typeInfo(View).@"struct".fields) |field| {
             if (field.type != Entity and @typeInfo(field.type) != .optional) {
                 const Unwrapped = zcs.view.UnwrapField(field.type);
-                const flag = compId(Unwrapped).flag orelse return null;
+                const flag = typeId(Unwrapped).comp_flag orelse return null;
                 view_arch.insert(flag);
             }
         }
@@ -454,7 +451,7 @@ pub const Entity = packed struct {
         inline for (@typeInfo(View).@"struct".fields) |field| {
             const Unwrapped = zcs.view.UnwrapField(field.type);
             if (@hasField(@TypeOf(comps), field.name) and
-                result.uninitialized.contains(compId(Unwrapped).flag.?))
+                result.uninitialized.contains(typeId(Unwrapped).comp_flag.?))
             {
                 @field(result.view, field.name).* = @field(comps, field.name).*;
             }
@@ -465,7 +462,7 @@ pub const Entity = packed struct {
     /// The result of a `viewOrAddUninit*` call.
     pub fn VoaUninitResult(View: type) type {
         return struct {
-            uninitialized: types.CompFlag.Set,
+            uninitialized: CompFlag.Set,
             view: View,
         };
     }
@@ -489,11 +486,11 @@ pub const Entity = packed struct {
     ) error{ZcsCompOverflow}!?VoaUninitResult(View) {
         // Figure out which components are missing
         const slot = es.slots.get(self.key) orelse return null;
-        var view_arch: types.CompFlag.Set = .{};
+        var view_arch: CompFlag.Set = .{};
         inline for (@typeInfo(View).@"struct".fields) |field| {
             if (field.type != Entity and @typeInfo(field.type) != .optional) {
                 const Unwrapped = zcs.view.UnwrapField(field.type);
-                const flag = types.register(compId(Unwrapped));
+                const flag = CompFlag.registerImmediate(typeId(Unwrapped));
                 view_arch.insert(flag);
             }
         }
@@ -541,7 +538,7 @@ pub const Entity = packed struct {
 
     /// Returns the archetype of the entity. If it has been destroyed or is not yet committed, the
     /// empty archetype will be returned.
-    fn getArch(self: @This(), es: *const Entities) CompFlag.Set {
+    pub fn getArch(self: @This(), es: *const Entities) CompFlag.Set {
         const slot = es.slots.get(self.key) orelse return .{};
         if (!slot.committed) assert(slot.arch.eql(.{}));
         return slot.arch;

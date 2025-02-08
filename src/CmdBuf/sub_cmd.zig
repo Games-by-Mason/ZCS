@@ -5,7 +5,8 @@ const assert = std.debug.assert;
 
 const zcs = @import("../root.zig");
 const Entity = zcs.Entity;
-const Comp = zcs.Comp;
+const Any = zcs.Any;
+const TypeId = zcs.TypeId;
 const CmdBuf = zcs.CmdBuf;
 const Entities = zcs.Entities;
 
@@ -19,12 +20,12 @@ pub const SubCmd = union(enum) {
     bind_entity: Entity,
     /// Queues components to be added by value. ID is passed as an argument, component data is
     /// passed via component data.
-    add_comp_val: Comp,
+    add_comp_val: Any,
     /// Queues components to be added bye value. ID and a pointer to the component data are passed
     /// as arguments.
-    add_comp_ptr: Comp,
+    add_comp_ptr: Any,
     /// Queues a component to be removed.
-    remove_comp: Comp.Id,
+    remove_comp: TypeId,
 
     /// If a new worst case command is introduced, also update the tests!
     pub const rename_when_changing_encoding = {};
@@ -53,25 +54,25 @@ pub const SubCmd = union(enum) {
                         return .{ .bind_entity = entity };
                     },
                     .add_comp_val => {
-                        const id: Comp.Id = @ptrFromInt(self.nextArg().?);
+                        const id: TypeId = @ptrFromInt(self.nextArg().?);
                         const ptr = self.nextComponentData(id);
-                        const comp: Comp = .{
+                        const comp: Any = .{
                             .id = id,
                             .ptr = ptr,
                         };
                         return .{ .add_comp_val = comp };
                     },
                     .add_comp_ptr => {
-                        const id: Comp.Id = @ptrFromInt(self.nextArg().?);
+                        const id: TypeId = @ptrFromInt(self.nextArg().?);
                         const ptr: *const anyopaque = @ptrFromInt(self.nextArg().?);
-                        const comp: Comp = .{
+                        const comp: Any = .{
                             .id = id,
                             .ptr = ptr,
                         };
                         return .{ .add_comp_ptr = comp };
                     },
                     .remove_comp => {
-                        const id: Comp.Id = @ptrFromInt(self.nextArg().?);
+                        const id: TypeId = @ptrFromInt(self.nextArg().?);
                         return .{ .remove_comp = id };
                     },
                 }
@@ -80,7 +81,7 @@ pub const SubCmd = union(enum) {
             // Assert that we're fully empty, and return null
             assert(self.tag_index == self.cmds.tags.items.len);
             assert(self.arg_index == self.cmds.args.items.len);
-            assert(self.comp_bytes_index == self.cmds.comp_bytes.items.len);
+            assert(self.comp_bytes_index == self.cmds.any_bytes.items.len);
             return null;
         }
 
@@ -108,7 +109,7 @@ pub const SubCmd = union(enum) {
             }
         }
 
-        pub inline fn nextComponentData(self: *@This(), id: Comp.Id) *const anyopaque {
+        pub inline fn nextComponentData(self: *@This(), id: TypeId) *const anyopaque {
             // Align the read
             self.comp_bytes_index = std.mem.alignForward(
                 usize,
@@ -117,7 +118,7 @@ pub const SubCmd = union(enum) {
             );
 
             // Get the pointer as a slice, this way we don't fail on zero sized types
-            const bytes = &self.cmds.comp_bytes.items[self.comp_bytes_index..][0..id.size];
+            const bytes = &self.cmds.any_bytes.items[self.comp_bytes_index..][0..id.size];
 
             // Update the offset and return the pointer
             self.comp_bytes_index += id.size;
@@ -148,18 +149,18 @@ pub const SubCmd = union(enum) {
             .add_comp_val => |comp| {
                 const aligned = std.mem.alignForward(
                     usize,
-                    cmds.comp_bytes.items.len,
+                    cmds.any_bytes.items.len,
                     comp.id.alignment,
                 );
                 if (cmds.tags.items.len >= cmds.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (cmds.args.items.len + 1 > cmds.args.capacity) return error.ZcsCmdBufOverflow;
-                if (aligned + comp.id.size > cmds.comp_bytes.capacity) {
+                if (aligned + comp.id.size > cmds.any_bytes.capacity) {
                     return error.ZcsCmdBufOverflow;
                 }
                 cmds.tags.appendAssumeCapacity(.add_comp_val);
                 cmds.args.appendAssumeCapacity(@intFromPtr(comp.id));
-                cmds.comp_bytes.items.len = aligned;
-                cmds.comp_bytes.appendSliceAssumeCapacity(comp.constSlice());
+                cmds.any_bytes.items.len = aligned;
+                cmds.any_bytes.appendSliceAssumeCapacity(comp.constSlice());
             },
             .add_comp_ptr => |comp| {
                 if (cmds.tags.items.len >= cmds.tags.capacity) return error.ZcsCmdBufOverflow;
