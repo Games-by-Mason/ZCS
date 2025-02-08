@@ -40,38 +40,31 @@ test "rand cmdbuf encoding" {
     try fuzzCmdBufEncoding(input);
 }
 
-const OracleCmd = union(enum) {
-    destroy: Entity,
-    change_arch: struct {
-        const Op = union(enum) {
-            add: Any,
-            remove: TypeId,
-        };
-        entity: Entity,
-        ops: std.ArrayListUnmanaged(Op) = .empty,
-    },
+const OracleCmd = struct {
+    const Op = union(enum) {
+        add: Any,
+        remove: TypeId,
+        destroy,
+    };
+    entity: Entity,
+    ops: std.ArrayListUnmanaged(Op) = .empty,
 
     fn deinit(self: *@This()) void {
-        switch (self.*) {
-            .destroy => {},
-            .change_arch => |*change_arch| {
-                for (change_arch.ops.items) |op| {
-                    switch (op) {
-                        .add => |comp| if (comp.as(RigidBody)) |rb| {
-                            gpa.destroy(rb);
-                        } else if (comp.as(Model)) |m| {
-                            gpa.destroy(m);
-                        } else if (comp.as(Tag)) |t| {
-                            gpa.destroy(t);
-                        } else {
-                            @panic("unexpected component type");
-                        },
-                        .remove => {},
-                    }
-                }
-                change_arch.ops.deinit(gpa);
-            },
+        for (self.ops.items) |op| {
+            switch (op) {
+                .add => |comp| if (comp.as(RigidBody)) |rb| {
+                    gpa.destroy(rb);
+                } else if (comp.as(Model)) |m| {
+                    gpa.destroy(m);
+                } else if (comp.as(Tag)) |t| {
+                    gpa.destroy(t);
+                } else {
+                    @panic("unexpected component type");
+                },
+                .remove, .destroy => {},
+            }
         }
+        self.ops.deinit(gpa);
         self.* = undefined;
     }
 };
@@ -122,161 +115,134 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
         }
 
         for (0..parser.next(u10)) |_| {
-            switch (parser.next(enum {
-                destroy,
-                change_arch,
-            })) {
-                .destroy => {
-                    randomizeEntity(&parser, &e);
+            // Get a random entity
+            randomizeEntity(&parser, &e);
+
+            // Dedup with the last command if it's also a change arch on the same entity
+            const oracle_cmd = b: {
+                // See if we can just update the last command
+                if (oracle.items.len > 0) {
+                    const prev = &oracle.items[oracle.items.len - 1];
+                    if (prev.entity == e) break :b prev;
+                }
+
+                // Generate a new command
+                const last_cmd = oracle.addOneAssumeCapacity();
+                last_cmd.* = .{ .entity = e };
+                break :b last_cmd;
+            };
+
+            for (0..parser.nextBetween(u8, 1, 5)) |_| {
+                if (parser.next(bool)) {
                     e.destroyCmd(&cmds);
-                    oracle.appendAssumeCapacity(.{ .destroy = e });
-                },
-                .change_arch => {
-                    // Get a random entity
-                    randomizeEntity(&parser, &e);
-
-                    // Dedup with the last command if it's also a change arch on the same entity
-                    const oracle_cmd = b: {
-                        // See if we can just update the last command
-                        if (oracle.items.len > 0) {
-                            const prev = &oracle.items[oracle.items.len - 1];
-                            switch (prev.*) {
-                                .change_arch => |*change_arch| if (change_arch.entity == e) {
-                                    break :b change_arch;
-                                },
-                                else => {},
-                            }
-                        }
-
-                        // Generate a new command
-                        const last_cmd = oracle.addOneAssumeCapacity();
-                        last_cmd.* = .{ .change_arch = .{ .entity = e } };
-                        break :b &last_cmd.change_arch;
-                    };
-
-                    for (0..parser.nextBetween(u8, 1, 5)) |_| {
-                        switch (parser.next(enum {
-                            add_val,
-                            add_ptr,
-                            commit,
-                            remove,
-                        })) {
-                            .add_val => switch (parser.next(enum { rb, model, tag })) {
-                                .rb => {
-                                    const val = try gpa.create(RigidBody);
-                                    val.* = parser.next(RigidBody);
-                                    const comp: Any = .init(RigidBody, val);
-                                    e.addCompValCmd(&cmds, comp);
-                                    try oracle_cmd.ops.append(gpa, .{ .add = comp });
-                                },
-                                .model => {
-                                    const val = try gpa.create(Model);
-                                    val.* = parser.next(Model);
-                                    const comp: Any = .init(Model, val);
-                                    e.addCompValCmd(&cmds, comp);
-                                    try oracle_cmd.ops.append(gpa, .{ .add = comp });
-                                },
-                                .tag => {
-                                    const val = try gpa.create(Tag);
-                                    val.* = parser.next(Tag);
-                                    const comp: Any = .init(Tag, val);
-                                    e.addCompValCmd(&cmds, comp);
-                                    try oracle_cmd.ops.append(gpa, .{ .add = comp });
-                                },
-                            },
-                            .add_ptr => switch (parser.next(enum { rb, model, tag })) {
-                                .rb => {
-                                    const val = try gpa.create(RigidBody);
-                                    val.* = RigidBody.interned[parser.nextLessThan(u8, RigidBody.interned.len)];
-                                    const comp: Any = .init(RigidBody, val);
-                                    e.addCompPtrCmd(&cmds, comp);
-                                    try oracle_cmd.ops.append(gpa, .{ .add = comp });
-                                },
-                                .model => {
-                                    const val = try gpa.create(Model);
-                                    val.* = Model.interned[parser.nextLessThan(u8, Model.interned.len)];
-                                    const comp: Any = .init(Model, val);
-                                    e.addCompPtrCmd(&cmds, comp);
-                                    try oracle_cmd.ops.append(gpa, .{ .add = comp });
-                                },
-                                .tag => {
-                                    const val = try gpa.create(Tag);
-                                    val.* = Tag.interned[parser.nextLessThan(u8, Tag.interned.len)];
-                                    const comp: Any = .init(Tag, val);
-                                    e.addCompPtrCmd(&cmds, comp);
-                                    try oracle_cmd.ops.append(gpa, .{ .add = comp });
-                                },
-                            },
-                            .commit => {
-                                e.commitCmd(&cmds);
-                            },
-                            .remove => switch (parser.next(enum { rb, model, tag })) {
-                                .rb => {
-                                    e.remCompCmd(&cmds, RigidBody);
-                                    try oracle_cmd.ops.append(gpa, .{
-                                        .remove = zcs.typeId(RigidBody),
-                                    });
-                                },
-                                .model => {
-                                    e.remCompCmd(&cmds, Model);
-                                    try oracle_cmd.ops.append(gpa, .{
-                                        .remove = zcs.typeId(Model),
-                                    });
-                                },
-                                .tag => {
-                                    e.remCompCmd(&cmds, Tag);
-                                    try oracle_cmd.ops.append(gpa, .{
-                                        .remove = zcs.typeId(Tag),
-                                    });
-                                },
-                            },
-                        }
-                    }
-
-                    e.commitCmd(&cmds);
-                },
+                    try oracle_cmd.ops.append(gpa, .destroy);
+                } else switch (parser.next(enum {
+                    add_val,
+                    add_ptr,
+                    commit,
+                    remove,
+                })) {
+                    .add_val => switch (parser.next(enum { rb, model, tag })) {
+                        .rb => {
+                            const val = try gpa.create(RigidBody);
+                            val.* = parser.next(RigidBody);
+                            const comp: Any = .init(RigidBody, val);
+                            e.addCompValCmd(&cmds, comp);
+                            try oracle_cmd.ops.append(gpa, .{ .add = comp });
+                        },
+                        .model => {
+                            const val = try gpa.create(Model);
+                            val.* = parser.next(Model);
+                            const comp: Any = .init(Model, val);
+                            e.addCompValCmd(&cmds, comp);
+                            try oracle_cmd.ops.append(gpa, .{ .add = comp });
+                        },
+                        .tag => {
+                            const val = try gpa.create(Tag);
+                            val.* = parser.next(Tag);
+                            const comp: Any = .init(Tag, val);
+                            e.addCompValCmd(&cmds, comp);
+                            try oracle_cmd.ops.append(gpa, .{ .add = comp });
+                        },
+                    },
+                    .add_ptr => switch (parser.next(enum { rb, model, tag })) {
+                        .rb => {
+                            const val = try gpa.create(RigidBody);
+                            val.* = RigidBody.interned[parser.nextLessThan(u8, RigidBody.interned.len)];
+                            const comp: Any = .init(RigidBody, val);
+                            e.addCompPtrCmd(&cmds, comp);
+                            try oracle_cmd.ops.append(gpa, .{ .add = comp });
+                        },
+                        .model => {
+                            const val = try gpa.create(Model);
+                            val.* = Model.interned[parser.nextLessThan(u8, Model.interned.len)];
+                            const comp: Any = .init(Model, val);
+                            e.addCompPtrCmd(&cmds, comp);
+                            try oracle_cmd.ops.append(gpa, .{ .add = comp });
+                        },
+                        .tag => {
+                            const val = try gpa.create(Tag);
+                            val.* = Tag.interned[parser.nextLessThan(u8, Tag.interned.len)];
+                            const comp: Any = .init(Tag, val);
+                            e.addCompPtrCmd(&cmds, comp);
+                            try oracle_cmd.ops.append(gpa, .{ .add = comp });
+                        },
+                    },
+                    .commit => {
+                        e.commitCmd(&cmds);
+                    },
+                    .remove => switch (parser.next(enum { rb, model, tag })) {
+                        .rb => {
+                            e.remCompCmd(&cmds, RigidBody);
+                            try oracle_cmd.ops.append(gpa, .{
+                                .remove = zcs.typeId(RigidBody),
+                            });
+                        },
+                        .model => {
+                            e.remCompCmd(&cmds, Model);
+                            try oracle_cmd.ops.append(gpa, .{
+                                .remove = zcs.typeId(Model),
+                            });
+                        },
+                        .tag => {
+                            e.remCompCmd(&cmds, Tag);
+                            try oracle_cmd.ops.append(gpa, .{
+                                .remove = zcs.typeId(Tag),
+                            });
+                        },
+                    },
+                }
             }
+
+            e.commitCmd(&cmds);
         }
 
         var iter = cmds.iterator();
-        for (oracle.items) |expected| {
-            switch (expected) {
-                .destroy => |expected_entity| {
-                    const cmd = iter.next().?;
-                    try expect(cmd.destroy);
-                    try expectEqual(expected_entity, cmd.entity);
-                    try expectEqual(CompFlag.Set.initEmpty(), cmd.remove);
-                    try expectEqual(CompFlag.Set.initEmpty(), cmd.add);
-                    var ops = cmd.iterator();
-                    try expectEqual(null, ops.next());
-                },
-                .change_arch => |oracle_cmd| {
-                    const cmd = iter.next().?;
-                    try expect(!cmd.destroy);
-                    try expectEqual(oracle_cmd.entity, cmd.entity);
-                    var ops = cmd.iterator();
-                    for (oracle_cmd.ops.items) |oracle_op| {
-                        switch (oracle_op) {
-                            .add => |oracle_comp| {
-                                const add = ops.next().?.add;
-                                try expectEqual(oracle_comp.id, add.id);
+        for (oracle.items) |oracle_cmd| {
+            const cmd = iter.next().?;
+            try expectEqual(oracle_cmd.entity, cmd.entity);
+            var ops = cmd.iterator();
+            for (oracle_cmd.ops.items) |oracle_op| {
+                switch (oracle_op) {
+                    .add => |oracle_comp| {
+                        const add = ops.next().?.add;
+                        try expectEqual(oracle_comp.id, add.id);
 
-                                if (oracle_comp.as(RigidBody)) |v| {
-                                    try expectEqual(v.*, add.as(RigidBody).?.*);
-                                } else if (oracle_comp.as(Model)) |v| {
-                                    try expectEqual(v.*, add.as(Model).?.*);
-                                } else if (oracle_comp.as(Tag)) |v| {
-                                    try expectEqual(v.*, add.as(Tag).?.*);
-                                } else {
-                                    @panic("unexpected comp");
-                                }
-                            },
-                            .remove => |oracle_id| try expectEqual(oracle_id, ops.next().?.remove),
+                        if (oracle_comp.as(RigidBody)) |v| {
+                            try expectEqual(v.*, add.as(RigidBody).?.*);
+                        } else if (oracle_comp.as(Model)) |v| {
+                            try expectEqual(v.*, add.as(Model).?.*);
+                        } else if (oracle_comp.as(Tag)) |v| {
+                            try expectEqual(v.*, add.as(Tag).?.*);
+                        } else {
+                            @panic("unexpected comp");
                         }
-                    }
-                    try expectEqual(null, ops.next());
-                },
+                    },
+                    .remove => |oracle_id| try expectEqual(oracle_id, ops.next().?.remove),
+                    .destroy => try expectEqual(.destroy, ops.next().?),
+                }
             }
+            try expectEqual(null, ops.next());
         }
         try expectEqual(null, iter.next());
 

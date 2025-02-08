@@ -102,7 +102,11 @@ pub const Entity = packed struct {
     /// Similar to `destroyCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
     pub fn destroyCmdOrErr(self: @This(), cmds: *CmdBuf) error{ZcsCmdBufOverflow}!void {
-        try SubCmd.encode(cmds, .{ .destroy_entity = self });
+        // Restore the state on failure
+        const restore = cmds.*;
+        errdefer cmds.* = restore;
+        try SubCmd.encode(cmds, .{ .bind_entity = self });
+        try SubCmd.encode(cmds, .destroy);
     }
 
     /// Similar to `destroyCmd`, but destroys the entity immediately. Prefer `destroyCmd`.

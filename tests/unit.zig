@@ -226,13 +226,13 @@ test "command buffer interning" {
 
     {
         const cmd = iter.next().?;
-        try expect(!cmd.destroy);
         try expectEqual(e0, cmd.entity);
+        const arch_change = cmd.getArchChangeImmediate();
         try expectEqual(CompFlag.set(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
-        }), cmd.add);
-        try expectEqual(CompFlag.set(&.{}), cmd.remove);
+        }), arch_change.add);
+        try expectEqual(CompFlag.set(&.{}), arch_change.remove);
         var ops = cmd.iterator();
         const comp1 = ops.next().?.add;
         try expect(isInAnyBytes(cmds, comp1.as(Model).?));
@@ -243,12 +243,12 @@ test "command buffer interning" {
     }
     {
         const cmd = iter.next().?;
-        try expect(!cmd.destroy);
+        const arch_change = cmd.getArchChangeImmediate();
         try expectEqual(CompFlag.set(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
-        }), cmd.add);
-        try expectEqual(CompFlag.set(&.{}), cmd.remove);
+        }), arch_change.add);
+        try expectEqual(CompFlag.set(&.{}), arch_change.remove);
         try expectEqual(e1, cmd.entity);
         var ops = cmd.iterator();
         const comp1 = ops.next().?.add;
@@ -261,12 +261,12 @@ test "command buffer interning" {
     }
     {
         const cmd = iter.next().?;
-        try expect(!cmd.destroy);
+        const arch_change = cmd.getArchChangeImmediate();
         try expectEqual(CompFlag.set(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
-        }), cmd.add);
-        try expectEqual(CompFlag.set(&.{}), cmd.remove);
+        }), arch_change.add);
+        try expectEqual(CompFlag.set(&.{}), arch_change.remove);
         try expectEqual(e0, cmd.entity);
         var ops = cmd.iterator();
         const comp1 = ops.next().?.add;
@@ -279,12 +279,12 @@ test "command buffer interning" {
     }
     {
         const cmd = iter.next().?;
-        try expect(!cmd.destroy);
+        const arch_change = cmd.getArchChangeImmediate();
         try expectEqual(CompFlag.set(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
-        }), cmd.add);
-        try expectEqual(CompFlag.set(&.{}), cmd.remove);
+        }), arch_change.add);
+        try expectEqual(CompFlag.set(&.{}), arch_change.remove);
         try expectEqual(e1, cmd.entity);
         var ops = cmd.iterator();
         const comp1 = ops.next().?.add;
@@ -297,23 +297,22 @@ test "command buffer interning" {
     }
     {
         const cmd = iter.next().?;
-        try expect(cmd.destroy);
-        try expectEqual(CompFlag.set(&.{}), cmd.add);
-        try expectEqual(CompFlag.set(&.{}), cmd.remove);
+        const arch_change = cmd.getArchChangeImmediate();
         try expectEqual(e2, cmd.entity);
-        try expectEqual(CompFlag.Set.initEmpty(), cmd.add);
-        try expectEqual(CompFlag.Set.initEmpty(), cmd.remove);
+        try expectEqual(CompFlag.Set.initEmpty(), arch_change.add);
+        try expectEqual(CompFlag.Set.initEmpty(), arch_change.remove);
         var ops = cmd.iterator();
+        try expectEqual(.destroy, ops.next());
         try expectEqual(null, ops.next());
     }
     {
         const cmd = iter.next().?;
-        try expect(!cmd.destroy);
+        const arch_change = cmd.getArchChangeImmediate();
         try expectEqual(CompFlag.set(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
-        }), cmd.add);
-        try expectEqual(CompFlag.set(&.{}), cmd.remove);
+        }), arch_change.add);
+        try expectEqual(CompFlag.set(&.{}), arch_change.remove);
         try expectEqual(e0, cmd.entity);
         var ops = cmd.iterator();
         const comp1 = ops.next().?.add;
@@ -418,7 +417,6 @@ test "command buffer overflow" {
 
         {
             const cmd = iter.next().?;
-            try expect(!cmd.destroy);
             var ops = cmd.iterator();
             const create_rb = ops.next().?.add;
             try expectEqual(typeId(RigidBody), create_rb.id);
@@ -428,12 +426,13 @@ test "command buffer overflow" {
 
         {
             const cmd = iter.next().?;
+            const arch_change = cmd.getArchChangeImmediate();
             try expectEqual(e, cmd.entity);
-            try expectEqual(CompFlag.set(&.{}), cmd.add);
-            try expectEqual(CompFlag.set(&.{}), cmd.remove);
+            try expectEqual(CompFlag.set(&.{}), arch_change.add);
+            try expectEqual(CompFlag.set(&.{}), arch_change.remove);
             var ops = cmd.iterator();
+            try expectEqual(.destroy, ops.next());
             try expectEqual(null, ops.next());
-            try expect(cmd.destroy);
         }
 
         try expectEqual(null, iter.next());
@@ -581,10 +580,10 @@ test "command buffer worst case capacity" {
             try e.destroyCmdOrErr(&cmds);
         }
 
-        try expect(cmds.worstCaseUsage() < 1.0);
+        try expect(cmds.worstCaseUsage() == 1.0);
         cmds.clear(&es);
 
-        for (0..cb_capacity * 2) |i| {
+        for (0..cb_capacity) |i| {
             const e: Entity = .{ .key = .{
                 .index = @intCast(i),
                 .generation = @enumFromInt(0),

@@ -187,9 +187,6 @@ pub const Cmd = struct {
     /// The bound entity.
     entity: Entity,
     decoder: SubCmd.Decoder,
-    add: CompFlag.Set,
-    remove: CompFlag.Set,
-    destroy: bool,
 
     /// An archetype change.
     pub const ArchChange = struct {
@@ -214,6 +211,7 @@ pub const Cmd = struct {
                     result.remove.insert(CompFlag.registerImmediate(id));
                     result.add.remove(CompFlag.registerImmediate(id));
                 },
+                .destroy => {},
             }
         }
         return result;
@@ -239,13 +237,7 @@ pub const Cmd = struct {
         es: *Entities,
         arch_change: ArchChange,
     ) error{ZcsCompOverflow}!void {
-        // If the entity is set for destruction, destroy it and early out
-        if (self.destroy) {
-            _ = self.entity.destroyImmediate(es);
-            return;
-        }
-
-        // Otherwise issue the change archetype command.  If no changes were requested, this will
+        // Issue the change archetype command.  If no changes were requested, this will
         // still commit the entity.
         if (try self.entity.changeArchUninitImmediateOrErr(es, .{
             .add = arch_change.add,
@@ -260,6 +252,10 @@ pub const Cmd = struct {
                         @memcpy(dest, comp.bytes());
                     },
                     .remove => {},
+                    .destroy => {
+                        _ = self.entity.destroyImmediate(es);
+                        break;
+                    },
                 }
             }
         }
@@ -269,6 +265,7 @@ pub const Cmd = struct {
     pub const Op = union(enum) {
         add: Any,
         remove: TypeId,
+        destroy: void,
     };
 
     /// An iterator over the archetype change operations.
@@ -283,7 +280,11 @@ pub const Cmd = struct {
                     .add_comp_val => .{ .add = self.decoder.next().?.add_comp_val },
                     .add_comp_ptr => .{ .add = self.decoder.next().?.add_comp_ptr },
                     .remove_comp => .{ .remove = self.decoder.next().?.remove_comp },
-                    .bind_entity, .destroy_entity => break,
+                    .destroy => b: {
+                        _ = self.decoder.next().?.destroy;
+                        break :b .destroy;
+                    },
+                    .bind_entity => break,
                 };
 
                 // Return the operation.
@@ -307,54 +308,14 @@ pub const Iterator = struct {
         // fine since adding/removing to `.none` is a noop anyway.
         while (self.decoder.next()) |subcmd| {
             switch (subcmd) {
-                .destroy_entity => |entity| return .{
+                // We buffer all ops on a given entity into a single command
+                .bind_entity => |entity| return .{
                     .entity = entity,
-                    .destroy = true,
                     .decoder = self.decoder,
-                    .add = .{},
-                    .remove = .{},
                 },
-                .bind_entity => |entity| {
-                    // Save the encoder state for the command
-                    const op_decoder = self.decoder;
-
-                    // Read the add/remove commands preemptively, this makes for a nicer API since
-                    // in practice we're always going to read them at least once. This doesn't add
-                    // an extra pass since we would already need to do one pass to gather the set
-                    // and one to get the component data.
-                    var ops: Cmd.Iterator = .{ .decoder = self.decoder };
-                    var add: CompFlag.Set = .{};
-                    var remove: CompFlag.Set = .{};
-                    while (ops.next()) |op| {
-                        switch (op) {
-                            .remove => |id| if (id.comp_flag) |flag| {
-                                add.remove(flag);
-                                remove.insert(flag);
-                            },
-                            .add => |comp| {
-                                const flag = CompFlag.registerImmediate(comp.id);
-                                add.insert(flag);
-                                remove.remove(flag);
-                            },
-                        }
-                    }
-
-                    // Fast-forward our decoder past the add/remove commands
-                    self.decoder = ops.decoder;
-
-                    // Return the archetype change command
-                    return .{
-                        .entity = entity,
-                        .decoder = op_decoder,
-                        .add = add,
-                        .remove = remove,
-                        .destroy = false,
-                    };
-                },
-                .add_comp_ptr, .add_comp_val, .remove_comp => {
-                    // The API doesn't allow encoding these commands without an entity bound
-                    unreachable;
-                },
+                // Skip decoder ops here, they're handled in command. We always start with a bind so
+                // this will never miss ops.
+                .add_comp_ptr, .add_comp_val, .remove_comp, .destroy => {},
             }
         }
 
