@@ -126,17 +126,17 @@ pub fn iterator(self: *const @This()) Iterator {
 }
 
 /// Executes the command buffer.
-pub fn execute(self: *@This(), es: *Entities) void {
-    self.executeOrErr(es) catch |err|
+pub fn execImmediate(self: *@This(), es: *Entities) void {
+    self.execImmediateOrErr(es) catch |err|
         @panic(@errorName(err));
 }
 
-/// Similar to `execute`, but returns `error.ZcsEntityOverflow` on failure instead of panicking. On
+/// Similar to `execImmediate`, but returns `error.ZcsEntityOverflow` on failure instead of panicking. On
 /// error, the command buffer will be partially executed.
-pub fn executeOrErr(self: *@This(), es: *Entities) error{ZcsCompOverflow}!void {
+pub fn execImmediateOrErr(self: *@This(), es: *Entities) error{ZcsCompOverflow}!void {
     var cmds = self.iterator();
     while (cmds.next()) |cmd| {
-        _ = try cmd.executeOrErr(es);
+        try cmd.execImmediateOrErr(es, cmd.getArchChangeImmediate());
     }
 }
 
@@ -191,6 +191,34 @@ pub const Cmd = struct {
     remove: CompFlag.Set,
     destroy: bool,
 
+    /// An archetype change.
+    pub const ArchChange = struct {
+        /// The component types to add.
+        add: CompFlag.Set = .initEmpty(),
+        /// The component types to remove.
+        remove: CompFlag.Set = .initEmpty(),
+    };
+
+    /// Gets the archetype change that this command would result in, registering component types if
+    /// necessary.
+    pub fn getArchChangeImmediate(self: @This()) ArchChange {
+        var result: ArchChange = .{};
+        var iter = self.iterator();
+        while (iter.next()) |op| {
+            switch (op) {
+                .add => |comp| {
+                    result.add.insert(CompFlag.registerImmediate(comp.id));
+                    result.remove.remove(CompFlag.registerImmediate(comp.id));
+                },
+                .remove => |id| {
+                    result.remove.insert(CompFlag.registerImmediate(id));
+                    result.add.remove(CompFlag.registerImmediate(id));
+                },
+            }
+        }
+        return result;
+    }
+
     /// An iterator over the operations that make up this command.
     pub fn iterator(self: @This()) @This().Iterator {
         return .{
@@ -198,15 +226,19 @@ pub const Cmd = struct {
         };
     }
 
-    /// Executes the change archetype command.
-    pub fn execute(self: @This(), es: *Entities) void {
-        self.executeOrErr(es) catch |err|
+    /// Executes the command. See `getArchChange` to get the default archetype change argument.
+    pub fn execImmediate(self: @This(), es: *Entities, arch_change: ArchChange) void {
+        self.execImmediateOrErr(es, arch_change) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `execute`, but returns `error.ZcsCompOverflow` on overflow instead of
+    /// Similar to `execImmediate`, but returns `error.ZcsCompOverflow` on overflow instead of
     /// panicking.
-    pub fn executeOrErr(self: @This(), es: *Entities) error{ZcsCompOverflow}!void {
+    pub fn execImmediateOrErr(
+        self: @This(),
+        es: *Entities,
+        arch_change: ArchChange,
+    ) error{ZcsCompOverflow}!void {
         // If the entity is set for destruction, destroy it and early out
         if (self.destroy) {
             _ = self.entity.destroyImmediate(es);
@@ -216,8 +248,8 @@ pub const Cmd = struct {
         // Otherwise issue the change archetype command.  If no changes were requested, this will
         // still commit the entity.
         if (try self.entity.changeArchUninitImmediateOrErr(es, .{
-            .add = self.add,
-            .remove = self.remove,
+            .add = arch_change.add,
+            .remove = arch_change.remove,
         })) {
             // Iterate over the ops and add the added components, unless they were subsequently
             // removed

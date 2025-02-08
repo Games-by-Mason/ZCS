@@ -102,7 +102,7 @@ fn run(input: []const u8, saturated: bool) !void {
             }
         }
 
-        cmds.execute(&fz.es);
+        cmds.execImmediate(&fz.es);
         cmds.clear(&fz.es);
         try checkOracle(&fz, &cmds);
 

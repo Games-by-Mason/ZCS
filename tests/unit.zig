@@ -71,7 +71,7 @@ const Components = struct {
     tag: ?Tag = null,
 };
 
-test "command buffer test execute" {
+test "command buffer test execImmediate" {
     defer CompFlag.unregisterAll();
 
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
@@ -106,7 +106,7 @@ test "command buffer test execute" {
     e2.addCompCmd(&cmds, RigidBody, rb);
     try expectEqual(4, es.reserved());
     try expectEqual(0, es.count());
-    cmds.execute(&es);
+    cmds.execImmediate(&es);
     try expectEqual(0, es.reserved());
     try expectEqual(3, es.count());
     cmds.clear(&es);
@@ -141,7 +141,7 @@ test "command buffer test execute" {
     e1.remCompCmd(&cmds, RigidBody);
     e2.addCompCmd(&cmds, Model, model);
     e2.remCompCmd(&cmds, RigidBody);
-    cmds.execute(&es);
+    cmds.execImmediate(&es);
     cmds.clear(&es);
 
     try expectEqual(3, es.count());
