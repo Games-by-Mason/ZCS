@@ -15,11 +15,11 @@ const CmdBuf = zcs.CmdBuf;
 const Entity = zcs.Entity;
 const typeId = zcs.typeId;
 
-const comps = @import("comps.zig");
+const types = @import("types.zig");
 
-const RigidBody = comps.RigidBody;
-const Model = comps.Model;
-const Tag = comps.Tag;
+const RigidBody = types.RigidBody;
+const Model = types.Model;
+const Tag = types.Tag;
 
 pub const ExpectedEntity = struct {
     model: ?Model = null,

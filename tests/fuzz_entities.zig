@@ -12,10 +12,10 @@ const Entity = zcs.Entity;
 const Entities = zcs.Entities;
 const CmdBuf = zcs.CmdBuf;
 
-const comps = @import("comps.zig");
-const RigidBody = comps.RigidBody;
-const Model = comps.Model;
-const Tag = comps.Tag;
+const types = @import("types.zig");
+const RigidBody = types.RigidBody;
+const Model = types.Model;
+const Tag = types.Tag;
 
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;

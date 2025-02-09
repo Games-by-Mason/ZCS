@@ -12,10 +12,13 @@ const TypeId = zcs.TypeId;
 const Entity = zcs.Entity;
 const CmdBuf = zcs.CmdBuf;
 
-const comps = @import("comps.zig");
-const RigidBody = comps.RigidBody;
-const Model = comps.Model;
-const Tag = comps.Tag;
+const types = @import("types.zig");
+const RigidBody = types.RigidBody;
+const Model = types.Model;
+const Tag = types.Tag;
+const FooEv = types.FooEv;
+const BarEv = types.BarEv;
+const BazEv = types.BazEv;
 
 const Parser = @import("Parser.zig");
 
@@ -42,8 +45,9 @@ test "rand cmdbuf encoding" {
 
 const OracleCmd = struct {
     const Op = union(enum) {
-        add: Any,
-        remove: TypeId,
+        add_comp: Any,
+        remove_comp: TypeId,
+        event: Any,
         destroy,
     };
     entity: Entity,
@@ -52,16 +56,22 @@ const OracleCmd = struct {
     fn deinit(self: *@This()) void {
         for (self.ops.items) |op| {
             switch (op) {
-                .add => |comp| if (comp.as(RigidBody)) |rb| {
-                    gpa.destroy(rb);
-                } else if (comp.as(Model)) |m| {
-                    gpa.destroy(m);
-                } else if (comp.as(Tag)) |t| {
-                    gpa.destroy(t);
+                .add_comp, .event => |any| if (any.as(RigidBody)) |v| {
+                    gpa.destroy(v);
+                } else if (any.as(Model)) |v| {
+                    gpa.destroy(v);
+                } else if (any.as(Tag)) |v| {
+                    gpa.destroy(v);
+                } else if (any.as(FooEv)) |v| {
+                    gpa.destroy(v);
+                } else if (any.as(BarEv)) |v| {
+                    gpa.destroy(v);
+                } else if (any.as(BazEv)) |v| {
+                    gpa.destroy(v);
                 } else {
-                    @panic("unexpected component type");
+                    @panic("unexpected type");
                 },
-                .remove, .destroy => {},
+                .remove_comp, .destroy => {},
             }
         }
         self.ops.deinit(gpa);
@@ -137,55 +147,103 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
                     e.destroyCmd(&cmds);
                     try oracle_cmd.ops.append(gpa, .destroy);
                 } else switch (parser.next(enum {
-                    add_val,
-                    add_ptr,
+                    add_comp_val,
+                    add_comp_ptr,
+                    event_val,
+                    event_ptr,
                     commit,
                     remove,
                 })) {
-                    .add_val => switch (parser.next(enum { rb, model, tag })) {
+                    .add_comp_val => switch (parser.next(enum { rb, model, tag })) {
                         .rb => {
                             const val = try gpa.create(RigidBody);
                             val.* = parser.next(RigidBody);
                             const comp: Any = .init(RigidBody, val);
                             e.addCompValCmd(&cmds, comp);
-                            try oracle_cmd.ops.append(gpa, .{ .add = comp });
+                            try oracle_cmd.ops.append(gpa, .{ .add_comp = comp });
                         },
                         .model => {
                             const val = try gpa.create(Model);
                             val.* = parser.next(Model);
                             const comp: Any = .init(Model, val);
                             e.addCompValCmd(&cmds, comp);
-                            try oracle_cmd.ops.append(gpa, .{ .add = comp });
+                            try oracle_cmd.ops.append(gpa, .{ .add_comp = comp });
                         },
                         .tag => {
                             const val = try gpa.create(Tag);
                             val.* = parser.next(Tag);
                             const comp: Any = .init(Tag, val);
                             e.addCompValCmd(&cmds, comp);
-                            try oracle_cmd.ops.append(gpa, .{ .add = comp });
+                            try oracle_cmd.ops.append(gpa, .{ .add_comp = comp });
                         },
                     },
-                    .add_ptr => switch (parser.next(enum { rb, model, tag })) {
+                    .add_comp_ptr => switch (parser.next(enum { rb, model, tag })) {
                         .rb => {
                             const val = try gpa.create(RigidBody);
                             val.* = RigidBody.interned[parser.nextLessThan(u8, RigidBody.interned.len)];
                             const comp: Any = .init(RigidBody, val);
                             e.addCompPtrCmd(&cmds, comp);
-                            try oracle_cmd.ops.append(gpa, .{ .add = comp });
+                            try oracle_cmd.ops.append(gpa, .{ .add_comp = comp });
                         },
                         .model => {
                             const val = try gpa.create(Model);
                             val.* = Model.interned[parser.nextLessThan(u8, Model.interned.len)];
                             const comp: Any = .init(Model, val);
                             e.addCompPtrCmd(&cmds, comp);
-                            try oracle_cmd.ops.append(gpa, .{ .add = comp });
+                            try oracle_cmd.ops.append(gpa, .{ .add_comp = comp });
                         },
                         .tag => {
                             const val = try gpa.create(Tag);
                             val.* = Tag.interned[parser.nextLessThan(u8, Tag.interned.len)];
                             const comp: Any = .init(Tag, val);
                             e.addCompPtrCmd(&cmds, comp);
-                            try oracle_cmd.ops.append(gpa, .{ .add = comp });
+                            try oracle_cmd.ops.append(gpa, .{ .add_comp = comp });
+                        },
+                    },
+                    .event_val => switch (parser.next(enum { foo, bar, baz })) {
+                        .foo => {
+                            const val = try gpa.create(FooEv);
+                            val.* = parser.next(FooEv);
+                            const event: Any = .init(FooEv, val);
+                            e.eventValCmd(&cmds, event);
+                            try oracle_cmd.ops.append(gpa, .{ .event = event });
+                        },
+                        .bar => {
+                            const val = try gpa.create(BarEv);
+                            val.* = parser.next(BarEv);
+                            const event: Any = .init(BarEv, val);
+                            e.eventValCmd(&cmds, event);
+                            try oracle_cmd.ops.append(gpa, .{ .event = event });
+                        },
+                        .baz => {
+                            const val = try gpa.create(BazEv);
+                            val.* = parser.next(BazEv);
+                            const event: Any = .init(BazEv, val);
+                            e.eventValCmd(&cmds, event);
+                            try oracle_cmd.ops.append(gpa, .{ .event = event });
+                        },
+                    },
+                    .event_ptr => switch (parser.next(enum { foo, bar, baz })) {
+                        .foo => {
+                            const val = try gpa.create(FooEv);
+                            val.* = FooEv.interned[parser.nextLessThan(u8, FooEv.interned.len)];
+                            const comp: Any = .init(FooEv, val);
+                            e.eventPtrCmd(&cmds, comp);
+                            try oracle_cmd.ops.append(gpa, .{ .event = comp });
+                        },
+                        .bar => {
+                            const val = try gpa.create(BarEv);
+                            val.* = BarEv.interned[parser.nextLessThan(u8, BarEv.interned.len)];
+                            const comp: Any = .init(BarEv, val);
+                            e.eventPtrCmd(&cmds, comp);
+                            try oracle_cmd.ops.append(gpa, .{ .event = comp });
+                        },
+                        .baz => {
+                            const val = try gpa.create(BazEv);
+                            val.* = BazEv.interned[parser.nextLessThan(u8, BazEv.interned.len)];
+                            const comp: Any = .init(BazEv, val);
+                            e.eventPtrCmd(&cmds, comp);
+                            try oracle_cmd.ops.append(gpa, .{ .event = comp });
                         },
                     },
                     .commit => {
@@ -195,19 +253,19 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
                         .rb => {
                             e.remCompCmd(&cmds, RigidBody);
                             try oracle_cmd.ops.append(gpa, .{
-                                .remove = zcs.typeId(RigidBody),
+                                .remove_comp = zcs.typeId(RigidBody),
                             });
                         },
                         .model => {
                             e.remCompCmd(&cmds, Model);
                             try oracle_cmd.ops.append(gpa, .{
-                                .remove = zcs.typeId(Model),
+                                .remove_comp = zcs.typeId(Model),
                             });
                         },
                         .tag => {
                             e.remCompCmd(&cmds, Tag);
                             try oracle_cmd.ops.append(gpa, .{
-                                .remove = zcs.typeId(Tag),
+                                .remove_comp = zcs.typeId(Tag),
                             });
                         },
                     },
@@ -224,8 +282,8 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
             var ops = cmd.iterator();
             for (oracle_cmd.ops.items) |oracle_op| {
                 switch (oracle_op) {
-                    .add => |oracle_comp| {
-                        const add = ops.next().?.add;
+                    .add_comp => |oracle_comp| {
+                        const add = ops.next().?.add_comp;
                         try expectEqual(oracle_comp.id, add.id);
 
                         if (oracle_comp.as(RigidBody)) |v| {
@@ -238,7 +296,23 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
                             @panic("unexpected comp");
                         }
                     },
-                    .remove => |oracle_id| try expectEqual(oracle_id, ops.next().?.remove),
+                    .remove_comp => |oracle_id| {
+                        try expectEqual(oracle_id, ops.next().?.remove_comp);
+                    },
+                    .event => |oracle_event| {
+                        const event = ops.next().?.event;
+                        try expectEqual(oracle_event.id, event.id);
+
+                        if (oracle_event.as(FooEv)) |v| {
+                            try expectEqual(v.*, event.as(FooEv).?.*);
+                        } else if (oracle_event.as(BarEv)) |v| {
+                            try expectEqual(v.*, event.as(BarEv).?.*);
+                        } else if (oracle_event.as(BazEv)) |v| {
+                            try expectEqual(v.*, event.as(BazEv).?.*);
+                        } else {
+                            @panic("unexpected comp");
+                        }
+                    },
                     .destroy => try expectEqual(.destroy, ops.next().?),
                 }
             }

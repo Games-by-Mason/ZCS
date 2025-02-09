@@ -209,11 +209,11 @@ pub const Cmd = struct {
         var iter = self.iterator();
         while (iter.next()) |op| {
             switch (op) {
-                .add => |comp| {
+                .add_comp => |comp| {
                     result.add.insert(CompFlag.registerImmediate(comp.id));
                     result.remove.remove(CompFlag.registerImmediate(comp.id));
                 },
-                .remove => |id| {
+                .remove_comp => |id| {
                     result.remove.insert(CompFlag.registerImmediate(id));
                     result.add.remove(CompFlag.registerImmediate(id));
                 },
@@ -269,10 +269,10 @@ pub const Cmd = struct {
         var ops = self.iterator();
         while (ops.next()) |op| {
             switch (op) {
-                .add => |comp| if (self.entity.getCompFromId(es, comp.id)) |dest| {
+                .add_comp => |comp| if (self.entity.getCompFromId(es, comp.id)) |dest| {
                     @memcpy(dest, comp.bytes());
                 },
-                .remove,
+                .remove_comp,
                 .destroy,
                 .event,
                 => {},
@@ -284,8 +284,8 @@ pub const Cmd = struct {
 
     /// An individual operation that's part of an archetype change.
     pub const Op = union(enum) {
-        add: Any,
-        remove: TypeId,
+        add_comp: Any,
+        remove_comp: TypeId,
         destroy: void,
         event: Any,
     };
@@ -299,11 +299,11 @@ pub const Cmd = struct {
             while (self.decoder.peekTag()) |tag| {
                 // Get the next operation
                 const op: Op = switch (tag) {
-                    .add_comp_val => .{ .add = self.decoder.next().?.add_comp_val },
-                    .add_comp_ptr => .{ .add = self.decoder.next().?.add_comp_ptr },
-                    .add_event_val => .{ .event = self.decoder.next().?.add_event_val },
-                    .add_event_ptr => .{ .event = self.decoder.next().?.add_event_ptr },
-                    .remove_comp => .{ .remove = self.decoder.next().?.remove_comp },
+                    .add_comp_val => .{ .add_comp = self.decoder.next().?.add_comp_val },
+                    .add_comp_ptr => .{ .add_comp = self.decoder.next().?.add_comp_ptr },
+                    .event_val => .{ .event = self.decoder.next().?.event_val },
+                    .event_ptr => .{ .event = self.decoder.next().?.event_ptr },
+                    .remove_comp => .{ .remove_comp = self.decoder.next().?.remove_comp },
                     .destroy => b: {
                         _ = self.decoder.next().?.destroy;
                         break :b .destroy;
@@ -341,8 +341,8 @@ pub const Iterator = struct {
                 // this will never miss ops.
                 .add_comp_ptr,
                 .add_comp_val,
-                .add_event_ptr,
-                .add_event_val,
+                .event_ptr,
+                .event_val,
                 .remove_comp,
                 .destroy,
                 => {},

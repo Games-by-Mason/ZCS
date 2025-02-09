@@ -25,10 +25,10 @@ pub const SubCmd = union(enum) {
     add_comp_ptr: Any,
     /// Queues an event to be added by value. The type ID is passed as an argument, the payload is
     /// passed via any bytes.
-    add_event_val: Any,
+    event_val: Any,
     /// Queues an event to be added by pointer. The type ID and a pointer to the component data are
     /// passed as arguments.
-    add_event_ptr: Any,
+    event_ptr: Any,
     /// Queues a component to be removed.
     remove_comp: TypeId,
 
@@ -54,21 +54,20 @@ pub const SubCmd = union(enum) {
                         const entity: Entity = @bitCast(self.nextArg().?);
                         return .{ .bind_entity = entity };
                     },
-                    inline .add_comp_val, .add_event_val => |add| {
+                    inline .add_comp_val, .event_val => |add| {
                         const id: TypeId = @ptrFromInt(self.nextArg().?);
                         const ptr = self.nextAny(id);
                         const any: Any = .{
                             .id = id,
                             .ptr = ptr,
                         };
-                        // XXX: can you do this with union init?
                         return switch (add) {
                             .add_comp_val => .{ .add_comp_val = any },
-                            .add_event_val => .{ .add_event_val = any },
+                            .event_val => .{ .event_val = any },
                             else => comptime unreachable,
                         };
                     },
-                    inline .add_comp_ptr, .add_event_ptr => |add| {
+                    inline .add_comp_ptr, .event_ptr => |add| {
                         const id: TypeId = @ptrFromInt(self.nextArg().?);
                         const ptr: *const anyopaque = @ptrFromInt(self.nextArg().?);
                         const any: Any = .{
@@ -77,7 +76,7 @@ pub const SubCmd = union(enum) {
                         };
                         switch (add) {
                             .add_comp_ptr => return .{ .add_comp_ptr = any },
-                            .add_event_ptr => return .{ .add_event_ptr = any },
+                            .event_ptr => return .{ .event_ptr = any },
                             else => comptime unreachable,
                         }
                     },
@@ -154,7 +153,7 @@ pub const SubCmd = union(enum) {
                 cmds.tags.appendAssumeCapacity(.bind_entity);
                 cmds.args.appendAssumeCapacity(@bitCast(entity));
             },
-            inline .add_comp_val, .add_event_val => |comp| {
+            inline .add_comp_val, .event_val => |comp| {
                 const aligned = std.mem.alignForward(
                     usize,
                     cmds.any_bytes.items.len,
@@ -170,7 +169,7 @@ pub const SubCmd = union(enum) {
                 cmds.any_bytes.items.len = aligned;
                 cmds.any_bytes.appendSliceAssumeCapacity(comp.constSlice());
             },
-            .add_comp_ptr, .add_event_ptr => |comp| {
+            .add_comp_ptr, .event_ptr => |comp| {
                 if (cmds.tags.items.len >= cmds.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (cmds.args.items.len + 2 > cmds.args.capacity) return error.ZcsCmdBufOverflow;
                 cmds.tags.appendAssumeCapacity(sub_cmd);

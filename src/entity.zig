@@ -271,7 +271,7 @@ pub const Entity = packed struct {
     /// Similar to `eventCmd`, but doesn't require compile time types and forces the event to be
     /// copied by value. Prefer `eventCmd`.
     pub fn eventValCmd(self: @This(), cmds: *CmdBuf, event: Any) void {
-        self.addCompValCmdOrErr(cmds, event) catch |err|
+        self.eventValCmdOrErr(cmds, event) catch |err|
             @panic(@errorName(err));
     }
 
@@ -280,7 +280,7 @@ pub const Entity = packed struct {
     pub fn eventValCmdOrErr(
         self: @This(),
         cmds: *CmdBuf,
-        comp: Any,
+        event: Any,
     ) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cmds.*;
@@ -288,7 +288,7 @@ pub const Entity = packed struct {
 
         // Issue the subcommands
         try SubCmd.encode(cmds, .{ .bind_entity = self });
-        try SubCmd.encode(cmds, .{ .add_event_val = comp });
+        try SubCmd.encode(cmds, .{ .event_val = event });
     }
 
     /// Similar to `eventCmd`, but doesn't require compile time types and forces the component to
@@ -311,7 +311,7 @@ pub const Entity = packed struct {
 
         // Issue the subcommands
         try SubCmd.encode(cmds, .{ .bind_entity = self });
-        try SubCmd.encode(cmds, .{ .add_event_ptr = event });
+        try SubCmd.encode(cmds, .{ .event_ptr = event });
     }
 
     /// Queues the given component to be removed. Has no effect if the component is not present, or
@@ -364,7 +364,7 @@ pub const Entity = packed struct {
     }
 
     /// Queues the entity to be committed. Has no effect if it has already been committed, called
-    /// implicitly on add/remove. In practice only necessary when creating an empty entity.
+    /// implicitly on add/remove/event. In practice only necessary when creating an empty entity.
     pub fn commitCmd(self: @This(), cmds: *CmdBuf) void {
         self.commitCmdOrErr(cmds) catch |err|
             @panic(@errorName(err));
