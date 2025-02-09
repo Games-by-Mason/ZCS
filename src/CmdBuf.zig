@@ -223,6 +223,7 @@ pub const Cmd = struct {
                     result.destroy = true;
                     break;
                 },
+                .event => {},
             }
         }
         return result;
@@ -271,7 +272,10 @@ pub const Cmd = struct {
                 .add => |comp| if (self.entity.getCompFromId(es, comp.id)) |dest| {
                     @memcpy(dest, comp.bytes());
                 },
-                .remove, .destroy => {},
+                .remove,
+                .destroy,
+                .event,
+                => {},
             }
         }
 
@@ -283,6 +287,7 @@ pub const Cmd = struct {
         add: Any,
         remove: TypeId,
         destroy: void,
+        event: Any,
     };
 
     /// An iterator over the archetype change operations.
@@ -296,6 +301,8 @@ pub const Cmd = struct {
                 const op: Op = switch (tag) {
                     .add_comp_val => .{ .add = self.decoder.next().?.add_comp_val },
                     .add_comp_ptr => .{ .add = self.decoder.next().?.add_comp_ptr },
+                    .add_event_val => .{ .event = self.decoder.next().?.add_event_val },
+                    .add_event_ptr => .{ .event = self.decoder.next().?.add_event_ptr },
                     .remove_comp => .{ .remove = self.decoder.next().?.remove_comp },
                     .destroy => b: {
                         _ = self.decoder.next().?.destroy;
@@ -332,7 +339,13 @@ pub const Iterator = struct {
                 },
                 // Skip decoder ops here, they're handled in command. We always start with a bind so
                 // this will never miss ops.
-                .add_comp_ptr, .add_comp_val, .remove_comp, .destroy => {},
+                .add_comp_ptr,
+                .add_comp_val,
+                .add_event_ptr,
+                .add_event_val,
+                .remove_comp,
+                .destroy,
+                => {},
             }
         }
 

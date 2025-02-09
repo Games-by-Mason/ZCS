@@ -17,12 +17,18 @@ pub const SubCmd = union(enum) {
     bind_entity: Entity,
     /// Destroys the bound entity.
     destroy: void,
-    /// Queues components to be added by value. ID is passed as an argument, component data is
-    /// passed via component data.
+    /// Queues a component to be added by value. The type ID is passed as an argument, component
+    /// data is passed via any bytes.
     add_comp_val: Any,
-    /// Queues components to be added bye value. ID and a pointer to the component data are passed
-    /// as arguments.
+    /// Queues a component to be added by pointer. The type ID and a pointer to the component data are
+    /// passed as arguments.
     add_comp_ptr: Any,
+    /// Queues an event to be added by value. The type ID is passed as an argument, the payload is
+    /// passed via any bytes.
+    add_event_val: Any,
+    /// Queues an event to be added by pointer. The type ID and a pointer to the component data are
+    /// passed as arguments.
+    add_event_ptr: Any,
     /// Queues a component to be removed.
     remove_comp: TypeId,
 
@@ -48,23 +54,32 @@ pub const SubCmd = union(enum) {
                         const entity: Entity = @bitCast(self.nextArg().?);
                         return .{ .bind_entity = entity };
                     },
-                    .add_comp_val => {
+                    inline .add_comp_val, .add_event_val => |add| {
                         const id: TypeId = @ptrFromInt(self.nextArg().?);
-                        const ptr = self.nextComponentData(id);
-                        const comp: Any = .{
+                        const ptr = self.nextAny(id);
+                        const any: Any = .{
                             .id = id,
                             .ptr = ptr,
                         };
-                        return .{ .add_comp_val = comp };
+                        // XXX: can you do this with union init?
+                        return switch (add) {
+                            .add_comp_val => .{ .add_comp_val = any },
+                            .add_event_val => .{ .add_event_val = any },
+                            else => comptime unreachable,
+                        };
                     },
-                    .add_comp_ptr => {
+                    inline .add_comp_ptr, .add_event_ptr => |add| {
                         const id: TypeId = @ptrFromInt(self.nextArg().?);
                         const ptr: *const anyopaque = @ptrFromInt(self.nextArg().?);
-                        const comp: Any = .{
+                        const any: Any = .{
                             .id = id,
                             .ptr = ptr,
                         };
-                        return .{ .add_comp_ptr = comp };
+                        switch (add) {
+                            .add_comp_ptr => return .{ .add_comp_ptr = any },
+                            .add_event_ptr => return .{ .add_event_ptr = any },
+                            else => comptime unreachable,
+                        }
                     },
                     .remove_comp => {
                         const id: TypeId = @ptrFromInt(self.nextArg().?);
@@ -105,7 +120,7 @@ pub const SubCmd = union(enum) {
             }
         }
 
-        pub inline fn nextComponentData(self: *@This(), id: TypeId) *const anyopaque {
+        pub inline fn nextAny(self: *@This(), id: TypeId) *const anyopaque {
             // Align the read
             self.comp_bytes_index = std.mem.alignForward(
                 usize,
@@ -139,7 +154,7 @@ pub const SubCmd = union(enum) {
                 cmds.tags.appendAssumeCapacity(.bind_entity);
                 cmds.args.appendAssumeCapacity(@bitCast(entity));
             },
-            .add_comp_val => |comp| {
+            inline .add_comp_val, .add_event_val => |comp| {
                 const aligned = std.mem.alignForward(
                     usize,
                     cmds.any_bytes.items.len,
@@ -150,15 +165,15 @@ pub const SubCmd = union(enum) {
                 if (aligned + comp.id.size > cmds.any_bytes.capacity) {
                     return error.ZcsCmdBufOverflow;
                 }
-                cmds.tags.appendAssumeCapacity(.add_comp_val);
+                cmds.tags.appendAssumeCapacity(sub_cmd);
                 cmds.args.appendAssumeCapacity(@intFromPtr(comp.id));
                 cmds.any_bytes.items.len = aligned;
                 cmds.any_bytes.appendSliceAssumeCapacity(comp.constSlice());
             },
-            .add_comp_ptr => |comp| {
+            .add_comp_ptr, .add_event_ptr => |comp| {
                 if (cmds.tags.items.len >= cmds.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (cmds.args.items.len + 2 > cmds.args.capacity) return error.ZcsCmdBufOverflow;
-                cmds.tags.appendAssumeCapacity(.add_comp_ptr);
+                cmds.tags.appendAssumeCapacity(sub_cmd);
                 cmds.args.appendAssumeCapacity(@intFromPtr(comp.id));
                 cmds.args.appendAssumeCapacity(@intFromPtr(comp.ptr));
             },
