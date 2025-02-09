@@ -156,7 +156,8 @@ pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
         }
 
         if (typeId(T).comp_flag) |flag| {
-            @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(flag)]);
+            // Don't need `.ptr` once this is merged: https://github.com/ziglang/zig/pull/22706
+            @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(flag)].ptr);
         }
     } else true;
 
