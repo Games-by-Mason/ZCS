@@ -244,6 +244,76 @@ pub const Entity = packed struct {
         try SubCmd.encode(cmds, .{ .add_comp_ptr = comp });
     }
 
+    /// Similar to `addCompCmd`, but queues an event instead of a component addition.
+    pub inline fn eventCmd(self: @This(), cmds: *CmdBuf, T: type, event: T) void {
+        self.eventCmdOrErr(cmds, T, event) catch |err|
+            @panic(@errorName(err));
+    }
+
+    /// Similar to `eventCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
+    /// panicking.
+    pub inline fn eventCmdOrErr(
+        self: @This(),
+        cmds: *CmdBuf,
+        T: type,
+        event: T,
+    ) error{ZcsCmdBufOverflow}!void {
+        if (@sizeOf(T) > @sizeOf(*T) and isComptimeKnown(event)) {
+            const Interned = struct {
+                const value = event;
+            };
+            try self.eventPtrCmdOrErr(cmds, .init(T, comptime &Interned.value));
+        } else {
+            try self.eventValCmdOrErr(cmds, .init(T, &event));
+        }
+    }
+
+    /// Similar to `eventCmd`, but doesn't require compile time types and forces the event to be
+    /// copied by value. Prefer `eventCmd`.
+    pub fn eventValCmd(self: @This(), cmds: *CmdBuf, event: Any) void {
+        self.addCompValCmdOrErr(cmds, event) catch |err|
+            @panic(@errorName(err));
+    }
+
+    /// Similar to `eventValCmd`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
+    /// panicking.
+    pub fn eventValCmdOrErr(
+        self: @This(),
+        cmds: *CmdBuf,
+        comp: Any,
+    ) error{ZcsCmdBufOverflow}!void {
+        // Restore the state on failure
+        const restore = cmds.*;
+        errdefer cmds.* = restore;
+
+        // Issue the subcommands
+        try SubCmd.encode(cmds, .{ .bind_entity = self });
+        try SubCmd.encode(cmds, .{ .add_event_val = comp });
+    }
+
+    /// Similar to `eventCmd`, but doesn't require compile time types and forces the component to
+    /// be copied by pointer. Prefer `eventCmd`.
+    pub fn eventPtrCmd(self: @This(), cmds: *CmdBuf, event: Any) void {
+        self.eventPtrCmdOrErr(cmds, event) catch |err|
+            @panic(@errorName(err));
+    }
+
+    /// Similar to `eventPtrCmd`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
+    /// panicking.
+    pub fn eventPtrCmdOrErr(
+        self: @This(),
+        cmds: *CmdBuf,
+        event: Any,
+    ) error{ZcsCmdBufOverflow}!void {
+        // Restore the state on failure
+        const restore = cmds.*;
+        errdefer cmds.* = restore;
+
+        // Issue the subcommands
+        try SubCmd.encode(cmds, .{ .bind_entity = self });
+        try SubCmd.encode(cmds, .{ .add_event_ptr = event });
+    }
+
     /// Queues the given component to be removed. Has no effect if the component is not present, or
     /// the entity no longer exists.
     ///
