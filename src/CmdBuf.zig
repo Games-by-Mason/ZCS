@@ -136,7 +136,7 @@ pub fn execImmediate(self: *@This(), es: *Entities) void {
 pub fn execImmediateOrErr(self: *@This(), es: *Entities) error{ZcsCompOverflow}!void {
     var cmds = self.iterator();
     while (cmds.next()) |cmd| {
-        try cmd.execImmediateOrErr(es, cmd.getArchChangeImmediate());
+        try cmd.execImmediateOrErr(es, cmd.getArchChangeImmediate(es));
     }
 }
 
@@ -190,15 +190,21 @@ pub const Cmd = struct {
 
     /// An archetype change.
     pub const ArchChange = struct {
-        /// The component types to add.
+        /// The component types scheduled to be added.
         add: CompFlag.Set = .initEmpty(),
-        /// The component types to remove.
+
+        /// The component types scheduled to be removed.
+        ///
+        /// Entities scheduled for destruction list all of their components here.
         remove: CompFlag.Set = .initEmpty(),
+
+        /// Whether or not the entity is scheduled for destruction.
+        destroy: bool = false,
     };
 
     /// Gets the archetype change that this command would result in, registering component types if
     /// necessary.
-    pub fn getArchChangeImmediate(self: @This()) ArchChange {
+    pub fn getArchChangeImmediate(self: @This(), es: *const Entities) ArchChange {
         var result: ArchChange = .{};
         var iter = self.iterator();
         while (iter.next()) |op| {
@@ -211,7 +217,12 @@ pub const Cmd = struct {
                     result.remove.insert(CompFlag.registerImmediate(id));
                     result.add.remove(CompFlag.registerImmediate(id));
                 },
-                .destroy => {},
+                .destroy => {
+                    result.add = .initEmpty();
+                    result.remove = self.entity.getArch(es);
+                    result.destroy = true;
+                    break;
+                },
             }
         }
         return result;
@@ -237,25 +248,26 @@ pub const Cmd = struct {
         es: *Entities,
         arch_change: ArchChange,
     ) error{ZcsCompOverflow}!void {
+        // If the entity is scheduled for destruction, destroy it and early out.
+        if (arch_change.destroy) {
+            _ = self.entity.destroyImmediate(es);
+            return;
+        }
+
         // Issue the change archetype command.  If no changes were requested, this will
         // still commit the entity.
         if (try self.entity.changeArchUninitImmediateOrErr(es, .{
             .add = arch_change.add,
             .remove = arch_change.remove,
         })) {
-            // Iterate over the ops and add the added components, unless they were subsequently
-            // removed
+            // Iterate over the added components, unless they were subsequently removed.
             var ops = self.iterator();
             while (ops.next()) |op| {
                 switch (op) {
                     .add => |comp| if (self.entity.getCompFromId(es, comp.id)) |dest| {
                         @memcpy(dest, comp.bytes());
                     },
-                    .remove => {},
-                    .destroy => {
-                        _ = self.entity.destroyImmediate(es);
-                        break;
-                    },
+                    .remove, .destroy => {},
                 }
             }
         }
