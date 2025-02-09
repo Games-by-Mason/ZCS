@@ -131,12 +131,12 @@ pub fn execImmediate(self: *@This(), es: *Entities) void {
         @panic(@errorName(err));
 }
 
-/// Similar to `execImmediate`, but returns `error.ZcsEntityOverflow` on failure instead of panicking. On
-/// error, the command buffer will be partially executed.
+/// Similar to `execImmediate`, but returns `error.ZcsEntityOverflow` on failure instead of
+/// panicking. On error, the command buffer will be partially executed.
 pub fn execImmediateOrErr(self: *@This(), es: *Entities) error{ZcsCompOverflow}!void {
     var cmds = self.iterator();
     while (cmds.next()) |cmd| {
-        try cmd.execImmediateOrErr(es, cmd.getArchChangeImmediate(es));
+        _ = try cmd.execImmediateOrErr(es, cmd.getArchChangeImmediate(es));
     }
 }
 
@@ -235,9 +235,10 @@ pub const Cmd = struct {
         };
     }
 
-    /// Executes the command. See `getArchChange` to get the default archetype change argument.
-    pub fn execImmediate(self: @This(), es: *Entities, arch_change: ArchChange) void {
-        self.execImmediateOrErr(es, arch_change) catch |err|
+    /// Executes the command. Returns true if the entity exists before the command is run, false
+    /// otherwise. See `getArchChangeImmediate` to get the default archetype change argument.
+    pub fn execImmediate(self: @This(), es: *Entities, arch_change: ArchChange) bool {
+        return self.execImmediateOrErr(es, arch_change) catch |err|
             @panic(@errorName(err));
     }
 
@@ -247,30 +248,34 @@ pub const Cmd = struct {
         self: @This(),
         es: *Entities,
         arch_change: ArchChange,
-    ) error{ZcsCompOverflow}!void {
+    ) error{ZcsCompOverflow}!bool {
         // If the entity is scheduled for destruction, destroy it and early out.
         if (arch_change.destroy) {
-            _ = self.entity.destroyImmediate(es);
-            return;
+            return self.entity.destroyImmediate(es);
         }
 
         // Issue the change archetype command.  If no changes were requested, this will
-        // still commit the entity.
-        if (try self.entity.changeArchUninitImmediateOrErr(es, .{
+        // still commit the entity. If the entity doesn't exist, early out.
+        if (!try self.entity.changeArchUninitImmediateOrErr(es, .{
             .add = arch_change.add,
             .remove = arch_change.remove,
         })) {
-            // Iterate over the added components, unless they were subsequently removed.
-            var ops = self.iterator();
-            while (ops.next()) |op| {
-                switch (op) {
-                    .add => |comp| if (self.entity.getCompFromId(es, comp.id)) |dest| {
-                        @memcpy(dest, comp.bytes());
-                    },
-                    .remove, .destroy => {},
-                }
+            return false;
+        }
+
+        // Initialize any new components. Note that we check for existence on each because they
+        // could have been subsequently removed.
+        var ops = self.iterator();
+        while (ops.next()) |op| {
+            switch (op) {
+                .add => |comp| if (self.entity.getCompFromId(es, comp.id)) |dest| {
+                    @memcpy(dest, comp.bytes());
+                },
+                .remove, .destroy => {},
             }
         }
+
+        return true;
     }
 
     /// An individual operation that's part of an archetype change.
