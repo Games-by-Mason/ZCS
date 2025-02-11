@@ -8,7 +8,7 @@ const assert = std.debug.assert;
 const expectEqual = std.testing.expectEqual;
 const expect = std.testing.expect;
 
-const Parser = @import("Parser.zig");
+const Smith = @import("Smith.zig");
 
 const Entities = zcs.Entities;
 const CmdBuf = zcs.CmdBuf;
@@ -32,7 +32,7 @@ pub const max_entities = 100000;
 pub const comp_bytes = 100000;
 
 es: Entities,
-parser: Parser,
+smith: Smith,
 reserved: std.AutoArrayHashMapUnmanaged(Entity, void),
 committed: std.AutoArrayHashMapUnmanaged(Entity, ExpectedEntity),
 /// A sample of destroyed entities. Capped to avoid growing forever, when it reaches the cap
@@ -63,14 +63,14 @@ pub fn init(input: []const u8) !@This() {
     errdefer found_buf.deinit(gpa);
     try found_buf.ensureTotalCapacity(gpa, max_entities);
 
-    const parser: Parser = .init(input);
+    const smith: Smith = .init(input);
 
     return .{
         .es = es,
         .reserved = reserved,
         .committed = committed,
         .destroyed = destroyed,
-        .parser = parser,
+        .smith = smith,
         .found_buf = found_buf,
     };
 }
@@ -289,9 +289,9 @@ pub fn modifyImmediate(self: *@This()) !void {
     const entity = self.randomEntity().unwrap() orelse return;
 
     // Generate random component values
-    const rb = self.parser.next(RigidBody);
-    const model = self.parser.next(Model);
-    const tag = self.parser.next(Tag);
+    const rb = self.smith.next(RigidBody);
+    const model = self.smith.next(Model);
+    const tag = self.smith.next(Tag);
 
     // If the entity has these components, update them
     if (entity.getComp(&self.es, RigidBody)) |old| old.* = rb;
@@ -308,26 +308,26 @@ pub fn modifyImmediate(self: *@This()) !void {
 
 pub fn randomEntity(self: *@This()) Entity.Optional {
     // Sometimes return .none
-    if (self.parser.next(u8) < 10) return .none;
+    if (self.smith.next(u8) < 10) return .none;
 
-    switch (self.parser.next(enum {
+    switch (self.smith.next(enum {
         reserved,
         committed,
         destroyed,
     })) {
         .reserved => {
             if (self.reserved.count() == 0) return .none;
-            const index = self.parser.nextLessThan(usize, self.reserved.count());
+            const index = self.smith.nextLessThan(usize, self.reserved.count());
             return self.reserved.keys()[index].toOptional();
         },
         .committed => {
             if (self.committed.count() == 0) return .none;
-            const index = self.parser.nextLessThan(usize, self.committed.count());
+            const index = self.smith.nextLessThan(usize, self.committed.count());
             return self.committed.keys()[index].toOptional();
         },
         .destroyed => {
             if (self.destroyed.count() == 0) return .none;
-            const index = self.parser.nextLessThan(usize, self.destroyed.count());
+            const index = self.smith.nextLessThan(usize, self.destroyed.count());
             return self.destroyed.keys()[index].toOptional();
         },
     }
@@ -336,7 +336,7 @@ pub fn randomEntity(self: *@This()) Entity.Optional {
 // If we're at less than half capacity, give a slight bias against destroying
 // entities so that we don't just hover near zero entities for the whole test
 pub fn shouldSkipDestroy(self: *@This()) bool {
-    return (self.es.count() < self.es.slots.capacity / 2 and (self.parser.next(bool)));
+    return (self.es.count() < self.es.slots.capacity / 2 and (self.smith.next(bool)));
 }
 
 pub fn destroyInOracle(self: *@This(), entity: Entity) !void {
@@ -344,7 +344,7 @@ pub fn destroyInOracle(self: *@This(), entity: Entity) !void {
     // destroyed entity if there are already too many to prevent the destroyed
     // list from growing indefinitely.
     while (self.destroyed.count() > 1000) {
-        const index = self.parser.nextLessThan(usize, self.destroyed.count());
+        const index = self.smith.nextLessThan(usize, self.destroyed.count());
         self.destroyed.swapRemoveAt(index);
     }
     _ = self.reserved.swapRemove(entity);

@@ -19,26 +19,7 @@ const expectEqual = std.testing.expectEqual;
 
 const log = false;
 
-const cmds_capacity = 10;
-
-test "node cmd smoke test" {
-    defer CompFlag.unregisterAll();
-
-    var es = try Entities.init(gpa, .{ .max_entities = 128, .comp_bytes = 1024 });
-    defer es.deinit(gpa);
-
-    var cmds: CmdBuf = try .init(gpa, &es, .{
-        .cmds = cmds_capacity,
-        .avg_any_bytes = @sizeOf(Node),
-    });
-    defer cmds.deinit(gpa, &es);
-
-    const e0 = Entity.popReserved(&cmds);
-    const e1 = Entity.popReserved(&cmds);
-    e0.eventCmd(&cmds, SetParent, .{e1.toOptional()});
-
-    Node.execImmediate(&cmds, &es);
-}
+const cmds_capacity = 1000;
 
 test "node immediate" {
     defer CompFlag.unregisterAll();
@@ -111,6 +92,32 @@ test "rand node cycles" {
     try fuzzNodeCycles(input);
 }
 
+test "fuzz nodes cmdbuf" {
+    try std.testing.fuzz(fuzzNodesCmdBuf, .{ .corpus = &.{} });
+}
+
+test "fuzz node cycles cmdbuf" {
+    try std.testing.fuzz(fuzzNodeCyclesCmdBuf, .{ .corpus = &.{} });
+}
+
+test "rand nodes cmdbuf" {
+    var xoshiro_256: std.Random.Xoshiro256 = .init(0);
+    const rand = xoshiro_256.random();
+    const input: []u8 = try gpa.alloc(u8, 8192);
+    defer gpa.free(input);
+    rand.bytes(input);
+    try fuzzNodesCmdBuf(input);
+}
+
+test "rand node cycles cmdbuf" {
+    var xoshiro_256: std.Random.Xoshiro256 = .init(0);
+    const rand = xoshiro_256.random();
+    const input: []u8 = try gpa.alloc(u8, 8192);
+    defer gpa.free(input);
+    rand.bytes(input);
+    try fuzzNodeCyclesCmdBuf(input);
+}
+
 const OracleNode = struct {
     parent: Entity.Optional = .none,
     children: std.AutoHashMapUnmanaged(Entity, void) = .{},
@@ -138,8 +145,8 @@ fn fuzzNodes(input: []const u8) !void {
         o.deinit(gpa);
     }
 
-    while (!fz.parser.isEmpty()) {
-        switch (fz.parser.next(enum {
+    while (!fz.smith.isEmpty()) {
+        switch (fz.smith.next(enum {
             reserve,
             set_parent,
             destroy,
@@ -174,8 +181,95 @@ fn fuzzNodeCycles(input: []const u8) !void {
         try reserve(&fz, &o);
     }
 
-    while (!fz.parser.isEmpty()) {
+    while (!fz.smith.isEmpty()) {
         try setParent(&fz, &o);
+        try checkOracle(&fz, &o);
+    }
+}
+
+/// Similar to `fuzzNodes` but uses command buffers.
+fn fuzzNodesCmdBuf(input: []const u8) !void {
+    defer CompFlag.unregisterAll();
+
+    var fz: Fuzzer = try .init(input);
+    defer fz.deinit();
+
+    var o: Oracle = .{};
+    defer {
+        var iter = o.iterator();
+        while (iter.next()) |entry| {
+            entry.value_ptr.deinit();
+        }
+        o.deinit(gpa);
+    }
+
+    var cmds: CmdBuf = try .initGranularCapacity(gpa, &fz.es, b: {
+        var cap: CmdBuf.GranularCapacity = .init(.{
+            .cmds = cmds_capacity,
+            .avg_any_bytes = @sizeOf(Node),
+        });
+        cap.reserved = 0;
+        break :b cap;
+    });
+    defer cmds.deinit(gpa, &fz.es);
+
+    while (!fz.smith.isEmpty()) {
+        for (0..fz.smith.nextLessThan(u16, cmds_capacity)) |_| {
+            switch (fz.smith.next(enum {
+                reserve,
+                set_parent,
+                destroy,
+            })) {
+                .reserve => try reserve(&fz, &o),
+                .set_parent => try setParentCmd(&fz, &o, &cmds),
+                .destroy => try destroyCmd(&fz, &o, &cmds),
+            }
+        }
+
+        Node.execImmediate(&cmds, &fz.es);
+        cmds.clear(&fz.es);
+
+        try checkOracle(&fz, &o);
+    }
+}
+
+/// Similar to `fuzzNodeCycles` but uses command buffers.
+fn fuzzNodeCyclesCmdBuf(input: []const u8) !void {
+    defer CompFlag.unregisterAll();
+    var fz: Fuzzer = try .init(input);
+    defer fz.deinit();
+
+    var o: Oracle = .{};
+    defer {
+        var iter = o.iterator();
+        while (iter.next()) |entry| {
+            entry.value_ptr.deinit();
+        }
+        o.deinit(gpa);
+    }
+
+    var cmds: CmdBuf = try .initGranularCapacity(gpa, &fz.es, b: {
+        var cap: CmdBuf.GranularCapacity = .init(.{
+            .cmds = cmds_capacity,
+            .avg_any_bytes = @sizeOf(Node),
+        });
+        cap.reserved = 0;
+        break :b cap;
+    });
+    defer cmds.deinit(gpa, &fz.es);
+
+    for (0..16) |_| {
+        try reserve(&fz, &o);
+    }
+
+    while (!fz.smith.isEmpty()) {
+        for (0..fz.smith.nextLessThan(u16, cmds_capacity)) |_| {
+            try setParentCmd(&fz, &o, &cmds);
+        }
+
+        Node.execImmediate(&cmds, &fz.es);
+        cmds.clear(&fz.es);
+
         try checkOracle(&fz, &o);
     }
 }
@@ -236,6 +330,16 @@ fn setParent(fz: *Fuzzer, o: *Oracle) !void {
     try setParentInOracle(fz, o, child, parent);
 }
 
+fn setParentCmd(fz: *Fuzzer, o: *Oracle, cmds: *CmdBuf) !void {
+    // Get a random parent and child
+    const parent = fz.randomEntity();
+    const child = fz.randomEntity().unwrap() orelse return;
+    if (log) std.debug.print("{}.parent = {}\n", .{ child, parent });
+
+    child.eventCmd(cmds, SetParent, .{parent});
+    try setParentInOracle(fz, o, child, parent);
+}
+
 fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Optional) !void {
     // Early out if child and parent are the same entity
     if (parent == child.toOptional()) return;
@@ -290,6 +394,20 @@ fn destroy(fz: *Fuzzer, o: *Oracle) !void {
 
     // Destroy the real entity
     _ = Node.destroyImmediate(&fz.es, entity);
+
+    // Destroy it in the oracle
+    try destroyInOracle(fz, o, entity);
+}
+
+fn destroyCmd(fz: *Fuzzer, o: *Oracle, cmds: *CmdBuf) !void {
+    if (fz.shouldSkipDestroy()) return;
+
+    // Get a random entity
+    const entity = fz.randomEntity().unwrap() orelse return;
+    if (log) std.debug.print("destroy {}\n", .{entity});
+
+    // Destroy the real entity
+    entity.destroyCmd(cmds);
 
     // Destroy it in the oracle
     try destroyInOracle(fz, o, entity);

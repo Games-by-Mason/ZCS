@@ -69,7 +69,7 @@ fn run(input: []const u8, saturated: bool) !void {
     });
     defer cmds.deinit(gpa, &fz.es);
 
-    const saturated_count = if (saturated) fz.parser.nextLessThan(u16, 10000) else 0;
+    const saturated_count = if (saturated) fz.smith.nextLessThan(u16, 10000) else 0;
 
     for (0..saturated_count) |_| {
         const e = Entity.reserveImmediate(&fz.es);
@@ -87,11 +87,11 @@ fn run(input: []const u8, saturated: bool) !void {
     }
     try expectEqual(saturated_count, fz.es.slots.saturated_generations);
 
-    while (!fz.parser.isEmpty()) {
+    while (!fz.smith.isEmpty()) {
         // Modify the entities via a command buffer
-        for (0..fz.parser.nextLessThan(u16, cmds_capacity)) |_| {
-            if (fz.parser.isEmpty()) break;
-            switch (fz.parser.next(enum {
+        for (0..fz.smith.nextLessThan(u16, cmds_capacity)) |_| {
+            if (fz.smith.isEmpty()) break;
+            switch (fz.smith.next(enum {
                 reserve,
                 destroy,
                 change_arch,
@@ -109,8 +109,8 @@ fn run(input: []const u8, saturated: bool) !void {
         // Modify the entities directly. We do this later since interspersing it with the
         // command buffer will get incorrect results since the oracle applies everything
         // instantly. We only do a few iterations because this test is easily exhausted.
-        for (0..fz.parser.nextLessThan(u16, 100)) |_| {
-            if (fz.parser.isEmpty()) break;
+        for (0..fz.smith.nextLessThan(u16, 100)) |_| {
+            if (fz.smith.isEmpty()) break;
             try fz.modifyImmediate();
         }
         try checkOracle(&fz, &cmds);
@@ -185,7 +185,7 @@ fn destroy(fz: *Fuzzer, cmds: *CmdBuf) !void {
     // destroyed entity if there are already too many to prevent the destroyed
     // list from growing indefinitely.
     while (fz.destroyed.count() > 1000) {
-        const index = fz.parser.nextLessThan(usize, fz.destroyed.count());
+        const index = fz.smith.nextLessThan(usize, fz.destroyed.count());
         fz.destroyed.swapRemoveAt(index);
     }
     _ = fz.reserved.swapRemove(entity);
@@ -204,9 +204,9 @@ fn changeArch(fz: *Fuzzer, cmds: *CmdBuf) !void {
     const expected = fz.committed.getPtr(entity);
 
     // Issue commands to add/remove N random components, updating the oracle along the way
-    for (0..@intCast(fz.parser.nextBetween(u8, 1, change_cap))) |_| {
-        if (fz.parser.next(bool)) {
-            switch (fz.parser.next(enum {
+    for (0..@intCast(fz.smith.nextBetween(u8, 1, change_cap))) |_| {
+        if (fz.smith.next(bool)) {
+            switch (fz.smith.next(enum {
                 rb,
                 model,
                 tag,
@@ -225,7 +225,7 @@ fn changeArch(fz: *Fuzzer, cmds: *CmdBuf) !void {
                 },
             }
         } else {
-            switch (fz.parser.next(enum {
+            switch (fz.smith.next(enum {
                 rb,
                 model,
                 tag,
@@ -254,7 +254,7 @@ fn changeArch(fz: *Fuzzer, cmds: *CmdBuf) !void {
 /// Adds a random value for the given component by value, or a random value from it's interned
 /// list by pointer. Returns the value.
 fn addRandomComp(fz: *Fuzzer, cmds: *CmdBuf, e: Entity, T: type) T {
-    const i = fz.parser.next(u8);
+    const i = fz.smith.next(u8);
     const by_ptr = i < 40;
     if (by_ptr) {
         switch (i % T.interned.len) {
@@ -266,7 +266,7 @@ fn addRandomComp(fz: *Fuzzer, cmds: *CmdBuf, e: Entity, T: type) T {
             else => unreachable,
         }
     } else {
-        const val = fz.parser.next(T);
+        const val = fz.smith.next(T);
         e.addCompCmd(cmds, T, val);
         return val;
     }

@@ -20,7 +20,7 @@ const FooEv = types.FooEv;
 const BarEv = types.BarEv;
 const BazEv = types.BazEv;
 
-const Parser = @import("Parser.zig");
+const Smith = @import("Smith.zig");
 
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
@@ -80,25 +80,25 @@ const OracleBatch = struct {
 };
 
 /// Pick a random entity from a small set.
-fn randomEntity(parser: *Parser) Entity {
+fn randomEntity(smith: *Smith) Entity {
     return .{ .key = .{
-        .index = parser.next(u8) % 10,
-        .generation = @enumFromInt(parser.next(u8) % 3),
+        .index = smith.next(u8) % 10,
+        .generation = @enumFromInt(smith.next(u8) % 3),
     } };
 }
 
 /// Randomize the given entity from a small set of entities, occasionally leaving it unchanged.
-fn randomizeEntity(parser: *Parser, entity: *Entity) void {
+fn randomizeEntity(smith: *Smith, entity: *Entity) void {
     // Sometimes just use the last entity, this increases the chances that we test dedup logic
-    if (parser.next(u8) < 50) return;
+    if (smith.next(u8) < 50) return;
 
     // Most of the time, return a new entity, but pick from a small set to increase the chance of
     // catching dedup happening when it shouldn't
-    entity.* = randomEntity(parser);
+    entity.* = randomEntity(smith);
 }
 
 fn fuzzCmdBufEncoding(input: []const u8) !void {
-    var parser: Parser = .init(input);
+    var smith: Smith = .init(input);
 
     var es: Entities = try .init(gpa, .{
         .max_entities = max_entities,
@@ -115,8 +115,8 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
     var oracle: std.ArrayListUnmanaged(OracleBatch) = try .initCapacity(gpa, 1024);
     defer oracle.deinit(gpa);
 
-    var e = randomEntity(&parser);
-    while (!parser.isEmpty()) {
+    var e = randomEntity(&smith);
+    while (!smith.isEmpty()) {
         defer {
             for (oracle.items) |*cmd| {
                 cmd.deinit();
@@ -124,9 +124,9 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
             oracle.clearRetainingCapacity();
         }
 
-        for (0..parser.next(u10)) |_| {
+        for (0..smith.next(u10)) |_| {
             // Get a random entity
-            randomizeEntity(&parser, &e);
+            randomizeEntity(&smith, &e);
 
             // Dedup with the last command if it's also a change arch on the same entity
             const oracle_batch = b: {
@@ -142,11 +142,11 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
                 break :b last_cmd;
             };
 
-            for (0..parser.nextBetween(u8, 1, 5)) |_| {
-                if (parser.next(bool)) {
+            for (0..smith.nextBetween(u8, 1, 5)) |_| {
+                if (smith.next(bool)) {
                     e.destroyCmd(&cmds);
                     try oracle_batch.cmds.append(gpa, .destroy);
-                } else switch (parser.next(enum {
+                } else switch (smith.next(enum {
                     add_comp_val,
                     add_comp_ptr,
                     event_val,
@@ -154,93 +154,93 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
                     commit,
                     remove,
                 })) {
-                    .add_comp_val => switch (parser.next(enum { rb, model, tag })) {
+                    .add_comp_val => switch (smith.next(enum { rb, model, tag })) {
                         .rb => {
                             const val = try gpa.create(RigidBody);
-                            val.* = parser.next(RigidBody);
+                            val.* = smith.next(RigidBody);
                             const comp: Any = .init(RigidBody, val);
                             e.addCompValCmd(&cmds, comp);
                             try oracle_batch.cmds.append(gpa, .{ .add_comp = comp });
                         },
                         .model => {
                             const val = try gpa.create(Model);
-                            val.* = parser.next(Model);
+                            val.* = smith.next(Model);
                             const comp: Any = .init(Model, val);
                             e.addCompValCmd(&cmds, comp);
                             try oracle_batch.cmds.append(gpa, .{ .add_comp = comp });
                         },
                         .tag => {
                             const val = try gpa.create(Tag);
-                            val.* = parser.next(Tag);
+                            val.* = smith.next(Tag);
                             const comp: Any = .init(Tag, val);
                             e.addCompValCmd(&cmds, comp);
                             try oracle_batch.cmds.append(gpa, .{ .add_comp = comp });
                         },
                     },
-                    .add_comp_ptr => switch (parser.next(enum { rb, model, tag })) {
+                    .add_comp_ptr => switch (smith.next(enum { rb, model, tag })) {
                         .rb => {
                             const val = try gpa.create(RigidBody);
-                            val.* = RigidBody.interned[parser.nextLessThan(u8, RigidBody.interned.len)];
+                            val.* = RigidBody.interned[smith.nextLessThan(u8, RigidBody.interned.len)];
                             const comp: Any = .init(RigidBody, val);
                             e.addCompPtrCmd(&cmds, comp);
                             try oracle_batch.cmds.append(gpa, .{ .add_comp = comp });
                         },
                         .model => {
                             const val = try gpa.create(Model);
-                            val.* = Model.interned[parser.nextLessThan(u8, Model.interned.len)];
+                            val.* = Model.interned[smith.nextLessThan(u8, Model.interned.len)];
                             const comp: Any = .init(Model, val);
                             e.addCompPtrCmd(&cmds, comp);
                             try oracle_batch.cmds.append(gpa, .{ .add_comp = comp });
                         },
                         .tag => {
                             const val = try gpa.create(Tag);
-                            val.* = Tag.interned[parser.nextLessThan(u8, Tag.interned.len)];
+                            val.* = Tag.interned[smith.nextLessThan(u8, Tag.interned.len)];
                             const comp: Any = .init(Tag, val);
                             e.addCompPtrCmd(&cmds, comp);
                             try oracle_batch.cmds.append(gpa, .{ .add_comp = comp });
                         },
                     },
-                    .event_val => switch (parser.next(enum { foo, bar, baz })) {
+                    .event_val => switch (smith.next(enum { foo, bar, baz })) {
                         .foo => {
                             const val = try gpa.create(FooEv);
-                            val.* = parser.next(FooEv);
+                            val.* = smith.next(FooEv);
                             const event: Any = .init(FooEv, val);
                             e.eventValCmd(&cmds, event);
                             try oracle_batch.cmds.append(gpa, .{ .event = event });
                         },
                         .bar => {
                             const val = try gpa.create(BarEv);
-                            val.* = parser.next(BarEv);
+                            val.* = smith.next(BarEv);
                             const event: Any = .init(BarEv, val);
                             e.eventValCmd(&cmds, event);
                             try oracle_batch.cmds.append(gpa, .{ .event = event });
                         },
                         .baz => {
                             const val = try gpa.create(BazEv);
-                            val.* = parser.next(BazEv);
+                            val.* = smith.next(BazEv);
                             const event: Any = .init(BazEv, val);
                             e.eventValCmd(&cmds, event);
                             try oracle_batch.cmds.append(gpa, .{ .event = event });
                         },
                     },
-                    .event_ptr => switch (parser.next(enum { foo, bar, baz })) {
+                    .event_ptr => switch (smith.next(enum { foo, bar, baz })) {
                         .foo => {
                             const val = try gpa.create(FooEv);
-                            val.* = FooEv.interned[parser.nextLessThan(u8, FooEv.interned.len)];
+                            val.* = FooEv.interned[smith.nextLessThan(u8, FooEv.interned.len)];
                             const comp: Any = .init(FooEv, val);
                             e.eventPtrCmd(&cmds, comp);
                             try oracle_batch.cmds.append(gpa, .{ .event = comp });
                         },
                         .bar => {
                             const val = try gpa.create(BarEv);
-                            val.* = BarEv.interned[parser.nextLessThan(u8, BarEv.interned.len)];
+                            val.* = BarEv.interned[smith.nextLessThan(u8, BarEv.interned.len)];
                             const comp: Any = .init(BarEv, val);
                             e.eventPtrCmd(&cmds, comp);
                             try oracle_batch.cmds.append(gpa, .{ .event = comp });
                         },
                         .baz => {
                             const val = try gpa.create(BazEv);
-                            val.* = BazEv.interned[parser.nextLessThan(u8, BazEv.interned.len)];
+                            val.* = BazEv.interned[smith.nextLessThan(u8, BazEv.interned.len)];
                             const comp: Any = .init(BazEv, val);
                             e.eventPtrCmd(&cmds, comp);
                             try oracle_batch.cmds.append(gpa, .{ .event = comp });
@@ -249,7 +249,7 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
                     .commit => {
                         e.commitCmd(&cmds);
                     },
-                    .remove => switch (parser.next(enum { rb, model, tag })) {
+                    .remove => switch (smith.next(enum { rb, model, tag })) {
                         .rb => {
                             e.remCompCmd(&cmds, RigidBody);
                             try oracle_batch.cmds.append(gpa, .{
