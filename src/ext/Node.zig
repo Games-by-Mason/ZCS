@@ -19,6 +19,7 @@ const typeId = zcs.typeId;
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const CmdBuf = zcs.CmdBuf;
+const CompFlag = zcs.CompFlag;
 
 const Node = @This();
 
@@ -78,15 +79,8 @@ pub const View = struct {
     }
 };
 
-/// Parents `child` and `parent` immediately. Returns true if the child exists after this operation,
-/// false otherwise.
-///
-/// * If the relationship would result in a cycle, `parent` is first moved up the tree to the level
-///   of `child`
-/// * If parent is `.none`, child is unparented
-/// * If parent and child are equal, no change is made
-/// * If parent no longer exists, child is destroyed
-/// * If child no longer exists, no change is made
+/// Similar to `SetParent`, but sets the parent immediately. Returns true if the child exists after
+/// this operation, false otherwise.
 pub fn setParentImmediate(es: *Entities, child: Entity, parent: Entity.Optional) bool {
     return setParentImmediateOrErr(es, child, parent) catch |err|
         @panic(@errorName(err));
@@ -165,35 +159,37 @@ fn setParentImmediateInner(
 }
 
 /// Destroys an entity and all of its children. Returns true if the entity was destroyed, false if
-/// it didn't exist.
+/// it didn't exist. This behavior occurs automatically via `Exec` when an entity with a node is
+/// destroyed.
 pub fn destroyImmediate(es: *Entities, e: Entity) bool {
-    if (e.getComp(es, Node)) |node| {
-        // Unparent ourselves
-        assert(setParentImmediate(es, e, .none));
+    destroyChildrenAndUnparentImmediate(es, e);
+    return e.destroyImmediate(es);
+}
 
-        // Destroy all our children depth first
-        if (node.first_child.unwrap()) |start| {
-            var curr = start.view(es, View).?;
-            while (true) {
-                if (curr.node.first_child.unwrap()) |first_child| {
-                    curr = first_child.view(es, View).?;
+/// Destroys an entity's children and then unparents it. This behavior occurs automatically via
+/// `Exec` when a node is removed from an entity.
+pub fn destroyChildrenAndUnparentImmediate(es: *Entities, e: Entity) void {
+    // Iterate the children depth first, destroying each as we go
+    const node = e.getComp(es, Node) orelse return;
+    if (node.first_child.unwrap()) |start| {
+        var curr = start.view(es, View).?;
+        while (true) {
+            if (curr.node.first_child.unwrap()) |first_child| {
+                curr = first_child.view(es, View).?;
+            } else {
+                const prev = curr;
+                if (curr.node.next_sib.unwrap()) |next_sib| {
+                    curr = next_sib.view(es, View).?;
                 } else {
-                    const prev = curr;
-                    if (curr.node.next_sib.unwrap()) |next_sib| {
-                        curr = next_sib.view(es, View).?;
-                    } else {
-                        curr = curr.node.parent.unwrap().?.view(es, View).?;
-                        curr.node.first_child = .none;
-                    }
-                    assert(prev.entity.destroyImmediate(es));
+                    curr = curr.node.parent.unwrap().?.view(es, View).?;
+                    curr.node.first_child = .none;
                 }
-                if (curr.entity == e) break;
+                assert(prev.entity.destroyImmediate(es));
             }
+            if (curr.entity == e) break;
         }
     }
-
-    // Destroy ourselves
-    return e.destroyImmediate(es);
+    assert(setParentImmediate(es, e, .none));
 }
 
 /// Returns true if `ancestor` is an ancestor of `descendant`, otherwise returns false. Entities
@@ -226,66 +222,97 @@ const ChildIterator = struct {
     }
 };
 
-/// Should be run before executing a command buffer command.
-pub fn beforeExecute(cmd: CmdBuf.Cmd, es: *Entities) error{ZcsCompOverflow}!void {
-    beforeExecuteOrErr(cmd, es) catch |err|
-        @panic(@errorName(err));
-}
-
-/// Similar to `beforeExecute`, but returns `error.ZcsCompOverflow` on error instead of panicking.
-pub fn beforeExecuteOrErr(cmd: CmdBuf.Cmd, es: *Entities) error{ZcsCompOverflow}!void {
-    if (cmd.getRemove().contains(types.register(typeId(Node)))) {
-        destroyImmediate(cmd.getEntity(), es);
-    }
-}
-
-/// Should be run after executing a command buffer command.
-pub fn afterExecute(cmd: CmdBuf.Cmd, es: *Entities) error{ZcsCompOverflow}!void {
-    afterExecuteOrErr(cmd, es) catch |err|
-        @panic(@errorName(err));
-}
-
-/// Similar to `afterExecute`, but returns `error.ZcsCompOverflow` on error instead of panicking.
-pub fn afterExecuteOrErr(cmd: CmdBuf.Cmd, es: *Entities) error{ZcsCompOverflow}!void {
-    if (cmd.getAdd().contains(types.register(Node))) {
-        switch (cmd) {
-            .change_arch => |change_arch| {
-                // Iterate over the added components, applying any requested transformations.
-                var iter = cmd.iterator();
-                while (iter.next()) |comp| {
-                    if (comp.as(Node)) |cmd_node| {
-                        // Adding a node with the parent set is treated as a set parent command. No
-                        // other fields are allowed to be set.
-                        assert(cmd_node.first_child == .none);
-                        assert(cmd_node.prev_sib == .none);
-                        assert(cmd_node.next_sib == .none);
-
-                        // Clear the manually set parent, and then apply it properly via set parent.
-                        if (change_arch.entity.getComp(Node)) |node| {
-                            node.parent = .none;
-                        }
-                        setParentImmediateOrErr(es, change_arch.entity, cmd_node.parent);
-                    }
-                }
-            },
-            .destroy => unreachable,
-        }
-    }
-}
+/// Encodes a command that requests to parent `child` and `parent`.
+///
+/// * If the relationship would result in a cycle, `parent` is first moved up the tree to the level
+///   of `child`
+/// * If parent is `.none`, child is unparented
+/// * If parent and child are equal, no change is made
+/// * If parent no longer exists, child is destroyed
+/// * If child no longer exists, no change is made
+pub const SetParent = struct { Entity.Optional };
 
 /// Executes a command buffer, applying the node transformations along the way. This is provided as
 /// an example, in practice you likely want to copy this code directly into your code base so that
 /// other systems can also hook into the command buffer iterator.
-pub fn execute(cmds: *const CmdBuf, es: *Entities) void {
-    executeOrErr(cmds, es) catch |err|
+pub fn execImmediate(cmds: *const CmdBuf, es: *Entities) void {
+    execImmediateOrErr(cmds, es) catch |err|
         @panic(@errorName(err));
 }
 
-/// Similar to `execute`, but returns `error.ZcsCompOverflow` on error instead of panicking. On
+pub const Exec = struct {
+    init_node: bool = false,
+
+    pub fn before(
+        self: *@This(),
+        es: *Entities,
+        cmd: CmdBuf.Batch,
+        arch_change: *CmdBuf.Batch.ArchChange,
+        op: CmdBuf.Batch.Item,
+    ) void {
+        switch (op) {
+            .event => |event| {
+                if (event.id == typeId(SetParent) and
+                    !arch_change.from.contains(.registerImmediate(typeId(Node))))
+                {
+                    arch_change.add.insert(typeId(Node).comp_flag.?);
+                    self.init_node = true;
+                }
+            },
+            .destroy => {
+                _ = destroyChildrenAndUnparentImmediate(es, cmd.entity);
+            },
+            .remove_comp => |id| if (id == typeId(Node)) {
+                _ = destroyChildrenAndUnparentImmediate(es, cmd.entity);
+            },
+            .add_comp => {},
+        }
+    }
+
+    pub fn after(
+        self: *@This(),
+        es: *Entities,
+        cmd: CmdBuf.Batch,
+        arch_change: CmdBuf.Batch.ArchChange,
+        op: CmdBuf.Batch.Item,
+    ) error{ZcsCompOverflow}!void {
+        switch (op) {
+            .event => |ev| if (ev.as(SetParent)) |set_parent| {
+                if (self.init_node and !arch_change.from.contains(typeId(Node).comp_flag.?)) {
+                    if (cmd.entity.getComp(es, Node)) |node| {
+                        node.* = .{};
+                    }
+                    self.init_node = false;
+                }
+                _ = try setParentImmediateOrErr(es, cmd.entity, set_parent[0]);
+            },
+            .destroy, .add_comp, .remove_comp => {},
+        }
+    }
+};
+
+/// Similar to `execImmediate`, but returns `error.ZcsCompOverflow` on error instead of panicking. On
 /// error, the command buffer will be partially executed.
-pub fn executeOrErr(cmds: *const CmdBuf, es: *Entities) error{ZcsCompOverflow}!void {
-    var iter = cmds.iter();
+pub fn execImmediateOrErr(cmds: *const CmdBuf, es: *Entities) error{ZcsCompOverflow}!void {
+    var iter = cmds.iterator();
     while (iter.next()) |cmd| {
-        try cmd.execute(es);
+        var node_exec: Exec = .{};
+
+        var arch_change = cmd.getArchChangeImmediate(es);
+        {
+            var ops = cmd.iterator();
+            while (ops.next()) |op| {
+                node_exec.before(es, cmd, &arch_change, op);
+            }
+        }
+
+        _ = try cmd.execImmediateOrErr(es, arch_change);
+
+        {
+            var ops = cmd.iterator();
+            while (ops.next()) |op| {
+                try node_exec.after(es, cmd, arch_change, op);
+            }
+        }
     }
 }

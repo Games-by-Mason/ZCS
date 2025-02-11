@@ -19,9 +19,9 @@ const TypeId = zcs.TypeId;
 const CompFlag = zcs.CompFlag;
 
 const CmdBuf = @This();
-const SubCmd = @import("CmdBuf/sub_cmd.zig").SubCmd;
+const Cmd = @import("cmd.zig").Cmd;
 
-tags: std.ArrayListUnmanaged(SubCmd.Tag),
+tags: std.ArrayListUnmanaged(Cmd.Tag),
 args: std.ArrayListUnmanaged(u64),
 any_bytes: std.ArrayListAlignedUnmanaged(u8, zcs.TypeInfo.max_align),
 bound: Entity.Optional = .none,
@@ -44,7 +44,7 @@ pub fn initGranularCapacity(
 ) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
     comptime assert(CompFlag.max < std.math.maxInt(u64));
 
-    var tags: std.ArrayListUnmanaged(SubCmd.Tag) = try .initCapacity(gpa, capacity.tags);
+    var tags: std.ArrayListUnmanaged(Cmd.Tag) = try .initCapacity(gpa, capacity.tags);
     errdefer tags.deinit(gpa);
 
     var args: std.ArrayListUnmanaged(u64) = try .initCapacity(gpa, capacity.args);
@@ -157,7 +157,7 @@ pub const GranularCapacity = struct {
 
     /// Estimates the granular capacity from worst case capacity.
     pub fn init(cap: Capacity) @This() {
-        _ = SubCmd.rename_when_changing_encoding;
+        _ = Cmd.rename_when_changing_encoding;
 
         // Each command can have at most one component's worth of component data.
         const comp_bytes_cap = (cap.avg_any_bytes + zcs.TypeInfo.max_align) * cap.cmds;
@@ -182,14 +182,17 @@ pub const GranularCapacity = struct {
     }
 };
 
-/// A single decoded command.
-pub const Cmd = struct {
+/// A batch of sequential commands that all have the same entity bound.
+pub const Batch = struct {
     /// The bound entity.
     entity: Entity,
-    decoder: SubCmd.Decoder,
+    decoder: Cmd.Decoder,
 
-    /// An archetype change.
+    /// Information on an archetype change.
     pub const ArchChange = struct {
+        /// The initial archetype before the command is run.
+        from: CompFlag.Set,
+
         /// The component types scheduled to be added.
         add: CompFlag.Set = .initEmpty(),
 
@@ -203,12 +206,14 @@ pub const Cmd = struct {
     };
 
     /// Gets the archetype change that this command would result in, registering component types if
-    /// necessary.
+    /// necessary. May be modified before execution if desired.
     pub fn getArchChangeImmediate(self: @This(), es: *const Entities) ArchChange {
-        var result: ArchChange = .{};
+        var result: ArchChange = .{
+            .from = self.entity.getArch(es),
+        };
         var iter = self.iterator();
-        while (iter.next()) |op| {
-            switch (op) {
+        while (iter.next()) |cmd| {
+            switch (cmd) {
                 .add_comp => |comp| {
                     result.add.insert(CompFlag.registerImmediate(comp.id));
                     result.remove.remove(CompFlag.registerImmediate(comp.id));
@@ -229,15 +234,17 @@ pub const Cmd = struct {
         return result;
     }
 
-    /// An iterator over the operations that make up this command.
+    /// An iterator over this batch's commands.
     pub fn iterator(self: @This()) @This().Iterator {
         return .{
             .decoder = self.decoder,
         };
     }
 
-    /// Executes the command. Returns true if the entity exists before the command is run, false
-    /// otherwise. See `getArchChangeImmediate` to get the default archetype change argument.
+    /// Executes the batch. Returns true if the entity exists before the command is run, false
+    /// otherwise.
+    ///
+    /// See `getArchChangeImmediate` to get the default archetype change argument.
     pub fn execImmediate(self: @This(), es: *Entities, arch_change: ArchChange) bool {
         return self.execImmediateOrErr(es, arch_change) catch |err|
             @panic(@errorName(err));
@@ -282,23 +289,22 @@ pub const Cmd = struct {
         return true;
     }
 
-    /// An individual operation that's part of an archetype change.
-    pub const Op = union(enum) {
+    /// A decoded command.
+    pub const Item = union(enum) {
         add_comp: Any,
         remove_comp: TypeId,
         destroy: void,
         event: Any,
     };
 
-    /// An iterator over the archetype change operations.
+    /// An iterator over this batch's commands.
     pub const Iterator = struct {
-        decoder: SubCmd.Decoder,
+        decoder: Cmd.Decoder,
 
-        /// Returns the next operation, or `null` if there are none.
-        pub fn next(self: *@This()) ?Op {
+        /// Returns the next command, or `null` if there are none.
+        pub fn next(self: *@This()) ?Item {
             while (self.decoder.peekTag()) |tag| {
-                // Get the next operation
-                const op: Op = switch (tag) {
+                const cmd: Item = switch (tag) {
                     .add_comp_val => .{ .add_comp = self.decoder.next().?.add_comp_val },
                     .add_comp_ptr => .{ .add_comp = self.decoder.next().?.add_comp_ptr },
                     .event_val => .{ .event = self.decoder.next().?.event_val },
@@ -312,26 +318,26 @@ pub const Cmd = struct {
                 };
 
                 // Return the operation.
-                return op;
+                return cmd;
             }
             return null;
         }
     };
 };
 
-/// An iterator over the encoded commands.
+/// An iterator over batches of encoded commands.
 pub const Iterator = struct {
-    decoder: SubCmd.Decoder,
+    decoder: Cmd.Decoder,
 
-    /// Returns the next command, or `null` if there is none.
-    pub fn next(self: *@This()) ?Cmd {
-        _ = SubCmd.rename_when_changing_encoding;
+    /// Returns the next command batch, or `null` if there is none.
+    pub fn next(self: *@This()) ?Batch {
+        _ = Cmd.rename_when_changing_encoding;
 
         // We just return bind operations here, `Cmd` handles the add/remove commands. If the first
         // bind is `.none` it's elided, and we end up skipping the initial add/removes, but that's
         // fine since adding/removing to `.none` is a noop anyway.
-        while (self.decoder.next()) |subcmd| {
-            switch (subcmd) {
+        while (self.decoder.next()) |cmd| {
+            switch (cmd) {
                 // We buffer all ops on a given entity into a single command
                 .bind_entity => |entity| return .{
                     .entity = entity,

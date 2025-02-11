@@ -19,15 +19,6 @@ pub const CompFlag = enum(FlagInt) {
     /// A set of component flags.
     pub const Set = std.enums.EnumSet(CompFlag);
 
-    /// Initialize a `Set` from a list of `CompFlag`s.
-    pub fn set(flags: []const CompFlag) Set {
-        var result: Set = .initEmpty();
-        for (flags) |flag| {
-            result.insert(flag);
-        }
-        return result;
-    }
-
     /// The list of registered components.
     var registered: std.BoundedArray(TypeId, CompFlag.max) = .{};
 

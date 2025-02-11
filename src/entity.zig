@@ -6,7 +6,7 @@ const slot_map = @import("slot_map");
 
 const typeId = zcs.typeId;
 
-const SubCmd = @import("CmdBuf/sub_cmd.zig").SubCmd;
+const Cmd = @import("cmd.zig").Cmd;
 
 const SlotMap = slot_map.SlotMap;
 const Entities = zcs.Entities;
@@ -105,8 +105,8 @@ pub const Entity = packed struct {
         // Restore the state on failure
         const restore = cmds.*;
         errdefer cmds.* = restore;
-        try SubCmd.encode(cmds, .{ .bind_entity = self });
-        try SubCmd.encode(cmds, .destroy);
+        try Cmd.encode(cmds, .{ .bind_entity = self });
+        try Cmd.encode(cmds, .destroy);
     }
 
     /// Similar to `destroyCmd`, but destroys the entity immediately. Prefer `destroyCmd`.
@@ -216,9 +216,9 @@ pub const Entity = packed struct {
         const restore = cmds.*;
         errdefer cmds.* = restore;
 
-        // Issue the subcommands
-        try SubCmd.encode(cmds, .{ .bind_entity = self });
-        try SubCmd.encode(cmds, .{ .add_comp_val = comp });
+        // Issue the commands
+        try Cmd.encode(cmds, .{ .bind_entity = self });
+        try Cmd.encode(cmds, .{ .add_comp_val = comp });
     }
 
     /// Similar to `addCompCmd`, but doesn't require compile time types and forces the component to
@@ -239,9 +239,9 @@ pub const Entity = packed struct {
         const restore = cmds.*;
         errdefer cmds.* = restore;
 
-        // Issue the subcommands
-        try SubCmd.encode(cmds, .{ .bind_entity = self });
-        try SubCmd.encode(cmds, .{ .add_comp_ptr = comp });
+        // Issue the commands
+        try Cmd.encode(cmds, .{ .bind_entity = self });
+        try Cmd.encode(cmds, .{ .add_comp_ptr = comp });
     }
 
     /// Similar to `addCompCmd`, but queues an event instead of a component addition.
@@ -286,9 +286,9 @@ pub const Entity = packed struct {
         const restore = cmds.*;
         errdefer cmds.* = restore;
 
-        // Issue the subcommands
-        try SubCmd.encode(cmds, .{ .bind_entity = self });
-        try SubCmd.encode(cmds, .{ .event_val = event });
+        // Issue the commands
+        try Cmd.encode(cmds, .{ .bind_entity = self });
+        try Cmd.encode(cmds, .{ .event_val = event });
     }
 
     /// Similar to `eventCmd`, but doesn't require compile time types and forces the component to
@@ -309,9 +309,9 @@ pub const Entity = packed struct {
         const restore = cmds.*;
         errdefer cmds.* = restore;
 
-        // Issue the subcommands
-        try SubCmd.encode(cmds, .{ .bind_entity = self });
-        try SubCmd.encode(cmds, .{ .event_ptr = event });
+        // Issue the commands
+        try Cmd.encode(cmds, .{ .bind_entity = self });
+        try Cmd.encode(cmds, .{ .event_ptr = event });
     }
 
     /// Queues the given component to be removed. Has no effect if the component is not present, or
@@ -358,9 +358,9 @@ pub const Entity = packed struct {
         const restore = cmds.*;
         errdefer cmds.* = restore;
 
-        // Issue the subcommands
-        try SubCmd.encode(cmds, .{ .bind_entity = self });
-        try SubCmd.encode(cmds, .{ .remove_comp = id });
+        // Issue the commands
+        try Cmd.encode(cmds, .{ .bind_entity = self });
+        try Cmd.encode(cmds, .{ .remove_comp = id });
     }
 
     /// Queues the entity to be committed. Has no effect if it has already been committed, called
@@ -377,7 +377,7 @@ pub const Entity = packed struct {
         errdefer cmds.* = restore;
 
         // Issue the subcommand
-        try SubCmd.encode(cmds, .{ .bind_entity = self });
+        try Cmd.encode(cmds, .{ .bind_entity = self });
     }
 
     pub const ChangeArchImmediateOptions = struct {
@@ -442,7 +442,9 @@ pub const Entity = packed struct {
         add: CompFlag.Set = .{},
     };
 
-    /// Similar to `changeArchetypeOrErr`, but does not initialize the components.
+    /// Similar to `changeArchetypeOrErr`, but does not initialize the components. Furthermore, any
+    /// added component's values are considered undefined after this call, even if they were
+    /// previously initialized.
     pub fn changeArchUninitImmediateOrErr(
         self: @This(),
         es: *Entities,
@@ -462,6 +464,7 @@ pub const Entity = packed struct {
             if (id.size > 0 and comp_offset + id.size > comp_buffer.len) {
                 return error.ZcsCompOverflow;
             }
+            @memset(comp_buffer[comp_offset .. comp_offset + id.size], undefined);
         }
 
         // Commit the slot and change the archetype

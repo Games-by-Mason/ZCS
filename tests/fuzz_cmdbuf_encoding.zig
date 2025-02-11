@@ -43,19 +43,19 @@ test "rand cmdbuf encoding" {
     try fuzzCmdBufEncoding(input);
 }
 
-const OracleCmd = struct {
-    const Op = union(enum) {
+const OracleBatch = struct {
+    const Cmd = union(enum) {
         add_comp: Any,
         remove_comp: TypeId,
         event: Any,
         destroy,
     };
     entity: Entity,
-    ops: std.ArrayListUnmanaged(Op) = .empty,
+    cmds: std.ArrayListUnmanaged(Cmd) = .empty,
 
     fn deinit(self: *@This()) void {
-        for (self.ops.items) |op| {
-            switch (op) {
+        for (self.cmds.items) |cmd| {
+            switch (cmd) {
                 .add_comp, .event => |any| if (any.as(RigidBody)) |v| {
                     gpa.destroy(v);
                 } else if (any.as(Model)) |v| {
@@ -74,7 +74,7 @@ const OracleCmd = struct {
                 .remove_comp, .destroy => {},
             }
         }
-        self.ops.deinit(gpa);
+        self.cmds.deinit(gpa);
         self.* = undefined;
     }
 };
@@ -112,7 +112,7 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
     });
     defer cmds.deinit(gpa, &es);
 
-    var oracle: std.ArrayListUnmanaged(OracleCmd) = try .initCapacity(gpa, 1024);
+    var oracle: std.ArrayListUnmanaged(OracleBatch) = try .initCapacity(gpa, 1024);
     defer oracle.deinit(gpa);
 
     var e = randomEntity(&parser);
@@ -129,7 +129,7 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
             randomizeEntity(&parser, &e);
 
             // Dedup with the last command if it's also a change arch on the same entity
-            const oracle_cmd = b: {
+            const oracle_batch = b: {
                 // See if we can just update the last command
                 if (oracle.items.len > 0) {
                     const prev = &oracle.items[oracle.items.len - 1];
@@ -145,7 +145,7 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
             for (0..parser.nextBetween(u8, 1, 5)) |_| {
                 if (parser.next(bool)) {
                     e.destroyCmd(&cmds);
-                    try oracle_cmd.ops.append(gpa, .destroy);
+                    try oracle_batch.cmds.append(gpa, .destroy);
                 } else switch (parser.next(enum {
                     add_comp_val,
                     add_comp_ptr,
@@ -160,21 +160,21 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
                             val.* = parser.next(RigidBody);
                             const comp: Any = .init(RigidBody, val);
                             e.addCompValCmd(&cmds, comp);
-                            try oracle_cmd.ops.append(gpa, .{ .add_comp = comp });
+                            try oracle_batch.cmds.append(gpa, .{ .add_comp = comp });
                         },
                         .model => {
                             const val = try gpa.create(Model);
                             val.* = parser.next(Model);
                             const comp: Any = .init(Model, val);
                             e.addCompValCmd(&cmds, comp);
-                            try oracle_cmd.ops.append(gpa, .{ .add_comp = comp });
+                            try oracle_batch.cmds.append(gpa, .{ .add_comp = comp });
                         },
                         .tag => {
                             const val = try gpa.create(Tag);
                             val.* = parser.next(Tag);
                             const comp: Any = .init(Tag, val);
                             e.addCompValCmd(&cmds, comp);
-                            try oracle_cmd.ops.append(gpa, .{ .add_comp = comp });
+                            try oracle_batch.cmds.append(gpa, .{ .add_comp = comp });
                         },
                     },
                     .add_comp_ptr => switch (parser.next(enum { rb, model, tag })) {
@@ -183,21 +183,21 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
                             val.* = RigidBody.interned[parser.nextLessThan(u8, RigidBody.interned.len)];
                             const comp: Any = .init(RigidBody, val);
                             e.addCompPtrCmd(&cmds, comp);
-                            try oracle_cmd.ops.append(gpa, .{ .add_comp = comp });
+                            try oracle_batch.cmds.append(gpa, .{ .add_comp = comp });
                         },
                         .model => {
                             const val = try gpa.create(Model);
                             val.* = Model.interned[parser.nextLessThan(u8, Model.interned.len)];
                             const comp: Any = .init(Model, val);
                             e.addCompPtrCmd(&cmds, comp);
-                            try oracle_cmd.ops.append(gpa, .{ .add_comp = comp });
+                            try oracle_batch.cmds.append(gpa, .{ .add_comp = comp });
                         },
                         .tag => {
                             const val = try gpa.create(Tag);
                             val.* = Tag.interned[parser.nextLessThan(u8, Tag.interned.len)];
                             const comp: Any = .init(Tag, val);
                             e.addCompPtrCmd(&cmds, comp);
-                            try oracle_cmd.ops.append(gpa, .{ .add_comp = comp });
+                            try oracle_batch.cmds.append(gpa, .{ .add_comp = comp });
                         },
                     },
                     .event_val => switch (parser.next(enum { foo, bar, baz })) {
@@ -206,21 +206,21 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
                             val.* = parser.next(FooEv);
                             const event: Any = .init(FooEv, val);
                             e.eventValCmd(&cmds, event);
-                            try oracle_cmd.ops.append(gpa, .{ .event = event });
+                            try oracle_batch.cmds.append(gpa, .{ .event = event });
                         },
                         .bar => {
                             const val = try gpa.create(BarEv);
                             val.* = parser.next(BarEv);
                             const event: Any = .init(BarEv, val);
                             e.eventValCmd(&cmds, event);
-                            try oracle_cmd.ops.append(gpa, .{ .event = event });
+                            try oracle_batch.cmds.append(gpa, .{ .event = event });
                         },
                         .baz => {
                             const val = try gpa.create(BazEv);
                             val.* = parser.next(BazEv);
                             const event: Any = .init(BazEv, val);
                             e.eventValCmd(&cmds, event);
-                            try oracle_cmd.ops.append(gpa, .{ .event = event });
+                            try oracle_batch.cmds.append(gpa, .{ .event = event });
                         },
                     },
                     .event_ptr => switch (parser.next(enum { foo, bar, baz })) {
@@ -229,21 +229,21 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
                             val.* = FooEv.interned[parser.nextLessThan(u8, FooEv.interned.len)];
                             const comp: Any = .init(FooEv, val);
                             e.eventPtrCmd(&cmds, comp);
-                            try oracle_cmd.ops.append(gpa, .{ .event = comp });
+                            try oracle_batch.cmds.append(gpa, .{ .event = comp });
                         },
                         .bar => {
                             const val = try gpa.create(BarEv);
                             val.* = BarEv.interned[parser.nextLessThan(u8, BarEv.interned.len)];
                             const comp: Any = .init(BarEv, val);
                             e.eventPtrCmd(&cmds, comp);
-                            try oracle_cmd.ops.append(gpa, .{ .event = comp });
+                            try oracle_batch.cmds.append(gpa, .{ .event = comp });
                         },
                         .baz => {
                             const val = try gpa.create(BazEv);
                             val.* = BazEv.interned[parser.nextLessThan(u8, BazEv.interned.len)];
                             const comp: Any = .init(BazEv, val);
                             e.eventPtrCmd(&cmds, comp);
-                            try oracle_cmd.ops.append(gpa, .{ .event = comp });
+                            try oracle_batch.cmds.append(gpa, .{ .event = comp });
                         },
                     },
                     .commit => {
@@ -252,19 +252,19 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
                     .remove => switch (parser.next(enum { rb, model, tag })) {
                         .rb => {
                             e.remCompCmd(&cmds, RigidBody);
-                            try oracle_cmd.ops.append(gpa, .{
+                            try oracle_batch.cmds.append(gpa, .{
                                 .remove_comp = zcs.typeId(RigidBody),
                             });
                         },
                         .model => {
                             e.remCompCmd(&cmds, Model);
-                            try oracle_cmd.ops.append(gpa, .{
+                            try oracle_batch.cmds.append(gpa, .{
                                 .remove_comp = zcs.typeId(Model),
                             });
                         },
                         .tag => {
                             e.remCompCmd(&cmds, Tag);
-                            try oracle_cmd.ops.append(gpa, .{
+                            try oracle_batch.cmds.append(gpa, .{
                                 .remove_comp = zcs.typeId(Tag),
                             });
                         },
@@ -276,14 +276,14 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
         }
 
         var iter = cmds.iterator();
-        for (oracle.items) |oracle_cmd| {
-            const cmd = iter.next().?;
-            try expectEqual(oracle_cmd.entity, cmd.entity);
-            var ops = cmd.iterator();
-            for (oracle_cmd.ops.items) |oracle_op| {
+        for (oracle.items) |oracle_batch| {
+            const batch = iter.next().?;
+            try expectEqual(oracle_batch.entity, batch.entity);
+            var batch_iter = batch.iterator();
+            for (oracle_batch.cmds.items) |oracle_op| {
                 switch (oracle_op) {
                     .add_comp => |oracle_comp| {
-                        const add = ops.next().?.add_comp;
+                        const add = batch_iter.next().?.add_comp;
                         try expectEqual(oracle_comp.id, add.id);
 
                         if (oracle_comp.as(RigidBody)) |v| {
@@ -297,10 +297,10 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
                         }
                     },
                     .remove_comp => |oracle_id| {
-                        try expectEqual(oracle_id, ops.next().?.remove_comp);
+                        try expectEqual(oracle_id, batch_iter.next().?.remove_comp);
                     },
                     .event => |oracle_event| {
-                        const event = ops.next().?.event;
+                        const event = batch_iter.next().?.event;
                         try expectEqual(oracle_event.id, event.id);
 
                         if (oracle_event.as(FooEv)) |v| {
@@ -313,10 +313,10 @@ fn fuzzCmdBufEncoding(input: []const u8) !void {
                             @panic("unexpected comp");
                         }
                     },
-                    .destroy => try expectEqual(.destroy, ops.next().?),
+                    .destroy => try expectEqual(.destroy, batch_iter.next().?),
                 }
             }
-            try expectEqual(null, ops.next());
+            try expectEqual(null, batch_iter.next());
         }
         try expectEqual(null, iter.next());
 

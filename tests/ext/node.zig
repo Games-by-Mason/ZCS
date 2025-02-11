@@ -9,13 +9,36 @@ const Entity = zcs.Entity;
 const Entities = zcs.Entities;
 const Any = zcs.Any;
 const CompFlag = zcs.CompFlag;
+const CmdBuf = zcs.CmdBuf;
 const Node = zcs.ext.Node;
+const SetParent = zcs.ext.Node.SetParent;
 
 const gpa = std.testing.allocator;
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 
 const log = false;
+
+const cmds_capacity = 10;
+
+test "node cmd smoke test" {
+    defer CompFlag.unregisterAll();
+
+    var es = try Entities.init(gpa, .{ .max_entities = 128, .comp_bytes = 1024 });
+    defer es.deinit(gpa);
+
+    var cmds: CmdBuf = try .init(gpa, &es, .{
+        .cmds = cmds_capacity,
+        .avg_any_bytes = @sizeOf(Node),
+    });
+    defer cmds.deinit(gpa, &es);
+
+    const e0 = Entity.popReserved(&cmds);
+    const e1 = Entity.popReserved(&cmds);
+    e0.eventCmd(&cmds, SetParent, .{e1.toOptional()});
+
+    Node.execImmediate(&cmds, &es);
+}
 
 test "node immediate" {
     defer CompFlag.unregisterAll();

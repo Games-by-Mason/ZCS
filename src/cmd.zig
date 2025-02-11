@@ -1,18 +1,17 @@
-//! For internal use. Subcommand encoding for the command buffer.
+//! For internal use. See `Cmd`.
 
 const std = @import("std");
 const assert = std.debug.assert;
 
-const zcs = @import("../root.zig");
+const zcs = @import("root.zig");
 const Entity = zcs.Entity;
 const Any = zcs.Any;
 const TypeId = zcs.TypeId;
 const CmdBuf = zcs.CmdBuf;
 const Entities = zcs.Entities;
 
-/// For internal use. Archetype change commands are composed of a sequence of one  or more
-/// subcommands which are then encoded in a compact form.
-pub const SubCmd = union(enum) {
+/// For internal use. An unencoded representation of command buffer commands.
+pub const Cmd = union(enum) {
     /// Binds an existing entity.
     bind_entity: Entity,
     /// Destroys the bound entity.
@@ -37,17 +36,17 @@ pub const SubCmd = union(enum) {
 
     pub const Tag = @typeInfo(@This()).@"union".tag_type.?;
 
-    /// Decodes encoded subcommands.
+    /// Decodes encoded commands.
     pub const Decoder = struct {
         cmds: *const CmdBuf,
         tag_index: usize = 0,
         arg_index: usize = 0,
         comp_bytes_index: usize = 0,
 
-        pub inline fn next(self: *@This()) ?SubCmd {
+        pub inline fn next(self: *@This()) ?Cmd {
             _ = rename_when_changing_encoding;
 
-            // Decode the next subcommand
+            // Decode the next command
             if (self.nextTag()) |tag| {
                 switch (tag) {
                     .bind_entity => {
@@ -95,7 +94,7 @@ pub const SubCmd = union(enum) {
             return null;
         }
 
-        pub inline fn peekTag(self: *@This()) ?SubCmd.Tag {
+        pub inline fn peekTag(self: *@This()) ?Cmd.Tag {
             if (self.tag_index < self.cmds.tags.items.len) {
                 return self.cmds.tags.items[self.tag_index];
             } else {
@@ -103,7 +102,7 @@ pub const SubCmd = union(enum) {
             }
         }
 
-        pub inline fn nextTag(self: *@This()) ?SubCmd.Tag {
+        pub inline fn nextTag(self: *@This()) ?Cmd.Tag {
             const tag = self.peekTag() orelse return null;
             self.tag_index += 1;
             return tag;
@@ -136,11 +135,11 @@ pub const SubCmd = union(enum) {
         }
     };
 
-    /// Encodes a subcommand.
-    pub fn encode(cmds: *CmdBuf, sub_cmd: SubCmd) error{ZcsCmdBufOverflow}!void {
-        _ = SubCmd.rename_when_changing_encoding;
+    /// Encodes a command.
+    pub fn encode(cmds: *CmdBuf, cmd: Cmd) error{ZcsCmdBufOverflow}!void {
+        _ = Cmd.rename_when_changing_encoding;
 
-        switch (sub_cmd) {
+        switch (cmd) {
             .destroy => {
                 if (cmds.tags.items.len >= cmds.tags.capacity) return error.ZcsCmdBufOverflow;
                 cmds.tags.appendAssumeCapacity(.destroy);
@@ -164,7 +163,7 @@ pub const SubCmd = union(enum) {
                 if (aligned + comp.id.size > cmds.any_bytes.capacity) {
                     return error.ZcsCmdBufOverflow;
                 }
-                cmds.tags.appendAssumeCapacity(sub_cmd);
+                cmds.tags.appendAssumeCapacity(cmd);
                 cmds.args.appendAssumeCapacity(@intFromPtr(comp.id));
                 cmds.any_bytes.items.len = aligned;
                 cmds.any_bytes.appendSliceAssumeCapacity(comp.constSlice());
@@ -172,7 +171,7 @@ pub const SubCmd = union(enum) {
             .add_comp_ptr, .event_ptr => |comp| {
                 if (cmds.tags.items.len >= cmds.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (cmds.args.items.len + 2 > cmds.args.capacity) return error.ZcsCmdBufOverflow;
-                cmds.tags.appendAssumeCapacity(sub_cmd);
+                cmds.tags.appendAssumeCapacity(cmd);
                 cmds.args.appendAssumeCapacity(@intFromPtr(comp.id));
                 cmds.args.appendAssumeCapacity(@intFromPtr(comp.ptr));
             },

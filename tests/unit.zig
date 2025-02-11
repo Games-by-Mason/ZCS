@@ -220,170 +220,170 @@ test "command buffer interning" {
         const cmd = iter.next().?;
         try expectEqual(e0, cmd.entity);
         const arch_change = cmd.getArchChangeImmediate(&es);
-        try expectEqual(CompFlag.set(&.{
+        try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
         }), arch_change.add);
-        try expectEqual(CompFlag.set(&.{}), arch_change.remove);
+        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.remove);
         try expect(!arch_change.destroy);
-        var ops = cmd.iterator();
-        const comp1 = ops.next().?.add_comp;
+        var batches = cmd.iterator();
+        const comp1 = batches.next().?.add_comp;
         try expect(isInAnyBytes(cmds, comp1.as(Model).?));
         try expectEqual(model_value, comp1.as(Model).?.*);
-        const comp2 = ops.next().?.add_comp;
+        const comp2 = batches.next().?.add_comp;
         try expect(!isInAnyBytes(cmds, comp2.as(RigidBody).?));
         try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
-        const ev1 = ops.next().?.event;
+        const ev1 = batches.next().?.event;
         try expect(isInAnyBytes(cmds, ev1.as(BarEv).?));
         try expectEqual(bar_ev_value, ev1.as(BarEv).?.*);
-        const ev2 = ops.next().?.event;
+        const ev2 = batches.next().?.event;
         try expect(!isInAnyBytes(cmds, ev2.as(FooEv).?));
         try expectEqual(foo_ev_interned, ev2.as(FooEv).?.*);
-        try expectEqual(null, ops.next());
+        try expectEqual(null, batches.next());
     }
     {
         const cmd = iter.next().?;
         const arch_change = cmd.getArchChangeImmediate(&es);
-        try expectEqual(CompFlag.set(&.{
+        try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
         }), arch_change.add);
-        try expectEqual(CompFlag.set(&.{}), arch_change.remove);
+        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.remove);
         try expect(!arch_change.destroy);
         try expectEqual(e1, cmd.entity);
-        var ops = cmd.iterator();
-        const comp1 = ops.next().?.add_comp;
+        var batches = cmd.iterator();
+        const comp1 = batches.next().?.add_comp;
         try expect(isInAnyBytes(cmds, comp1.as(Model).?)); // By value because it's too small!
         try expectEqual(model_interned, comp1.as(Model).?.*);
-        const comp2 = ops.next().?.add_comp;
+        const comp2 = batches.next().?.add_comp;
         try expect(isInAnyBytes(cmds, comp2.as(RigidBody).?));
         try expectEqual(rb_value, comp2.as(RigidBody).?.*);
-        const ev1 = ops.next().?.event;
+        const ev1 = batches.next().?.event;
         try expect(isInAnyBytes(cmds, ev1.as(BarEv).?)); // By value because it's too small!
         try expectEqual(bar_ev_interned, ev1.as(BarEv).?.*);
-        const ev2 = ops.next().?.event;
+        const ev2 = batches.next().?.event;
         try expect(isInAnyBytes(cmds, ev2.as(FooEv).?));
         try expectEqual(foo_ev_value, ev2.as(FooEv).?.*);
-        try expectEqual(null, ops.next());
+        try expectEqual(null, batches.next());
     }
     {
         const cmd = iter.next().?;
         const arch_change = cmd.getArchChangeImmediate(&es);
-        try expectEqual(CompFlag.set(&.{
+        try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
         }), arch_change.add);
-        try expectEqual(CompFlag.set(&.{}), arch_change.remove);
+        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.remove);
         try expect(!arch_change.destroy);
         try expectEqual(e0, cmd.entity);
-        var ops = cmd.iterator();
-        const comp1 = ops.next().?.add_comp;
+        var batches = cmd.iterator();
+        const comp1 = batches.next().?.add_comp;
         try expect(isInAnyBytes(cmds, comp1.as(Model).?));
         try expectEqual(model_value, comp1.as(Model).?.*);
-        const comp2 = ops.next().?.add_comp;
+        const comp2 = batches.next().?.add_comp;
         try expect(isInAnyBytes(cmds, comp2.as(RigidBody).?));
         try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
-        const ev1 = ops.next().?.event;
+        const ev1 = batches.next().?.event;
         try expect(isInAnyBytes(cmds, ev1.as(BarEv).?));
         try expectEqual(bar_ev_value, ev1.as(BarEv).?.*);
-        const ev2 = ops.next().?.event;
+        const ev2 = batches.next().?.event;
         try expect(isInAnyBytes(cmds, ev2.as(FooEv).?));
         try expectEqual(foo_ev_interned, ev2.as(FooEv).?.*);
-        try expectEqual(null, ops.next());
+        try expectEqual(null, batches.next());
     }
     {
         const cmd = iter.next().?;
         const arch_change = cmd.getArchChangeImmediate(&es);
-        try expectEqual(CompFlag.set(&.{
+        try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
         }), arch_change.add);
-        try expectEqual(CompFlag.set(&.{}), arch_change.remove);
+        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.remove);
         try expect(!arch_change.destroy);
         try expectEqual(e1, cmd.entity);
-        var ops = cmd.iterator();
-        const comp1 = ops.next().?.add_comp;
+        var batches = cmd.iterator();
+        const comp1 = batches.next().?.add_comp;
         try expect(isInAnyBytes(cmds, comp1.as(Model).?));
         try expectEqual(model_interned, comp1.as(Model).?.*);
-        const comp2 = ops.next().?.add_comp;
+        const comp2 = batches.next().?.add_comp;
         try expect(isInAnyBytes(cmds, comp2.as(RigidBody).?));
         try expectEqual(rb_value, comp2.as(RigidBody).?.*);
-        const ev1 = ops.next().?.event;
+        const ev1 = batches.next().?.event;
         try expect(isInAnyBytes(cmds, ev1.as(BarEv).?));
         try expectEqual(bar_ev_interned, ev1.as(BarEv).?.*);
-        const ev2 = ops.next().?.event;
+        const ev2 = batches.next().?.event;
         try expect(isInAnyBytes(cmds, ev2.as(FooEv).?));
         try expectEqual(foo_ev_value, ev2.as(FooEv).?.*);
-        try expectEqual(null, ops.next());
+        try expectEqual(null, batches.next());
     }
     {
         const cmd = iter.next().?;
         const arch_change = cmd.getArchChangeImmediate(&es);
         try expectEqual(e2, cmd.entity);
         try expectEqual(CompFlag.Set.initEmpty(), arch_change.add);
-        try expectEqual(CompFlag.set(&.{
+        try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
         }), arch_change.remove);
         try expect(arch_change.destroy);
-        var ops = cmd.iterator();
-        try expectEqual(.destroy, ops.next());
-        try expectEqual(null, ops.next());
+        var batches = cmd.iterator();
+        try expectEqual(.destroy, batches.next());
+        try expectEqual(null, batches.next());
     }
     {
         const cmd = iter.next().?;
         const arch_change = cmd.getArchChangeImmediate(&es);
-        try expectEqual(CompFlag.set(&.{
+        try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
         }), arch_change.add);
-        try expectEqual(CompFlag.set(&.{}), arch_change.remove);
+        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.remove);
         try expect(!arch_change.destroy);
         try expectEqual(e0, cmd.entity);
-        var ops = cmd.iterator();
-        const comp1 = ops.next().?.add_comp;
+        var batches = cmd.iterator();
+        const comp1 = batches.next().?.add_comp;
         try expect(!isInAnyBytes(cmds, comp1.as(RigidBody).?));
         try expectEqual(rb_interned, comp1.as(RigidBody).?.*);
-        const comp2 = ops.next().?.add_comp;
+        const comp2 = batches.next().?.add_comp;
         try expect(!isInAnyBytes(cmds, comp2.as(Model).?));
         try expectEqual(model_interned, comp2.as(Model).?.*);
-        const ev1 = ops.next().?.event;
+        const ev1 = batches.next().?.event;
         try expect(!isInAnyBytes(cmds, ev1.as(BarEv).?));
         try expectEqual(bar_ev_interned, ev1.as(BarEv).?.*);
-        const ev2 = ops.next().?.event;
+        const ev2 = batches.next().?.event;
         try expect(!isInAnyBytes(cmds, ev2.as(FooEv).?));
         try expectEqual(foo_ev_interned, ev2.as(FooEv).?.*);
-        try expectEqual(null, ops.next());
+        try expectEqual(null, batches.next());
     }
     {
         const cmd = iter.next().?;
         const arch_change = cmd.getArchChangeImmediate(&es);
-        try expectEqual(CompFlag.set(&.{
+        try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Tag)),
         }), arch_change.add);
-        try expectEqual(CompFlag.set(&.{}), arch_change.remove);
+        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.remove);
         try expect(!arch_change.destroy);
         try expectEqual(e1, cmd.entity);
-        var ops = cmd.iterator();
-        const comp1 = ops.next().?.add_comp;
+        var batches = cmd.iterator();
+        const comp1 = batches.next().?.add_comp;
         try expect(isInAnyBytes(cmds, comp1.as(Tag).?));
         try expectEqual(Tag{}, comp1.as(Tag).?.*);
-        const comp2 = ops.next().?.add_comp;
+        const comp2 = batches.next().?.add_comp;
         try expect(isInAnyBytes(cmds, comp2.as(Tag).?));
         try expectEqual(Tag{}, comp2.as(Tag).?.*);
-        const comp3 = ops.next().?.add_comp;
+        const comp3 = batches.next().?.add_comp;
         try expect(!isInAnyBytes(cmds, comp3.as(Tag).?));
         try expectEqual(Tag{}, comp3.as(Tag).?.*);
-        const ev1 = ops.next().?.event;
+        const ev1 = batches.next().?.event;
         try expect(isInAnyBytes(cmds, ev1.as(BazEv).?));
         try expectEqual(BazEv{}, ev1.as(BazEv).?.*);
-        const ev2 = ops.next().?.event;
+        const ev2 = batches.next().?.event;
         try expect(isInAnyBytes(cmds, ev2.as(BazEv).?));
         try expectEqual(BazEv{}, ev2.as(BazEv).?.*);
-        const ev3 = ops.next().?.event;
+        const ev3 = batches.next().?.event;
         try expect(!isInAnyBytes(cmds, ev3.as(BazEv).?));
         try expectEqual(BazEv{}, ev3.as(BazEv).?.*);
-        try expectEqual(null, ops.next());
+        try expectEqual(null, batches.next());
     }
 
     try expectEqual(null, iter.next());
@@ -479,23 +479,23 @@ test "command buffer overflow" {
 
         {
             const cmd = iter.next().?;
-            var ops = cmd.iterator();
-            const create_rb = ops.next().?.add_comp;
+            var batches = cmd.iterator();
+            const create_rb = batches.next().?.add_comp;
             try expectEqual(typeId(RigidBody), create_rb.id);
             try expectEqual(rb, create_rb.as(RigidBody).?.*);
-            try expectEqual(null, ops.next());
+            try expectEqual(null, batches.next());
         }
 
         {
             const cmd = iter.next().?;
             const arch_change = cmd.getArchChangeImmediate(&es);
             try expectEqual(e, cmd.entity);
-            try expectEqual(CompFlag.set(&.{}), arch_change.add);
-            try expectEqual(CompFlag.set(&.{}), arch_change.remove);
+            try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.add);
+            try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.remove);
             try expect(arch_change.destroy);
-            var ops = cmd.iterator();
-            try expectEqual(.destroy, ops.next());
-            try expectEqual(null, ops.next());
+            var batches = cmd.iterator();
+            try expectEqual(.destroy, batches.next());
+            try expectEqual(null, batches.next());
         }
 
         try expectEqual(null, iter.next());
@@ -528,23 +528,23 @@ test "command buffer overflow" {
 
         {
             const cmd = iter.next().?;
-            var ops = cmd.iterator();
-            const create_foo = ops.next().?.event;
+            var batches = cmd.iterator();
+            const create_foo = batches.next().?.event;
             try expectEqual(typeId(FooEv), create_foo.id);
             try expectEqual(foo, create_foo.as(FooEv).?.*);
-            try expectEqual(null, ops.next());
+            try expectEqual(null, batches.next());
         }
 
         {
             const cmd = iter.next().?;
             const arch_change = cmd.getArchChangeImmediate(&es);
             try expectEqual(e, cmd.entity);
-            try expectEqual(CompFlag.set(&.{}), arch_change.add);
-            try expectEqual(CompFlag.set(&.{}), arch_change.remove);
+            try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.add);
+            try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.remove);
             try expect(arch_change.destroy);
-            var ops = cmd.iterator();
-            try expectEqual(.destroy, ops.next());
-            try expectEqual(null, ops.next());
+            var batches = cmd.iterator();
+            try expectEqual(.destroy, batches.next());
+            try expectEqual(null, batches.next());
         }
 
         try expectEqual(null, iter.next());
@@ -795,7 +795,7 @@ test "change arch immediate" {
         const e = Entity.reserveImmediate(&es);
         try expect(e.changeArchImmediate(&es, .{
             .add = &.{ .init(RigidBody, &.{ .mass = 1.0 }), .init(Model, &.{ .vertex_start = 2 }) },
-            .remove = CompFlag.set(&.{CompFlag.registerImmediate(typeId(RigidBody))}),
+            .remove = CompFlag.Set.initMany(&.{CompFlag.registerImmediate(typeId(RigidBody))}),
         }));
         try expectEqual(Model{ .vertex_start = 2 }, e.getComp(&es, Model).?.*);
         try expectEqual(null, e.getComp(&es, RigidBody));
@@ -809,7 +809,7 @@ test "change arch immediate" {
                 .init(RigidBody, &.{ .mass = 0.5 }),
                 .init(Model, &.{ .vertex_start = 20 }),
             },
-            .remove = CompFlag.set(&.{CompFlag.registerImmediate(typeId(Tag))}),
+            .remove = CompFlag.Set.initMany(&.{CompFlag.registerImmediate(typeId(Tag))}),
         }));
         try expectEqual(RigidBody{ .mass = 0.5 }, e.getComp(&es, RigidBody).?.*);
         try expectEqual(Model{ .vertex_start = 20 }, e.getComp(&es, Model).?.*);
@@ -824,7 +824,7 @@ test "change arch immediate" {
                 .init(RigidBody, &.{ .mass = 0.5 }),
                 .init(Model, &.{ .vertex_start = 20 }),
             },
-            .remove = CompFlag.set(&.{CompFlag.registerImmediate(typeId(Tag))}),
+            .remove = CompFlag.Set.initMany(&.{CompFlag.registerImmediate(typeId(Tag))}),
         }));
         try expectEqual(null, e.getComp(&es, RigidBody));
         try expectEqual(null, e.getComp(&es, Model));
