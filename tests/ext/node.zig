@@ -226,7 +226,7 @@ fn fuzzNodesCmdBuf(input: []const u8) !void {
             }
         }
 
-        Node.execImmediate(&cmds, &fz.es);
+        Node.Exec.immediate(&cmds, &fz.es);
         cmds.clear(&fz.es);
 
         try checkOracle(&fz, &o);
@@ -267,7 +267,7 @@ fn fuzzNodeCyclesCmdBuf(input: []const u8) !void {
             try setParentCmd(&fz, &o, &cmds);
         }
 
-        Node.execImmediate(&cmds, &fz.es);
+        Node.Exec.immediate(&cmds, &fz.es);
         cmds.clear(&fz.es);
 
         try checkOracle(&fz, &o);

@@ -16,6 +16,7 @@ const zcs = @import("../root.zig");
 const view = zcs.view;
 const types = zcs.types;
 const typeId = zcs.typeId;
+const TypeId = zcs.TypeId;
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const CmdBuf = zcs.CmdBuf;
@@ -232,87 +233,109 @@ const ChildIterator = struct {
 /// * If child no longer exists, no change is made
 pub const SetParent = struct { Entity.Optional };
 
-/// Executes a command buffer, applying the node transformations along the way. This is provided as
-/// an example, in practice you likely want to copy this code directly into your code base so that
-/// other systems can also hook into the command buffer iterator.
-pub fn execImmediate(cmds: *const CmdBuf, es: *Entities) void {
-    execImmediateOrErr(cmds, es) catch |err|
-        @panic(@errorName(err));
-}
-
+/// `Exec` provides helpers for processing hierarchy changes via the command buffer.
+///
+/// By convention, `Exec` only calls into the stable public interface of the types it's working
+/// with. As such, documentation is sparse. You are welcome to call these methods directly, or
+/// use them as reference for implementing your own command buffer iterator.
 pub const Exec = struct {
     init_node: bool = false,
 
-    pub fn before(
+    /// Provided as reference. Executes a command buffer, applying the node transformations along
+    /// the way. In practice, you likely want to call the finer grained functions provided directly,
+    /// so that other libraries you use can also hook into the command buffer iterator.
+    pub fn immediate(cmds: *const CmdBuf, es: *Entities) void {
+        immediateOrErr(cmds, es) catch |err|
+            @panic(@errorName(err));
+    }
+
+    /// Similar to `immediate`, but returns `error.ZcsCompOverflow` on error instead of panicking.
+    /// On error, the command buffer will be partially executed.
+    pub fn immediateOrErr(cmds: *const CmdBuf, es: *Entities) error{ZcsCompOverflow}!void {
+        var batches = cmds.iterator();
+        while (batches.next()) |batch| {
+            var node_exec: Exec = .{};
+
+            var arch_change = batch.getArchChangeImmediate(es);
+            {
+                var iter = batch.iterator();
+                while (iter.next()) |cmd| {
+                    node_exec.beforeImmediate(es, batch, &arch_change, cmd);
+                }
+            }
+
+            _ = try batch.execImmediateOrErr(es, arch_change);
+
+            {
+                var iter = batch.iterator();
+                while (iter.next()) |cmd| {
+                    try node_exec.afterImmediate(es, batch, arch_change, cmd);
+                }
+            }
+        }
+    }
+
+    /// Preprocessing for a command batch. Keeps the hierarchy intact, and processes `SetParent`
+    /// events.
+    pub fn beforeImmediate(
         self: *@This(),
         es: *Entities,
-        cmd: CmdBuf.Batch,
+        batch: CmdBuf.Batch,
         arch_change: *CmdBuf.Batch.ArchChange,
-        op: CmdBuf.Batch.Item,
+        cmd: CmdBuf.Batch.Item,
     ) void {
-        switch (op) {
-            .event => |event| {
-                if (event.id == typeId(SetParent) and
-                    !arch_change.from.contains(.registerImmediate(typeId(Node))))
-                {
-                    arch_change.add.insert(typeId(Node).comp_flag.?);
-                    self.init_node = true;
-                }
-            },
-            .destroy => {
-                _ = destroyChildrenAndUnparentImmediate(es, cmd.entity);
-            },
-            .remove_comp => |id| if (id == typeId(Node)) {
-                _ = destroyChildrenAndUnparentImmediate(es, cmd.entity);
-            },
+        switch (cmd) {
+            .event => |event| self.beforeEventImmediate(arch_change, event),
+            .destroy => beforeDestroyImmediate(es, batch),
+            .remove_comp => |id| beforeRemoveCompImmediate(es, batch, id),
             .add_comp => {},
         }
     }
 
-    pub fn after(
+    /// Postprocessing for a command batch. Keeps the hierarchy intact, and processes `SetParent`
+    /// events.
+    pub fn afterImmediate(
         self: *@This(),
         es: *Entities,
-        cmd: CmdBuf.Batch,
+        batch: CmdBuf.Batch,
         arch_change: CmdBuf.Batch.ArchChange,
-        op: CmdBuf.Batch.Item,
+        cmd: CmdBuf.Batch.Item,
     ) error{ZcsCompOverflow}!void {
-        switch (op) {
+        switch (cmd) {
             .event => |ev| if (ev.as(SetParent)) |set_parent| {
                 if (self.init_node and !arch_change.from.contains(typeId(Node).comp_flag.?)) {
-                    if (cmd.entity.getComp(es, Node)) |node| {
+                    if (batch.entity.getComp(es, Node)) |node| {
                         node.* = .{};
                     }
                     self.init_node = false;
                 }
-                _ = try setParentImmediateOrErr(es, cmd.entity, set_parent[0]);
+                _ = try setParentImmediateOrErr(es, batch.entity, set_parent[0]);
             },
             .destroy, .add_comp, .remove_comp => {},
         }
     }
-};
 
-/// Similar to `execImmediate`, but returns `error.ZcsCompOverflow` on error instead of panicking. On
-/// error, the command buffer will be partially executed.
-pub fn execImmediateOrErr(cmds: *const CmdBuf, es: *Entities) error{ZcsCompOverflow}!void {
-    var iter = cmds.iterator();
-    while (iter.next()) |cmd| {
-        var node_exec: Exec = .{};
-
-        var arch_change = cmd.getArchChangeImmediate(es);
-        {
-            var ops = cmd.iterator();
-            while (ops.next()) |op| {
-                node_exec.before(es, cmd, &arch_change, op);
-            }
-        }
-
-        _ = try cmd.execImmediateOrErr(es, arch_change);
-
-        {
-            var ops = cmd.iterator();
-            while (ops.next()) |op| {
-                try node_exec.after(es, cmd, arch_change, op);
-            }
-        }
+    /// Preprocessing for events. Handles `SetParent` events.
+    pub fn beforeEventImmediate(
+        self: *@This(),
+        arch_change: *CmdBuf.Batch.ArchChange,
+        event: zcs.Any,
+    ) void {
+        if (event.id != typeId(SetParent)) return;
+        if (arch_change.from.contains(.registerImmediate(typeId(Node)))) return;
+        arch_change.add.insert(typeId(Node).comp_flag.?);
+        self.init_node = true;
     }
-}
+
+    /// Preprocessing for destroy commands. Destroys the children of destroyed nodes, but does not
+    /// destroy the node itself as to play nice with other extensions.
+    pub fn beforeDestroyImmediate(es: *Entities, cmd: CmdBuf.Batch) void {
+        _ = destroyChildrenAndUnparentImmediate(es, cmd.entity);
+    }
+
+    /// Preprocessing for remove component commands. Destroys children of removed nodes.
+    pub fn beforeRemoveCompImmediate(es: *Entities, batch: CmdBuf.Batch, id: TypeId) void {
+        if (id != typeId(Node)) return;
+        _ = destroyChildrenAndUnparentImmediate(es, batch.entity);
+    }
+};
