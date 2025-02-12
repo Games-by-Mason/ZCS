@@ -241,18 +241,29 @@ pub const SetParent = struct { Entity.Optional };
 pub const Exec = struct {
     init_node: bool = false,
 
-    /// Provided as reference. Executes a command buffer, applying the node transformations along
-    /// the way. In practice, you likely want to call the finer grained functions provided directly,
-    /// so that other libraries you use can also hook into the command buffer iterator.
-    pub fn immediate(cmds: *const CmdBuf, es: *Entities) void {
-        immediateOrErr(cmds, es) catch |err|
+    /// Provided as reference. Executes a list of command buffers, maintaining the hierarchy and
+    /// reacting to related events along the way. In practice, you likely want to call the finer
+    /// grained functions provided directly, so that other libraries you use can also hook into the
+    /// command buffer iterator.
+    pub fn allImmediate(es: *Entities, cbs: []const CmdBuf) void {
+        allImmediateOrErr(es, cbs) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `immediate`, but returns `error.ZcsCompOverflow` on error instead of panicking.
-    /// On error, the command buffer will be partially executed.
-    pub fn immediateOrErr(cmds: *const CmdBuf, es: *Entities) error{ZcsCompOverflow}!void {
-        var batches = cmds.iterator();
+    /// Similar to `allImmediate`, but returns `error.ZcsCompOverflow` and `error.ZcsEntityOverflow`
+    /// on error instead of panicking. On error the commands are left partially evaluated.
+    pub fn allImmediateOrErr(
+        es: *Entities,
+        cbs: []const CmdBuf,
+    ) error{ ZcsCompOverflow, ZcsEntityOverflow }!void {
+        for (cbs) |cb| try immediate(es, cb);
+    }
+
+    pub fn immediate(
+        es: *Entities,
+        cb: CmdBuf,
+    ) error{ ZcsCompOverflow, ZcsEntityOverflow }!void {
+        var batches = cb.iterator();
         while (batches.next()) |batch| {
             var node_exec: Exec = .{};
 
@@ -260,7 +271,7 @@ pub const Exec = struct {
             {
                 var iter = batch.iterator();
                 while (iter.next()) |cmd| {
-                    node_exec.beforeImmediate(es, batch, &arch_change, cmd);
+                    node_exec.beforeCmdImmediate(es, batch, &arch_change, cmd);
                 }
             }
 
@@ -269,15 +280,13 @@ pub const Exec = struct {
             {
                 var iter = batch.iterator();
                 while (iter.next()) |cmd| {
-                    try node_exec.afterImmediate(es, batch, arch_change, cmd);
+                    try node_exec.afterCmdImmediate(es, batch, arch_change, cmd);
                 }
             }
         }
     }
 
-    /// Preprocessing for a command batch. Keeps the hierarchy intact, and processes `SetParent`
-    /// commands.
-    pub fn beforeImmediate(
+    pub fn beforeCmdImmediate(
         self: *@This(),
         es: *Entities,
         batch: CmdBuf.Batch,
@@ -292,15 +301,13 @@ pub const Exec = struct {
         }
     }
 
-    /// Postprocessing for a command batch. Keeps the hierarchy intact, and processes `SetParent`
-    /// commands.
-    pub fn afterImmediate(
+    pub fn afterCmdImmediate(
         self: *@This(),
         es: *Entities,
         batch: CmdBuf.Batch,
         arch_change: CmdBuf.Batch.ArchChange,
         cmd: CmdBuf.Batch.Item,
-    ) error{ZcsCompOverflow}!void {
+    ) error{ ZcsCompOverflow, ZcsEntityOverflow }!void {
         switch (cmd) {
             .ext => |ev| if (ev.as(SetParent)) |set_parent| {
                 if (self.init_node and !arch_change.from.contains(typeId(Node).comp_flag.?)) {
@@ -315,7 +322,6 @@ pub const Exec = struct {
         }
     }
 
-    /// Preprocessing for extension commands. Handles `SetParent` commands.
     pub fn beforeExtImmediate(
         self: *@This(),
         arch_change: *CmdBuf.Batch.ArchChange,
@@ -327,8 +333,6 @@ pub const Exec = struct {
         self.init_node = true;
     }
 
-    /// Preprocessing for destroy commands. Destroys the children of destroyed nodes, but does not
-    /// destroy the node itself as to play nice with other extensions.
     pub fn beforeDestroyImmediate(es: *Entities, cmd: CmdBuf.Batch) void {
         _ = destroyChildrenAndUnparentImmediate(es, cmd.entity);
     }

@@ -63,11 +63,11 @@ fn run(input: []const u8, saturated: bool) !void {
     var fz: Fuzzer = try .init(input);
     defer fz.deinit();
 
-    var cmds: CmdBuf = try .init(gpa, &fz.es, .{
+    var cb: CmdBuf = try .init(gpa, &fz.es, .{
         .cmds = cmds_capacity,
         .avg_any_bytes = @sizeOf(RigidBody),
     });
-    defer cmds.deinit(gpa, &fz.es);
+    defer cb.deinit(gpa, &fz.es);
 
     const saturated_count = if (saturated) fz.smith.nextLessThan(u16, 10000) else 0;
 
@@ -96,15 +96,15 @@ fn run(input: []const u8, saturated: bool) !void {
                 destroy,
                 change_arch,
             })) {
-                .reserve => try reserve(&fz, &cmds),
-                .destroy => try destroy(&fz, &cmds),
-                .change_arch => try changeArch(&fz, &cmds),
+                .reserve => try reserve(&fz, &cb),
+                .destroy => try destroy(&fz, &cb),
+                .change_arch => try changeArch(&fz, &cb),
             }
         }
 
-        cmds.execImmediate(&fz.es);
-        cmds.clear(&fz.es);
-        try checkOracle(&fz, &cmds);
+        cb.execImmediate(&fz.es);
+        cb.clear(&fz.es);
+        try checkOracle(&fz, &cb);
 
         // Modify the entities directly. We do this later since interspersing it with the
         // command buffer will get incorrect results since the oracle applies everything
@@ -113,19 +113,19 @@ fn run(input: []const u8, saturated: bool) !void {
             if (fz.smith.isEmpty()) break;
             try fz.modifyImmediate();
         }
-        try checkOracle(&fz, &cmds);
+        try checkOracle(&fz, &cb);
     }
 
     try expect(fz.es.slots.saturated_generations >= saturated_count);
     for (0..saturated_count) |i| {
-        try expectEqual(.invalid, fz.es.slots.generations[i + cmds.reserved.capacity]);
+        try expectEqual(.invalid, fz.es.slots.generations[i + cb.reserved.capacity]);
     }
 }
 
-fn checkOracle(fz: *Fuzzer, cmds: *const CmdBuf) !void {
+fn checkOracle(fz: *Fuzzer, cb: *const CmdBuf) !void {
     // Check the total number of entities
     try expectEqual(
-        fz.reserved.count() + cmds.reserved.items.len,
+        fz.reserved.count() + cb.reserved.items.len,
         fz.es.reserved(),
     );
     try expectEqual(fz.committed.count(), fz.es.count());
@@ -163,23 +163,23 @@ fn checkOracle(fz: *Fuzzer, cmds: *const CmdBuf) !void {
     try fz.checkIterators();
 }
 
-fn reserve(fz: *Fuzzer, cmds: *CmdBuf) !void {
+fn reserve(fz: *Fuzzer, cb: *CmdBuf) !void {
     // Skip reserve if we already have a lot of entities to avoid overflowing
     if (fz.es.count() + fz.es.reserved() > fz.es.slots.capacity / 2) {
         return;
     }
 
     // Reserve an entity and update the oracle
-    const entity = Entity.popReserved(cmds);
+    const entity = Entity.popReserved(cb);
     try fz.reserved.putNoClobber(gpa, entity, {});
 }
 
-fn destroy(fz: *Fuzzer, cmds: *CmdBuf) !void {
+fn destroy(fz: *Fuzzer, cb: *CmdBuf) !void {
     if (fz.shouldSkipDestroy()) return;
 
     // Destroy a random entity
     const entity = fz.randomEntity().unwrap() orelse return;
-    entity.destroyCmd(cmds);
+    entity.destroyCmd(cb);
 
     // Destroy the entity in the oracle as well, displacing an existing
     // destroyed entity if there are already too many to prevent the destroyed
@@ -193,7 +193,7 @@ fn destroy(fz: *Fuzzer, cmds: *CmdBuf) !void {
     try fz.destroyed.put(gpa, entity, {});
 }
 
-fn changeArch(fz: *Fuzzer, cmds: *CmdBuf) !void {
+fn changeArch(fz: *Fuzzer, cb: *CmdBuf) !void {
     // Get a random entity
     const entity = fz.randomEntity().unwrap() orelse return;
 
@@ -212,15 +212,15 @@ fn changeArch(fz: *Fuzzer, cmds: *CmdBuf) !void {
                 tag,
             })) {
                 .rb => {
-                    const rb = addRandomComp(fz, cmds, entity, RigidBody);
+                    const rb = addRandomComp(fz, cb, entity, RigidBody);
                     if (expected) |e| e.rb = rb;
                 },
                 .model => {
-                    const model = addRandomComp(fz, cmds, entity, Model);
+                    const model = addRandomComp(fz, cb, entity, Model);
                     if (expected) |e| e.model = model;
                 },
                 .tag => {
-                    const tag = addRandomComp(fz, cmds, entity, Tag);
+                    const tag = addRandomComp(fz, cb, entity, Tag);
                     if (expected) |e| e.tag = tag;
                 },
             }
@@ -232,19 +232,19 @@ fn changeArch(fz: *Fuzzer, cmds: *CmdBuf) !void {
                 commit,
             })) {
                 .rb => {
-                    entity.remCompCmd(cmds, RigidBody);
+                    entity.remCompCmd(cb, RigidBody);
                     if (expected) |e| e.rb = null;
                 },
                 .model => {
-                    entity.remCompCmd(cmds, Model);
+                    entity.remCompCmd(cb, Model);
                     if (expected) |e| e.model = null;
                 },
                 .tag => {
-                    entity.remCompCmd(cmds, Tag);
+                    entity.remCompCmd(cb, Tag);
                     if (expected) |e| e.tag = null;
                 },
                 .commit => {
-                    entity.commitCmd(cmds);
+                    entity.commitCmd(cb);
                 },
             }
         }
@@ -253,21 +253,21 @@ fn changeArch(fz: *Fuzzer, cmds: *CmdBuf) !void {
 
 /// Adds a random value for the given component by value, or a random value from it's interned
 /// list by pointer. Returns the value.
-fn addRandomComp(fz: *Fuzzer, cmds: *CmdBuf, e: Entity, T: type) T {
+fn addRandomComp(fz: *Fuzzer, cb: *CmdBuf, e: Entity, T: type) T {
     const i = fz.smith.next(u8);
     const by_ptr = i < 40;
     if (by_ptr) {
         switch (i % T.interned.len) {
             inline 0...(T.interned.len - 1) => |n| {
                 const val = T.interned[n];
-                e.addCompCmdByPtr(cmds, .init(T, &val));
+                e.addCompCmdByPtr(cb, .init(T, &val));
                 return val;
             },
             else => unreachable,
         }
     } else {
         const val = fz.smith.next(T);
-        e.addCompCmd(cmds, T, val);
+        e.addCompCmd(cb, T, val);
         return val;
     }
 }

@@ -38,7 +38,7 @@ pub const Cmd = union(enum) {
 
     /// Decodes encoded commands.
     pub const Decoder = struct {
-        cmds: *const CmdBuf,
+        cb: *const CmdBuf,
         tag_index: usize = 0,
         arg_index: usize = 0,
         comp_bytes_index: usize = 0,
@@ -88,15 +88,15 @@ pub const Cmd = union(enum) {
             }
 
             // Assert that we're fully empty, and return null
-            assert(self.tag_index == self.cmds.tags.items.len);
-            assert(self.arg_index == self.cmds.args.items.len);
-            assert(self.comp_bytes_index == self.cmds.any_bytes.items.len);
+            assert(self.tag_index == self.cb.tags.items.len);
+            assert(self.arg_index == self.cb.args.items.len);
+            assert(self.comp_bytes_index == self.cb.any_bytes.items.len);
             return null;
         }
 
         pub inline fn peekTag(self: *@This()) ?Cmd.Tag {
-            if (self.tag_index < self.cmds.tags.items.len) {
-                return self.cmds.tags.items[self.tag_index];
+            if (self.tag_index < self.cb.tags.items.len) {
+                return self.cb.tags.items[self.tag_index];
             } else {
                 return null;
             }
@@ -109,8 +109,8 @@ pub const Cmd = union(enum) {
         }
 
         pub inline fn nextArg(self: *@This()) ?u64 {
-            if (self.arg_index < self.cmds.args.items.len) {
-                const arg = self.cmds.args.items[self.arg_index];
+            if (self.arg_index < self.cb.args.items.len) {
+                const arg = self.cb.args.items[self.arg_index];
                 self.arg_index += 1;
                 return arg;
             } else {
@@ -127,7 +127,7 @@ pub const Cmd = union(enum) {
             );
 
             // Get the pointer as a slice, this way we don't fail on zero sized types
-            const bytes = &self.cmds.any_bytes.items[self.comp_bytes_index..][0..id.size];
+            const bytes = &self.cb.any_bytes.items[self.comp_bytes_index..][0..id.size];
 
             // Update the offset and return the pointer
             self.comp_bytes_index += id.size;
@@ -136,50 +136,50 @@ pub const Cmd = union(enum) {
     };
 
     /// Encodes a command.
-    pub fn encode(cmds: *CmdBuf, cmd: Cmd) error{ZcsCmdBufOverflow}!void {
+    pub fn encode(cb: *CmdBuf, cmd: Cmd) error{ZcsCmdBufOverflow}!void {
         _ = Cmd.rename_when_changing_encoding;
 
         switch (cmd) {
             .destroy => {
-                if (cmds.tags.items.len >= cmds.tags.capacity) return error.ZcsCmdBufOverflow;
-                cmds.tags.appendAssumeCapacity(.destroy);
+                if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
+                cb.tags.appendAssumeCapacity(.destroy);
             },
             .bind_entity => |entity| {
-                if (cmds.bound == entity.toOptional()) return;
-                cmds.bound = entity.toOptional();
-                if (cmds.tags.items.len >= cmds.tags.capacity) return error.ZcsCmdBufOverflow;
-                if (cmds.args.items.len >= cmds.args.capacity) return error.ZcsCmdBufOverflow;
-                cmds.tags.appendAssumeCapacity(.bind_entity);
-                cmds.args.appendAssumeCapacity(@bitCast(entity));
+                if (cb.bound == entity.toOptional()) return;
+                cb.bound = entity.toOptional();
+                if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
+                if (cb.args.items.len >= cb.args.capacity) return error.ZcsCmdBufOverflow;
+                cb.tags.appendAssumeCapacity(.bind_entity);
+                cb.args.appendAssumeCapacity(@bitCast(entity));
             },
             inline .add_comp_val, .ext_val => |comp| {
                 const aligned = std.mem.alignForward(
                     usize,
-                    cmds.any_bytes.items.len,
+                    cb.any_bytes.items.len,
                     comp.id.alignment,
                 );
-                if (cmds.tags.items.len >= cmds.tags.capacity) return error.ZcsCmdBufOverflow;
-                if (cmds.args.items.len + 1 > cmds.args.capacity) return error.ZcsCmdBufOverflow;
-                if (aligned + comp.id.size > cmds.any_bytes.capacity) {
+                if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
+                if (cb.args.items.len + 1 > cb.args.capacity) return error.ZcsCmdBufOverflow;
+                if (aligned + comp.id.size > cb.any_bytes.capacity) {
                     return error.ZcsCmdBufOverflow;
                 }
-                cmds.tags.appendAssumeCapacity(cmd);
-                cmds.args.appendAssumeCapacity(@intFromPtr(comp.id));
-                cmds.any_bytes.items.len = aligned;
-                cmds.any_bytes.appendSliceAssumeCapacity(comp.constSlice());
+                cb.tags.appendAssumeCapacity(cmd);
+                cb.args.appendAssumeCapacity(@intFromPtr(comp.id));
+                cb.any_bytes.items.len = aligned;
+                cb.any_bytes.appendSliceAssumeCapacity(comp.constSlice());
             },
             .add_comp_ptr, .ext_ptr => |comp| {
-                if (cmds.tags.items.len >= cmds.tags.capacity) return error.ZcsCmdBufOverflow;
-                if (cmds.args.items.len + 2 > cmds.args.capacity) return error.ZcsCmdBufOverflow;
-                cmds.tags.appendAssumeCapacity(cmd);
-                cmds.args.appendAssumeCapacity(@intFromPtr(comp.id));
-                cmds.args.appendAssumeCapacity(@intFromPtr(comp.ptr));
+                if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
+                if (cb.args.items.len + 2 > cb.args.capacity) return error.ZcsCmdBufOverflow;
+                cb.tags.appendAssumeCapacity(cmd);
+                cb.args.appendAssumeCapacity(@intFromPtr(comp.id));
+                cb.args.appendAssumeCapacity(@intFromPtr(comp.ptr));
             },
             .remove_comp => |id| {
-                if (cmds.tags.items.len >= cmds.tags.capacity) return error.ZcsCmdBufOverflow;
-                if (cmds.args.items.len >= cmds.args.capacity) return error.ZcsCmdBufOverflow;
-                cmds.tags.appendAssumeCapacity(.remove_comp);
-                cmds.args.appendAssumeCapacity(@intFromPtr(id));
+                if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
+                if (cb.args.items.len >= cb.args.capacity) return error.ZcsCmdBufOverflow;
+                cb.tags.appendAssumeCapacity(.remove_comp);
+                cb.args.appendAssumeCapacity(@intFromPtr(id));
             },
         }
     }

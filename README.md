@@ -56,21 +56,21 @@ By doing destructive operations through command buffers, you can efficiently que
 ```zig
 
 // Allocate a command buffer
-var cmds = try CmdBuf.init(gpa, &es, 1000);
-defer cmds.deinit(gpa, &es);
+var cb = try CmdBuf.init(gpa, &es, 1000);
+defer cb.deinit(gpa, &es);
 
 // Get the next reserved entity. By reserving entities up front, the command buffer allows you to
 // create entities on background threads safely.
-const e = Entity.popReserved(&cmds);
+const e = Entity.popReserved(&cb);
 
 // Schedule an archetype change for the reserved entity, this will assign it storage when the
 // command buffer executes.
-e.addCompCmd(&cmds, RigidBody, .{ .mass = 20 });
-e.addCompCmd(&cmds, Sprite, .{ .index = .cat });
+e.addCompCmd(&cb, RigidBody, .{ .mass = 20 });
+e.addCompCmd(&cb, Sprite, .{ .index = .cat });
 
 // Execute the command buffer, and then clear it for reuse. This would be done from the main thread.
-cmds.execute(&es);
-cmds.clear(&es);
+cb.execute(&es);
+cb.clear(&es);
 ```
 
 ## Command Buffer Iteration
@@ -85,12 +85,12 @@ This use case is often served via callbacks, but callbacks have some major downs
 Instead, since all work is typically done via command buffers, this use case is served much more simply via command buffer iterators:
 
 ```zig
-fn updateTransforms(es: *const Entities, cmds: *const CmdBuf) {
-    for (cmds.destroy.items) |entity| {
+fn updateTransforms(es: *const Entities, cb: *const CmdBuf) {
+    for (cb.destroy.items) |entity| {
         // Process each entity scheduled for destruction
     }
 
-    var iter = cmds.arch_changes.iterator(es);
+    var iter = cb.arch_changes.iterator(es);
     while (iter.next()) |change| {
         // Process each archetype change
     }

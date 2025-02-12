@@ -80,10 +80,22 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
     self.* = undefined;
 }
 
-/// Invalidates all entities, leaving all `Entity`s dangling and all generations reset. This cannot
-/// be detected by `Entity.exists`.
-pub fn reset(self: *@This()) void {
-    self.slots.reset();
+/// Recycles all entities with the given archetype.
+pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
+    for (0..self.slots.next_index) |index| {
+        if (self.live.isSet(index) and self.slots.values[index].arch.eql(arch)) {
+            const entity: Entity = .{ .key = .{
+                .index = @intCast(index),
+                .generation = self.slots.generations[index],
+            } };
+            assert(entity.recycleImmediate(self));
+        }
+    }
+}
+
+/// Recycles all entities.
+pub fn recycleImmediate(self: *@This()) void {
+    self.slots.recycleAll();
     self.reserved_entities = 0;
 }
 

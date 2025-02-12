@@ -4,8 +4,8 @@
     .minimum_zig_version = "0.14.0-dev.2544+94df665fe",
     .dependencies = .{
         .slot_map = .{
-            .url = "https://github.com/Games-by-Mason/SlotMap/archive/a1783ab44175331baafb629a91c9121345c806d2.tar.gz",
-            .hash = "1220abff809ddebc439e36ec3db85dfd21994ee833c32a798270dd94eec603d78d63",
+            .url = "https://github.com/Games-by-Mason/SlotMap/archive/4aac9e43d5354df96d00a38b92eb46f7b9482744.tar.gz",
+            .hash = "12204a000723d559a0b9d3272c3dc3daea1660088ff89fb08628ce35156466e76c2c",
         },
     },
     .paths = .{

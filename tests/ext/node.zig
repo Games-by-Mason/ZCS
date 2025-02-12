@@ -127,7 +127,24 @@ const OracleNode = struct {
     }
 };
 
-const Oracle = std.AutoHashMapUnmanaged(Entity, OracleNode);
+const Oracle = struct {
+    nodes: std.AutoHashMapUnmanaged(Entity, OracleNode),
+
+    fn init() @This() {
+        return .{
+            .nodes = .{},
+        };
+    }
+
+    fn deinit(self: *@This()) void {
+        var iter = self.nodes.iterator();
+        while (iter.next()) |entry| {
+            entry.value_ptr.deinit();
+        }
+        self.nodes.deinit(gpa);
+        self.* = undefined;
+    }
+};
 
 /// Fuzz random node operations.
 fn fuzzNodes(input: []const u8) !void {
@@ -136,14 +153,8 @@ fn fuzzNodes(input: []const u8) !void {
     var fz: Fuzzer = try .init(input);
     defer fz.deinit();
 
-    var o: Oracle = .{};
-    defer {
-        var iter = o.iterator();
-        while (iter.next()) |entry| {
-            entry.value_ptr.deinit();
-        }
-        o.deinit(gpa);
-    }
+    var o: Oracle = .init();
+    defer o.deinit();
 
     while (!fz.smith.isEmpty()) {
         switch (fz.smith.next(enum {
@@ -168,14 +179,8 @@ fn fuzzNodeCycles(input: []const u8) !void {
     var fz: Fuzzer = try .init(input);
     defer fz.deinit();
 
-    var o: Oracle = .{};
-    defer {
-        var iter = o.iterator();
-        while (iter.next()) |entry| {
-            entry.value_ptr.deinit();
-        }
-        o.deinit(gpa);
-    }
+    var o: Oracle = .init();
+    defer o.deinit();
 
     for (0..16) |_| {
         try reserve(&fz, &o);
@@ -194,16 +199,10 @@ fn fuzzNodesCmdBuf(input: []const u8) !void {
     var fz: Fuzzer = try .init(input);
     defer fz.deinit();
 
-    var o: Oracle = .{};
-    defer {
-        var iter = o.iterator();
-        while (iter.next()) |entry| {
-            entry.value_ptr.deinit();
-        }
-        o.deinit(gpa);
-    }
+    var o: Oracle = .init();
+    defer o.deinit();
 
-    var cmds: CmdBuf = try .initGranularCapacity(gpa, &fz.es, b: {
+    var cb: CmdBuf = try .initGranularCapacity(gpa, &fz.es, b: {
         var cap: CmdBuf.GranularCapacity = .init(.{
             .cmds = cmds_capacity,
             .avg_any_bytes = @sizeOf(Node),
@@ -211,7 +210,7 @@ fn fuzzNodesCmdBuf(input: []const u8) !void {
         cap.reserved = 0;
         break :b cap;
     });
-    defer cmds.deinit(gpa, &fz.es);
+    defer cb.deinit(gpa, &fz.es);
 
     while (!fz.smith.isEmpty()) {
         for (0..fz.smith.nextLessThan(u16, cmds_capacity)) |_| {
@@ -221,15 +220,14 @@ fn fuzzNodesCmdBuf(input: []const u8) !void {
                 destroy,
             })) {
                 .reserve => try reserve(&fz, &o),
-                .set_parent => try setParentCmd(&fz, &o, &cmds),
-                .destroy => try destroyCmd(&fz, &o, &cmds),
+                .set_parent => try setParentCmd(&fz, &o, &cb),
+                .destroy => try destroyCmd(&fz, &o, &cb),
             }
         }
 
-        Node.Exec.immediate(&cmds, &fz.es);
-        cmds.clear(&fz.es);
-
+        Node.Exec.allImmediate(&fz.es, &.{cb});
         try checkOracle(&fz, &o);
+        clear(&fz, &cb, &o);
     }
 }
 
@@ -239,16 +237,10 @@ fn fuzzNodeCyclesCmdBuf(input: []const u8) !void {
     var fz: Fuzzer = try .init(input);
     defer fz.deinit();
 
-    var o: Oracle = .{};
-    defer {
-        var iter = o.iterator();
-        while (iter.next()) |entry| {
-            entry.value_ptr.deinit();
-        }
-        o.deinit(gpa);
-    }
+    var o: Oracle = .init();
+    defer o.deinit();
 
-    var cmds: CmdBuf = try .initGranularCapacity(gpa, &fz.es, b: {
+    var cb: CmdBuf = try .initGranularCapacity(gpa, &fz.es, b: {
         var cap: CmdBuf.GranularCapacity = .init(.{
             .cmds = cmds_capacity,
             .avg_any_bytes = @sizeOf(Node),
@@ -256,7 +248,7 @@ fn fuzzNodeCyclesCmdBuf(input: []const u8) !void {
         cap.reserved = 0;
         break :b cap;
     });
-    defer cmds.deinit(gpa, &fz.es);
+    defer cb.deinit(gpa, &fz.es);
 
     for (0..16) |_| {
         try reserve(&fz, &o);
@@ -264,22 +256,26 @@ fn fuzzNodeCyclesCmdBuf(input: []const u8) !void {
 
     while (!fz.smith.isEmpty()) {
         for (0..fz.smith.nextLessThan(u16, cmds_capacity)) |_| {
-            try setParentCmd(&fz, &o, &cmds);
+            try setParentCmd(&fz, &o, &cb);
         }
 
-        Node.Exec.immediate(&cmds, &fz.es);
-        cmds.clear(&fz.es);
-
+        Node.Exec.allImmediate(&fz.es, &.{cb});
         try checkOracle(&fz, &o);
+        clear(&fz, &cb, &o);
     }
+}
+
+fn clear(fz: *Fuzzer, cb: *CmdBuf, o: *Oracle) void {
+    _ = o;
+    cb.clear(&fz.es);
 }
 
 fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
     // Check the total entity count
-    try expectEqual(o.count(), fz.es.count() + fz.es.reserved());
+    try expectEqual(o.nodes.count(), fz.es.count() + fz.es.reserved());
 
     // Check each entity
-    var iterator = o.iterator();
+    var iterator = o.nodes.iterator();
     while (iterator.next()) |entry| {
         // Check the parent
         const node = entry.key_ptr.getComp(&fz.es, Node);
@@ -304,17 +300,17 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
 
 fn reserve(fz: *Fuzzer, o: *Oracle) !void {
     const entity = (try fz.reserveImmediate()).unwrap() orelse return;
-    try o.put(gpa, entity, .{});
+    try o.nodes.put(gpa, entity, .{});
 }
 
 fn isAncestorOf(fz: *Fuzzer, o: *Oracle, ancestor: Entity, descendant: Entity) !bool {
     if (!ancestor.exists(&fz.es)) return false;
-    const descendant_o = o.get(descendant) orelse return false;
+    const descendant_o = o.nodes.get(descendant) orelse return false;
     var c = descendant_o.parent;
     while (true) {
         if (c == ancestor.toOptional()) return true;
         const unwrapped = c.unwrap() orelse return false;
-        c = o.getPtr(unwrapped).?.parent;
+        c = o.nodes.getPtr(unwrapped).?.parent;
     }
 }
 
@@ -330,13 +326,13 @@ fn setParent(fz: *Fuzzer, o: *Oracle) !void {
     try setParentInOracle(fz, o, child, parent);
 }
 
-fn setParentCmd(fz: *Fuzzer, o: *Oracle, cmds: *CmdBuf) !void {
+fn setParentCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
     // Get a random parent and child
     const parent = fz.randomEntity();
     const child = fz.randomEntity().unwrap() orelse return;
     if (log) std.debug.print("{}.parent = {}\n", .{ child, parent });
 
-    child.extCmd(cmds, SetParent, .{parent});
+    child.extCmd(cb, SetParent, .{parent});
     try setParentInOracle(fz, o, child, parent);
 }
 
@@ -345,25 +341,25 @@ fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Opti
     if (parent == child.toOptional()) return;
 
     // Early out if child doesn't exist
-    if (!o.contains(child)) return;
+    if (!o.nodes.contains(child)) return;
 
-    const child_o = o.getPtr(child).?;
+    const child_o = o.nodes.getPtr(child).?;
 
     if (parent.unwrap()) |unwrapped| {
         // If parent doesn't exist, destroy child and early out
-        if (!o.contains(unwrapped)) {
+        if (!o.nodes.contains(unwrapped)) {
             return destroyInOracle(fz, o, child);
         }
 
         // If child is an ancestor of parent, break the loop by moving parent up to the same level
         // of child
         if (try isAncestorOf(fz, o, child, unwrapped)) {
-            const parent_o = o.getPtr(unwrapped).?;
+            const parent_o = o.nodes.getPtr(unwrapped).?;
             const parent_parent = parent_o.parent.unwrap().?;
-            try expect(o.getPtr(parent_parent).?.children.remove(unwrapped));
+            try expect(o.nodes.getPtr(parent_parent).?.children.remove(unwrapped));
             parent_o.parent = child_o.parent;
             if (child_o.parent.unwrap()) |child_parent| {
-                try o.getPtr(child_parent).?.children.put(gpa, unwrapped, {});
+                try o.nodes.getPtr(child_parent).?.children.put(gpa, unwrapped, {});
             }
         }
     }
@@ -371,7 +367,7 @@ fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Opti
     // Unparent the child
     const prev_parent = child_o.parent;
     if (prev_parent.unwrap()) |unwrapped| {
-        const prev_parent_o = o.getPtr(unwrapped).?;
+        const prev_parent_o = o.nodes.getPtr(unwrapped).?;
         try expect(prev_parent_o.children.remove(child));
     }
     child_o.parent = .none;
@@ -380,7 +376,7 @@ fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Opti
     if (parent.unwrap()) |unwrapped| {
         if (unwrapped.exists(&fz.es)) {
             child_o.parent = unwrapped.toOptional();
-            try o.getPtr(unwrapped).?.children.put(gpa, child, {});
+            try o.nodes.getPtr(unwrapped).?.children.put(gpa, child, {});
         }
     }
 }
@@ -399,7 +395,7 @@ fn destroy(fz: *Fuzzer, o: *Oracle) !void {
     try destroyInOracle(fz, o, entity);
 }
 
-fn destroyCmd(fz: *Fuzzer, o: *Oracle, cmds: *CmdBuf) !void {
+fn destroyCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
     if (fz.shouldSkipDestroy()) return;
 
     // Get a random entity
@@ -407,29 +403,29 @@ fn destroyCmd(fz: *Fuzzer, o: *Oracle, cmds: *CmdBuf) !void {
     if (log) std.debug.print("destroy {}\n", .{entity});
 
     // Destroy the real entity
-    entity.destroyCmd(cmds);
+    entity.destroyCmd(cb);
 
     // Destroy it in the oracle
     try destroyInOracle(fz, o, entity);
 }
 
 fn destroyInOracle(fz: *Fuzzer, o: *Oracle, e: Entity) !void {
-    if (o.getPtr(e)) |n| {
+    if (o.nodes.getPtr(e)) |n| {
         if (n.parent.unwrap()) |unwrapped| {
-            try expect(o.getPtr(unwrapped).?.children.remove(e));
+            try expect(o.nodes.getPtr(unwrapped).?.children.remove(e));
         }
     }
     try destroyInOracleInner(fz, o, e);
 }
 
 fn destroyInOracleInner(fz: *Fuzzer, o: *Oracle, e: Entity) !void {
-    if (o.getPtr(e)) |n| {
+    if (o.nodes.getPtr(e)) |n| {
         var iter = n.children.iterator();
         while (iter.next()) |entry| {
             try destroyInOracleInner(fz, o, entry.key_ptr.*);
         }
         n.deinit();
-        try expect(o.remove(e));
+        try expect(o.nodes.remove(e));
     }
     try fz.destroyInOracle(e);
 }

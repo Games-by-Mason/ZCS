@@ -122,7 +122,7 @@ fn usage(list: anytype) f32 {
 
 /// Returns an iterator over the encoded commands.
 pub fn iterator(self: *const @This()) Iterator {
-    return .{ .decoder = .{ .cmds = self } };
+    return .{ .decoder = .{ .cb = self } };
 }
 
 /// Executes the command buffer.
@@ -134,8 +134,8 @@ pub fn execImmediate(self: *@This(), es: *Entities) void {
 /// Similar to `execImmediate`, but returns `error.ZcsEntityOverflow` on failure instead of
 /// panicking. On error, the command buffer will be partially executed.
 pub fn execImmediateOrErr(self: *@This(), es: *Entities) error{ZcsCompOverflow}!void {
-    var cmds = self.iterator();
-    while (cmds.next()) |cmd| {
+    var iter = self.iterator();
+    while (iter.next()) |cmd| {
         _ = try cmd.execImmediateOrErr(es, cmd.getArchChangeImmediate(es));
     }
 }
