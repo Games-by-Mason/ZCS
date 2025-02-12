@@ -34,9 +34,12 @@ pub fn DirtyEvent(T: type) type {
 
         /// Similar to `emitImmediate` but returns `error.ZcsEntityOverflow` or
         /// `error.ZcsCompOverflow` on failure instead of panicking.
-        pub fn emitImmediateOrErr(es: *Entities, entity: Entity) void {
+        pub fn emitImmediateOrErr(
+            es: *Entities,
+            entity: Entity,
+        ) error{ ZcsEntityOverflow, ZcsCompOverflow }!void {
             // If we don't have `T`, early out
-            const comp = entity.getComp(T) orelse return;
+            const comp = entity.getComp(es, T) orelse return;
 
             // If `T` is already marked as dirty early out, otherwise mark it as dirty
             if (comp.dirty) return;
@@ -45,7 +48,7 @@ pub fn DirtyEvent(T: type) type {
             // Emit the event
             const event = try Entity.reserveImmediateOrErr(es);
             assert(try event.changeArchImmediateOrErr(es, .{
-                .add = &.{.init(@This(), &.{entity})},
+                .add = &.{.init(@This(), &.{ .entity = entity })},
             }));
         }
 
@@ -63,25 +66,22 @@ pub fn DirtyEvent(T: type) type {
 
         /// Recycles all events, allowing for reuse of their entities.
         pub fn recycleAll(es: *Entities) void {
-            es.recycleArchImmediate(.initSingle(CompFlag.registerImmediate(typeId(@This()))));
+            es.recycleArchImmediate(.initOne(CompFlag.registerImmediate(typeId(@This()))));
         }
 
         /// Processes the extension command for this event. Call this from your command buffer
         /// iterator.
-        pub fn processExtCmdImmediate(
+        pub fn processCmdImmediate(
             es: *Entities,
             batch: CmdBuf.Batch,
-            arch_change: *CmdBuf.Batch.ArchChange,
-            ext: zcs.Any,
+            cmd: CmdBuf.Batch.Item,
         ) void {
-            if (ext.id != typeId(Cmd)) return;
-
-            const flag: CompFlag = .registerImmediate(typeId(T));
-            if (!arch_change.from.contains(flag) or
-                arch_change.remove.contains(flag) or
-                arch_change.destroy) return;
-
-            emitImmediate(es, batch.entity);
+            switch (cmd) {
+                .ext => |ext| if (ext.id == typeId(Cmd)) {
+                    emitImmediate(es, batch.entity);
+                },
+                else => {},
+            }
         }
     };
 }

@@ -2,4 +2,5 @@
 
 test {
     _ = @import("node.zig");
+    _ = @import("dirty.zig");
 }

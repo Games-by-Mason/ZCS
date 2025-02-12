@@ -135,8 +135,8 @@ pub fn execImmediate(self: *@This(), es: *Entities) void {
 /// panicking. On error, the command buffer will be partially executed.
 pub fn execImmediateOrErr(self: *@This(), es: *Entities) error{ZcsCompOverflow}!void {
     var iter = self.iterator();
-    while (iter.next()) |cmd| {
-        _ = try cmd.execImmediateOrErr(es, cmd.getArchChangeImmediate(es));
+    while (iter.next()) |batch| {
+        _ = try batch.execImmediateOrErr(es, batch.getArchChangeImmediate(es));
     }
 }
 
