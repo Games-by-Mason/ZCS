@@ -276,7 +276,7 @@ pub const Exec = struct {
     }
 
     /// Preprocessing for a command batch. Keeps the hierarchy intact, and processes `SetParent`
-    /// events.
+    /// commands.
     pub fn beforeImmediate(
         self: *@This(),
         es: *Entities,
@@ -285,7 +285,7 @@ pub const Exec = struct {
         cmd: CmdBuf.Batch.Item,
     ) void {
         switch (cmd) {
-            .event => |event| self.beforeEventImmediate(arch_change, event),
+            .ext => |payload| self.beforeExtImmediate(arch_change, payload),
             .destroy => beforeDestroyImmediate(es, batch),
             .remove_comp => |id| beforeRemoveCompImmediate(es, batch, id),
             .add_comp => {},
@@ -293,7 +293,7 @@ pub const Exec = struct {
     }
 
     /// Postprocessing for a command batch. Keeps the hierarchy intact, and processes `SetParent`
-    /// events.
+    /// commands.
     pub fn afterImmediate(
         self: *@This(),
         es: *Entities,
@@ -302,7 +302,7 @@ pub const Exec = struct {
         cmd: CmdBuf.Batch.Item,
     ) error{ZcsCompOverflow}!void {
         switch (cmd) {
-            .event => |ev| if (ev.as(SetParent)) |set_parent| {
+            .ext => |ev| if (ev.as(SetParent)) |set_parent| {
                 if (self.init_node and !arch_change.from.contains(typeId(Node).comp_flag.?)) {
                     if (batch.entity.getComp(es, Node)) |node| {
                         node.* = .{};
@@ -315,13 +315,13 @@ pub const Exec = struct {
         }
     }
 
-    /// Preprocessing for events. Handles `SetParent` events.
-    pub fn beforeEventImmediate(
+    /// Preprocessing for extension commands. Handles `SetParent` commands.
+    pub fn beforeExtImmediate(
         self: *@This(),
         arch_change: *CmdBuf.Batch.ArchChange,
-        event: zcs.Any,
+        ext: zcs.Any,
     ) void {
-        if (event.id != typeId(SetParent)) return;
+        if (ext.id != typeId(SetParent)) return;
         if (arch_change.from.contains(.registerImmediate(typeId(Node)))) return;
         arch_change.add.insert(typeId(Node).comp_flag.?);
         self.init_node = true;

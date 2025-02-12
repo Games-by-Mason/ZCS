@@ -63,7 +63,7 @@ pub const Tag = struct {
     }
 };
 
-pub const FooEv = struct {
+pub const FooExt = struct {
     pub const interned: [3]@This() = .{
         .{ .foo = .{ 1.0, 2.0, 3.0 } },
         .{ .foo = .{ 1.1, 2.1, 3.1 } },
@@ -84,7 +84,7 @@ pub const FooEv = struct {
     }
 };
 
-pub const BarEv = struct {
+pub const BarExt = struct {
     pub const interned: [3]@This() = .{
         .{ .bar = 101 },
         .{ .bar = 102 },
@@ -105,7 +105,7 @@ pub const BarEv = struct {
     }
 };
 
-pub const BazEv = struct {
+pub const BazExt = struct {
     pub const interned: [2]@This() = .{
         .{},
         .{},

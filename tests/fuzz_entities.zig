@@ -260,7 +260,7 @@ fn addRandomComp(fz: *Fuzzer, cmds: *CmdBuf, e: Entity, T: type) T {
         switch (i % T.interned.len) {
             inline 0...(T.interned.len - 1) => |n| {
                 const val = T.interned[n];
-                e.addCompPtrCmd(cmds, .init(T, &val));
+                e.addCompCmdByPtr(cmds, .init(T, &val));
                 return val;
             },
             else => unreachable,

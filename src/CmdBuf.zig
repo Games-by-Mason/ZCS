@@ -228,7 +228,7 @@ pub const Batch = struct {
                     result.destroy = true;
                     break;
                 },
-                .event => {},
+                .ext => {},
             }
         }
         return result;
@@ -281,7 +281,7 @@ pub const Batch = struct {
                 },
                 .remove_comp,
                 .destroy,
-                .event,
+                .ext,
                 => {},
             }
         }
@@ -294,7 +294,7 @@ pub const Batch = struct {
         add_comp: Any,
         remove_comp: TypeId,
         destroy: void,
-        event: Any,
+        ext: Any,
     };
 
     /// An iterator over this batch's commands.
@@ -307,8 +307,8 @@ pub const Batch = struct {
                 const cmd: Item = switch (tag) {
                     .add_comp_val => .{ .add_comp = self.decoder.next().?.add_comp_val },
                     .add_comp_ptr => .{ .add_comp = self.decoder.next().?.add_comp_ptr },
-                    .event_val => .{ .event = self.decoder.next().?.event_val },
-                    .event_ptr => .{ .event = self.decoder.next().?.event_ptr },
+                    .ext_val => .{ .ext = self.decoder.next().?.ext_val },
+                    .ext_ptr => .{ .ext = self.decoder.next().?.ext_ptr },
                     .remove_comp => .{ .remove_comp = self.decoder.next().?.remove_comp },
                     .destroy => b: {
                         _ = self.decoder.next().?.destroy;
@@ -347,8 +347,8 @@ pub const Iterator = struct {
                 // this will never miss ops.
                 .add_comp_ptr,
                 .add_comp_val,
-                .event_ptr,
-                .event_val,
+                .ext_ptr,
+                .ext_val,
                 .remove_comp,
                 .destroy,
                 => {},

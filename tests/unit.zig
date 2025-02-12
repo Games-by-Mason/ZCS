@@ -21,9 +21,9 @@ const types = @import("types.zig");
 const RigidBody = types.RigidBody;
 const Model = types.Model;
 const Tag = types.Tag;
-const FooEv = types.FooEv;
-const BarEv = types.BarEv;
-const BazEv = types.BazEv;
+const FooExt = types.FooExt;
+const BarExt = types.BarExt;
+const BazExt = types.BazExt;
 
 const Components = struct {
     model: ?Model = null,
@@ -157,14 +157,14 @@ test "command buffer interning" {
         .vertex_count = 2,
     };
     const model_value = Model.random(rand);
-    const foo_ev_interned: FooEv = .{
+    const foo_ev_interned: FooExt = .{
         .foo = .{ 3.3, 4.4, 5.5 },
     };
-    const foo_ev_value = FooEv.random(rand);
-    const bar_ev_interned: BarEv = .{
+    const foo_ev_value = FooExt.random(rand);
+    const bar_ev_interned: BarExt = .{
         .bar = 123,
     };
-    const bar_ev_value = BarEv.random(rand);
+    const bar_ev_value = BarExt.random(rand);
 
     const e0: Entity = .reserveImmediate(&es);
     const e1: Entity = .reserveImmediate(&es);
@@ -173,24 +173,24 @@ test "command buffer interning" {
     // Automatic interning
     e0.addCompCmd(&cmds, Model, model_value);
     e0.addCompCmd(&cmds, RigidBody, rb_interned);
-    e0.eventCmd(&cmds, BarEv, bar_ev_value);
-    e0.eventCmd(&cmds, FooEv, foo_ev_interned);
+    e0.extCmd(&cmds, BarExt, bar_ev_value);
+    e0.extCmd(&cmds, FooExt, foo_ev_interned);
 
     e1.addCompCmd(&cmds, Model, model_interned);
     e1.addCompCmd(&cmds, RigidBody, rb_value);
-    e1.eventCmd(&cmds, BarEv, bar_ev_interned);
-    e1.eventCmd(&cmds, FooEv, foo_ev_value);
+    e1.extCmd(&cmds, BarExt, bar_ev_interned);
+    e1.extCmd(&cmds, FooExt, foo_ev_value);
 
     // Explicit by value
-    e0.addCompValCmd(&cmds, .init(Model, &model_value));
-    e0.addCompValCmd(&cmds, .init(RigidBody, &rb_interned));
-    e0.eventValCmd(&cmds, .init(BarEv, &bar_ev_value));
-    e0.eventValCmd(&cmds, .init(FooEv, &foo_ev_interned));
+    e0.addCompCmdByVal(&cmds, .init(Model, &model_value));
+    e0.addCompCmdByVal(&cmds, .init(RigidBody, &rb_interned));
+    e0.extCmdByVal(&cmds, .init(BarExt, &bar_ev_value));
+    e0.extCmdByVal(&cmds, .init(FooExt, &foo_ev_interned));
 
-    e1.addCompValCmd(&cmds, .init(Model, &model_interned));
-    e1.addCompValCmd(&cmds, .init(RigidBody, &rb_value));
-    e1.eventValCmd(&cmds, .init(BarEv, &bar_ev_interned));
-    e1.eventValCmd(&cmds, .init(FooEv, &foo_ev_value));
+    e1.addCompCmdByVal(&cmds, .init(Model, &model_interned));
+    e1.addCompCmdByVal(&cmds, .init(RigidBody, &rb_value));
+    e1.extCmdByVal(&cmds, .init(BarExt, &bar_ev_interned));
+    e1.extCmdByVal(&cmds, .init(FooExt, &foo_ev_value));
 
     // Throw in a destroy for good measure, verify the components end up in the remove flags
     try expect(e2.changeArchImmediate(&es, .{
@@ -200,18 +200,18 @@ test "command buffer interning" {
     e2.destroyCmd(&cmds);
 
     // Explicit interning
-    e0.addCompPtrCmd(&cmds, .init(RigidBody, &rb_interned));
-    e0.addCompPtrCmd(&cmds, .init(Model, &model_interned));
-    e0.eventPtrCmd(&cmds, .init(BarEv, &bar_ev_interned));
-    e0.eventPtrCmd(&cmds, .init(FooEv, &foo_ev_interned));
+    e0.addCompCmdByPtr(&cmds, .init(RigidBody, &rb_interned));
+    e0.addCompCmdByPtr(&cmds, .init(Model, &model_interned));
+    e0.extCmdByPtr(&cmds, .init(BarExt, &bar_ev_interned));
+    e0.extCmdByPtr(&cmds, .init(FooExt, &foo_ev_interned));
 
     // Zero sized types
     e1.addCompCmd(&cmds, Tag, .{});
-    e1.addCompValCmd(&cmds, .init(Tag, &.{}));
-    e1.addCompPtrCmd(&cmds, .init(Tag, &.{}));
-    e1.eventCmd(&cmds, BazEv, .{});
-    e1.eventValCmd(&cmds, .init(BazEv, &.{}));
-    e1.eventPtrCmd(&cmds, .init(BazEv, &.{}));
+    e1.addCompCmdByVal(&cmds, .init(Tag, &.{}));
+    e1.addCompCmdByPtr(&cmds, .init(Tag, &.{}));
+    e1.extCmd(&cmds, BazExt, .{});
+    e1.extCmdByVal(&cmds, .init(BazExt, &.{}));
+    e1.extCmdByPtr(&cmds, .init(BazExt, &.{}));
 
     // Test the results
     var iter = cmds.iterator();
@@ -233,12 +233,12 @@ test "command buffer interning" {
         const comp2 = batches.next().?.add_comp;
         try expect(!isInAnyBytes(cmds, comp2.as(RigidBody).?));
         try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
-        const ev1 = batches.next().?.event;
-        try expect(isInAnyBytes(cmds, ev1.as(BarEv).?));
-        try expectEqual(bar_ev_value, ev1.as(BarEv).?.*);
-        const ev2 = batches.next().?.event;
-        try expect(!isInAnyBytes(cmds, ev2.as(FooEv).?));
-        try expectEqual(foo_ev_interned, ev2.as(FooEv).?.*);
+        const ev1 = batches.next().?.ext;
+        try expect(isInAnyBytes(cmds, ev1.as(BarExt).?));
+        try expectEqual(bar_ev_value, ev1.as(BarExt).?.*);
+        const ev2 = batches.next().?.ext;
+        try expect(!isInAnyBytes(cmds, ev2.as(FooExt).?));
+        try expectEqual(foo_ev_interned, ev2.as(FooExt).?.*);
         try expectEqual(null, batches.next());
     }
     {
@@ -258,12 +258,12 @@ test "command buffer interning" {
         const comp2 = batches.next().?.add_comp;
         try expect(isInAnyBytes(cmds, comp2.as(RigidBody).?));
         try expectEqual(rb_value, comp2.as(RigidBody).?.*);
-        const ev1 = batches.next().?.event;
-        try expect(isInAnyBytes(cmds, ev1.as(BarEv).?)); // By value because it's too small!
-        try expectEqual(bar_ev_interned, ev1.as(BarEv).?.*);
-        const ev2 = batches.next().?.event;
-        try expect(isInAnyBytes(cmds, ev2.as(FooEv).?));
-        try expectEqual(foo_ev_value, ev2.as(FooEv).?.*);
+        const ev1 = batches.next().?.ext;
+        try expect(isInAnyBytes(cmds, ev1.as(BarExt).?)); // By value because it's too small!
+        try expectEqual(bar_ev_interned, ev1.as(BarExt).?.*);
+        const ev2 = batches.next().?.ext;
+        try expect(isInAnyBytes(cmds, ev2.as(FooExt).?));
+        try expectEqual(foo_ev_value, ev2.as(FooExt).?.*);
         try expectEqual(null, batches.next());
     }
     {
@@ -283,12 +283,12 @@ test "command buffer interning" {
         const comp2 = batches.next().?.add_comp;
         try expect(isInAnyBytes(cmds, comp2.as(RigidBody).?));
         try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
-        const ev1 = batches.next().?.event;
-        try expect(isInAnyBytes(cmds, ev1.as(BarEv).?));
-        try expectEqual(bar_ev_value, ev1.as(BarEv).?.*);
-        const ev2 = batches.next().?.event;
-        try expect(isInAnyBytes(cmds, ev2.as(FooEv).?));
-        try expectEqual(foo_ev_interned, ev2.as(FooEv).?.*);
+        const ev1 = batches.next().?.ext;
+        try expect(isInAnyBytes(cmds, ev1.as(BarExt).?));
+        try expectEqual(bar_ev_value, ev1.as(BarExt).?.*);
+        const ev2 = batches.next().?.ext;
+        try expect(isInAnyBytes(cmds, ev2.as(FooExt).?));
+        try expectEqual(foo_ev_interned, ev2.as(FooExt).?.*);
         try expectEqual(null, batches.next());
     }
     {
@@ -308,12 +308,12 @@ test "command buffer interning" {
         const comp2 = batches.next().?.add_comp;
         try expect(isInAnyBytes(cmds, comp2.as(RigidBody).?));
         try expectEqual(rb_value, comp2.as(RigidBody).?.*);
-        const ev1 = batches.next().?.event;
-        try expect(isInAnyBytes(cmds, ev1.as(BarEv).?));
-        try expectEqual(bar_ev_interned, ev1.as(BarEv).?.*);
-        const ev2 = batches.next().?.event;
-        try expect(isInAnyBytes(cmds, ev2.as(FooEv).?));
-        try expectEqual(foo_ev_value, ev2.as(FooEv).?.*);
+        const ev1 = batches.next().?.ext;
+        try expect(isInAnyBytes(cmds, ev1.as(BarExt).?));
+        try expectEqual(bar_ev_interned, ev1.as(BarExt).?.*);
+        const ev2 = batches.next().?.ext;
+        try expect(isInAnyBytes(cmds, ev2.as(FooExt).?));
+        try expectEqual(foo_ev_value, ev2.as(FooExt).?.*);
         try expectEqual(null, batches.next());
     }
     {
@@ -347,12 +347,12 @@ test "command buffer interning" {
         const comp2 = batches.next().?.add_comp;
         try expect(!isInAnyBytes(cmds, comp2.as(Model).?));
         try expectEqual(model_interned, comp2.as(Model).?.*);
-        const ev1 = batches.next().?.event;
-        try expect(!isInAnyBytes(cmds, ev1.as(BarEv).?));
-        try expectEqual(bar_ev_interned, ev1.as(BarEv).?.*);
-        const ev2 = batches.next().?.event;
-        try expect(!isInAnyBytes(cmds, ev2.as(FooEv).?));
-        try expectEqual(foo_ev_interned, ev2.as(FooEv).?.*);
+        const ev1 = batches.next().?.ext;
+        try expect(!isInAnyBytes(cmds, ev1.as(BarExt).?));
+        try expectEqual(bar_ev_interned, ev1.as(BarExt).?.*);
+        const ev2 = batches.next().?.ext;
+        try expect(!isInAnyBytes(cmds, ev2.as(FooExt).?));
+        try expectEqual(foo_ev_interned, ev2.as(FooExt).?.*);
         try expectEqual(null, batches.next());
     }
     {
@@ -374,15 +374,15 @@ test "command buffer interning" {
         const comp3 = batches.next().?.add_comp;
         try expect(!isInAnyBytes(cmds, comp3.as(Tag).?));
         try expectEqual(Tag{}, comp3.as(Tag).?.*);
-        const ev1 = batches.next().?.event;
-        try expect(isInAnyBytes(cmds, ev1.as(BazEv).?));
-        try expectEqual(BazEv{}, ev1.as(BazEv).?.*);
-        const ev2 = batches.next().?.event;
-        try expect(isInAnyBytes(cmds, ev2.as(BazEv).?));
-        try expectEqual(BazEv{}, ev2.as(BazEv).?.*);
-        const ev3 = batches.next().?.event;
-        try expect(!isInAnyBytes(cmds, ev3.as(BazEv).?));
-        try expectEqual(BazEv{}, ev3.as(BazEv).?.*);
+        const ev1 = batches.next().?.ext;
+        try expect(isInAnyBytes(cmds, ev1.as(BazExt).?));
+        try expectEqual(BazExt{}, ev1.as(BazExt).?.*);
+        const ev2 = batches.next().?.ext;
+        try expect(isInAnyBytes(cmds, ev2.as(BazExt).?));
+        try expectEqual(BazExt{}, ev2.as(BazExt).?.*);
+        const ev3 = batches.next().?.ext;
+        try expect(!isInAnyBytes(cmds, ev3.as(BazExt).?));
+        try expectEqual(BazExt{}, ev3.as(BazExt).?.*);
         try expectEqual(null, batches.next());
     }
 
@@ -501,37 +501,37 @@ test "command buffer overflow" {
         try expectEqual(null, iter.next());
     }
 
-    // Event data overflow
+    // Extension data overflow
     {
         var cmds = try CmdBuf.initGranularCapacity(gpa, &es, .{
             .tags = 100,
             .args = 100,
-            .any_bytes = @sizeOf(FooEv) * 2 - 1,
+            .any_bytes = @sizeOf(FooExt) * 2 - 1,
             .reserved = 0,
         });
         defer cmds.deinit(gpa, &es);
 
         const e: Entity = Entity.reserveImmediate(&es);
-        const foo = FooEv.random(rand);
+        const foo = FooExt.random(rand);
 
-        _ = Entity.reserveImmediate(&es).eventCmd(&cmds, FooEv, foo);
+        _ = Entity.reserveImmediate(&es).extCmd(&cmds, FooExt, foo);
         e.destroyCmd(&cmds);
-        try expectError(error.ZcsCmdBufOverflow, e.eventCmdOrErr(
+        try expectError(error.ZcsCmdBufOverflow, e.extCmdOrErr(
             &cmds,
-            FooEv,
-            FooEv.random(rand),
+            FooExt,
+            FooExt.random(rand),
         ));
 
-        try expectEqual(@as(f32, @sizeOf(FooEv)) / @as(f32, @sizeOf(FooEv) * 2 - 1), cmds.worstCaseUsage());
+        try expectEqual(@as(f32, @sizeOf(FooExt)) / @as(f32, @sizeOf(FooExt) * 2 - 1), cmds.worstCaseUsage());
 
         var iter = cmds.iterator();
 
         {
             const cmd = iter.next().?;
             var batches = cmd.iterator();
-            const create_foo = batches.next().?.event;
-            try expectEqual(typeId(FooEv), create_foo.id);
-            try expectEqual(foo, create_foo.as(FooEv).?.*);
+            const create_foo = batches.next().?.ext;
+            try expectEqual(typeId(FooExt), create_foo.id);
+            try expectEqual(foo, create_foo.as(FooExt).?.*);
             try expectEqual(null, batches.next());
         }
 
@@ -575,8 +575,8 @@ test "command buffer overflow" {
     defer cmds.deinit(gpa, &es);
     const e = Entity.reserveImmediate(&es);
     try expect(e.changeArchImmediate(&es, .{}));
-    try e.addCompValCmdOrErr(&cmds, .init(RigidBody, &.{}));
-    try e.addCompPtrCmdOrErr(&cmds, .init(RigidBody, &.{}));
+    try e.addCompCmdByValOrErr(&cmds, .init(RigidBody, &.{}));
+    try e.addCompCmdByPtrOrErr(&cmds, .init(RigidBody, &.{}));
     try expect(!e.hasComp(&es, Model));
     _ = Entity.reserveImmediate(&es);
     try expect(es.count() > 0);
@@ -608,24 +608,24 @@ test "command buffer worst case capacity" {
         const e1 = Entity.reserveImmediate(&es);
 
         for (0..cb_capacity / 12) |_| {
-            e0.addCompValCmd(&cmds, .init(u0, &0));
-            e1.addCompValCmd(&cmds, .init(u8, &0));
-            e0.addCompValCmd(&cmds, .init(u16, &0));
-            e1.addCompValCmd(&cmds, .init(u32, &0));
-            e0.addCompValCmd(&cmds, .init(u64, &0));
-            e1.addCompValCmd(&cmds, .init(u128, &0));
+            e0.addCompCmdByVal(&cmds, .init(u0, &0));
+            e1.addCompCmdByVal(&cmds, .init(u8, &0));
+            e0.addCompCmdByVal(&cmds, .init(u16, &0));
+            e1.addCompCmdByVal(&cmds, .init(u32, &0));
+            e0.addCompCmdByVal(&cmds, .init(u64, &0));
+            e1.addCompCmdByVal(&cmds, .init(u128, &0));
         }
 
         try expect(cmds.worstCaseUsage() < 1.0);
         cmds.clear(&es);
 
         for (0..cb_capacity / 6) |_| {
-            e0.addCompValCmd(&cmds, .init(u0, &0));
-            e1.addCompValCmd(&cmds, .init(u8, &0));
-            e0.addCompValCmd(&cmds, .init(u16, &0));
-            e1.addCompValCmd(&cmds, .init(u32, &0));
-            e0.addCompValCmd(&cmds, .init(u64, &0));
-            e1.addCompValCmd(&cmds, .init(u128, &0));
+            e0.addCompCmdByVal(&cmds, .init(u0, &0));
+            e1.addCompCmdByVal(&cmds, .init(u8, &0));
+            e0.addCompCmdByVal(&cmds, .init(u16, &0));
+            e1.addCompCmdByVal(&cmds, .init(u32, &0));
+            e0.addCompCmdByVal(&cmds, .init(u64, &0));
+            e1.addCompCmdByVal(&cmds, .init(u128, &0));
         }
 
         try expectEqual(1.0, cmds.worstCaseUsage());
@@ -633,24 +633,24 @@ test "command buffer worst case capacity" {
 
         // Add ptr
         for (0..cb_capacity / 12) |_| {
-            e0.addCompPtrCmd(&cmds, .init(u0, &0));
-            e1.addCompPtrCmd(&cmds, .init(u8, &0));
-            e0.addCompPtrCmd(&cmds, .init(u16, &0));
-            e1.addCompPtrCmd(&cmds, .init(u32, &0));
-            e0.addCompPtrCmd(&cmds, .init(u64, &0));
-            e1.addCompPtrCmd(&cmds, .init(u128, &0));
+            e0.addCompCmdByPtr(&cmds, .init(u0, &0));
+            e1.addCompCmdByPtr(&cmds, .init(u8, &0));
+            e0.addCompCmdByPtr(&cmds, .init(u16, &0));
+            e1.addCompCmdByPtr(&cmds, .init(u32, &0));
+            e0.addCompCmdByPtr(&cmds, .init(u64, &0));
+            e1.addCompCmdByPtr(&cmds, .init(u128, &0));
         }
 
         try expect(cmds.worstCaseUsage() < 1.0);
         cmds.clear(&es);
 
         for (0..cb_capacity / 6) |_| {
-            e0.addCompPtrCmd(&cmds, .init(u0, &0));
-            e1.addCompPtrCmd(&cmds, .init(u8, &0));
-            e0.addCompPtrCmd(&cmds, .init(u16, &0));
-            e1.addCompPtrCmd(&cmds, .init(u32, &0));
-            e0.addCompPtrCmd(&cmds, .init(u64, &0));
-            e1.addCompPtrCmd(&cmds, .init(u128, &0));
+            e0.addCompCmdByPtr(&cmds, .init(u0, &0));
+            e1.addCompCmdByPtr(&cmds, .init(u8, &0));
+            e0.addCompCmdByPtr(&cmds, .init(u16, &0));
+            e1.addCompCmdByPtr(&cmds, .init(u32, &0));
+            e0.addCompCmdByPtr(&cmds, .init(u64, &0));
+            e1.addCompCmdByPtr(&cmds, .init(u128, &0));
         }
 
         try expectEqual(1.0, cmds.worstCaseUsage());
@@ -682,56 +682,56 @@ test "command buffer worst case capacity" {
         cmds.clear(&es);
     }
 
-    // Events
+    // Extensions
     {
-        // Event val
+        // Extension val
         const e0 = Entity.reserveImmediate(&es);
         const e1 = Entity.reserveImmediate(&es);
 
         for (0..cb_capacity / 12) |_| {
-            e0.eventValCmd(&cmds, .init(u0, &0));
-            e1.eventValCmd(&cmds, .init(u8, &0));
-            e0.eventValCmd(&cmds, .init(u16, &0));
-            e1.eventValCmd(&cmds, .init(u32, &0));
-            e0.eventValCmd(&cmds, .init(u64, &0));
-            e1.eventValCmd(&cmds, .init(u128, &0));
+            e0.extCmdByVal(&cmds, .init(u0, &0));
+            e1.extCmdByVal(&cmds, .init(u8, &0));
+            e0.extCmdByVal(&cmds, .init(u16, &0));
+            e1.extCmdByVal(&cmds, .init(u32, &0));
+            e0.extCmdByVal(&cmds, .init(u64, &0));
+            e1.extCmdByVal(&cmds, .init(u128, &0));
         }
 
         try expect(cmds.worstCaseUsage() < 1.0);
         cmds.clear(&es);
 
         for (0..cb_capacity / 6) |_| {
-            e0.eventValCmd(&cmds, .init(u0, &0));
-            e1.eventValCmd(&cmds, .init(u8, &0));
-            e0.eventValCmd(&cmds, .init(u16, &0));
-            e1.eventValCmd(&cmds, .init(u32, &0));
-            e0.eventValCmd(&cmds, .init(u64, &0));
-            e1.eventValCmd(&cmds, .init(u128, &0));
+            e0.extCmdByVal(&cmds, .init(u0, &0));
+            e1.extCmdByVal(&cmds, .init(u8, &0));
+            e0.extCmdByVal(&cmds, .init(u16, &0));
+            e1.extCmdByVal(&cmds, .init(u32, &0));
+            e0.extCmdByVal(&cmds, .init(u64, &0));
+            e1.extCmdByVal(&cmds, .init(u128, &0));
         }
 
         try expectEqual(1.0, cmds.worstCaseUsage());
         cmds.clear(&es);
 
-        // Add ptr
+        // Extension ptr
         for (0..cb_capacity / 12) |_| {
-            e0.eventPtrCmd(&cmds, .init(u0, &0));
-            e1.eventPtrCmd(&cmds, .init(u8, &0));
-            e0.eventPtrCmd(&cmds, .init(u16, &0));
-            e1.eventPtrCmd(&cmds, .init(u32, &0));
-            e0.eventPtrCmd(&cmds, .init(u64, &0));
-            e1.eventPtrCmd(&cmds, .init(u128, &0));
+            e0.extCmdByPtr(&cmds, .init(u0, &0));
+            e1.extCmdByPtr(&cmds, .init(u8, &0));
+            e0.extCmdByPtr(&cmds, .init(u16, &0));
+            e1.extCmdByPtr(&cmds, .init(u32, &0));
+            e0.extCmdByPtr(&cmds, .init(u64, &0));
+            e1.extCmdByPtr(&cmds, .init(u128, &0));
         }
 
         try expect(cmds.worstCaseUsage() < 1.0);
         cmds.clear(&es);
 
         for (0..cb_capacity / 6) |_| {
-            e0.eventPtrCmd(&cmds, .init(u0, &0));
-            e1.eventPtrCmd(&cmds, .init(u8, &0));
-            e0.eventPtrCmd(&cmds, .init(u16, &0));
-            e1.eventPtrCmd(&cmds, .init(u32, &0));
-            e0.eventPtrCmd(&cmds, .init(u64, &0));
-            e1.eventPtrCmd(&cmds, .init(u128, &0));
+            e0.extCmdByPtr(&cmds, .init(u0, &0));
+            e1.extCmdByPtr(&cmds, .init(u8, &0));
+            e0.extCmdByPtr(&cmds, .init(u16, &0));
+            e1.extCmdByPtr(&cmds, .init(u32, &0));
+            e0.extCmdByPtr(&cmds, .init(u64, &0));
+            e1.extCmdByPtr(&cmds, .init(u128, &0));
         }
 
         try expectEqual(1.0, cmds.worstCaseUsage());
@@ -859,7 +859,7 @@ test "getAll" {
     _ = typeId(i32);
     var cmds = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .avg_any_bytes = @sizeOf(RigidBody) });
     defer cmds.deinit(gpa, &es);
-    e.eventCmd(&cmds, BarEv, .{ .bar = 1 });
+    e.extCmd(&cmds, BarExt, .{ .bar = 1 });
     cmds.execImmediate(&es);
 
     const registered = CompFlag.getAll();

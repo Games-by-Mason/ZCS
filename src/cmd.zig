@@ -19,15 +19,15 @@ pub const Cmd = union(enum) {
     /// Queues a component to be added by value. The type ID is passed as an argument, component
     /// data is passed via any bytes.
     add_comp_val: Any,
-    /// Queues a component to be added by pointer. The type ID and a pointer to the component data are
-    /// passed as arguments.
+    /// Queues a component to be added by pointer. The type ID and a pointer to the component data
+    /// are passed as arguments.
     add_comp_ptr: Any,
-    /// Queues an event to be added by value. The type ID is passed as an argument, the payload is
-    /// passed via any bytes.
-    event_val: Any,
-    /// Queues an event to be added by pointer. The type ID and a pointer to the component data are
-    /// passed as arguments.
-    event_ptr: Any,
+    /// Queues an extension command to be added by value. The type ID is passed as an argument, the
+    /// payload is passed via any bytes.
+    ext_val: Any,
+    /// Queues an extension command to be added by pointer. The type ID and a pointer to the
+    /// component data are passed as arguments.
+    ext_ptr: Any,
     /// Queues a component to be removed.
     remove_comp: TypeId,
 
@@ -53,7 +53,7 @@ pub const Cmd = union(enum) {
                         const entity: Entity = @bitCast(self.nextArg().?);
                         return .{ .bind_entity = entity };
                     },
-                    inline .add_comp_val, .event_val => |add| {
+                    inline .add_comp_val, .ext_val => |add| {
                         const id: TypeId = @ptrFromInt(self.nextArg().?);
                         const ptr = self.nextAny(id);
                         const any: Any = .{
@@ -62,11 +62,11 @@ pub const Cmd = union(enum) {
                         };
                         return switch (add) {
                             .add_comp_val => .{ .add_comp_val = any },
-                            .event_val => .{ .event_val = any },
+                            .ext_val => .{ .ext_val = any },
                             else => comptime unreachable,
                         };
                     },
-                    inline .add_comp_ptr, .event_ptr => |add| {
+                    inline .add_comp_ptr, .ext_ptr => |add| {
                         const id: TypeId = @ptrFromInt(self.nextArg().?);
                         const ptr: *const anyopaque = @ptrFromInt(self.nextArg().?);
                         const any: Any = .{
@@ -75,7 +75,7 @@ pub const Cmd = union(enum) {
                         };
                         switch (add) {
                             .add_comp_ptr => return .{ .add_comp_ptr = any },
-                            .event_ptr => return .{ .event_ptr = any },
+                            .ext_ptr => return .{ .ext_ptr = any },
                             else => comptime unreachable,
                         }
                     },
@@ -152,7 +152,7 @@ pub const Cmd = union(enum) {
                 cmds.tags.appendAssumeCapacity(.bind_entity);
                 cmds.args.appendAssumeCapacity(@bitCast(entity));
             },
-            inline .add_comp_val, .event_val => |comp| {
+            inline .add_comp_val, .ext_val => |comp| {
                 const aligned = std.mem.alignForward(
                     usize,
                     cmds.any_bytes.items.len,
@@ -168,7 +168,7 @@ pub const Cmd = union(enum) {
                 cmds.any_bytes.items.len = aligned;
                 cmds.any_bytes.appendSliceAssumeCapacity(comp.constSlice());
             },
-            .add_comp_ptr, .event_ptr => |comp| {
+            .add_comp_ptr, .ext_ptr => |comp| {
                 if (cmds.tags.items.len >= cmds.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (cmds.args.items.len + 2 > cmds.args.capacity) return error.ZcsCmdBufOverflow;
                 cmds.tags.appendAssumeCapacity(cmd);

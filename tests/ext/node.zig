@@ -336,7 +336,7 @@ fn setParentCmd(fz: *Fuzzer, o: *Oracle, cmds: *CmdBuf) !void {
     const child = fz.randomEntity().unwrap() orelse return;
     if (log) std.debug.print("{}.parent = {}\n", .{ child, parent });
 
-    child.eventCmd(cmds, SetParent, .{parent});
+    child.extCmd(cmds, SetParent, .{parent});
     try setParentInOracle(fz, o, child, parent);
 }
 

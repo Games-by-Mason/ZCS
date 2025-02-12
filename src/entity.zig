@@ -192,22 +192,22 @@ pub const Entity = packed struct {
             const Interned = struct {
                 const value = comp;
             };
-            try self.addCompPtrCmdOrErr(cmds, .init(T, comptime &Interned.value));
+            try self.addCompCmdByPtrOrErr(cmds, .init(T, comptime &Interned.value));
         } else {
-            try self.addCompValCmdOrErr(cmds, .init(T, &comp));
+            try self.addCompCmdByValOrErr(cmds, .init(T, &comp));
         }
     }
 
     /// Similar to `addCompCmd`, but doesn't require compile time types and forces the component to
     /// be copied by value. Prefer `addCompCmd`.
-    pub fn addCompValCmd(self: @This(), cmds: *CmdBuf, comp: Any) void {
-        self.addCompValCmdOrErr(cmds, comp) catch |err|
+    pub fn addCompCmdByVal(self: @This(), cmds: *CmdBuf, comp: Any) void {
+        self.addCompCmdByValOrErr(cmds, comp) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `addCompValCmd`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
+    /// Similar to `addCompCmdByVal`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
     /// panicking.
-    pub fn addCompValCmdOrErr(
+    pub fn addCompCmdByValOrErr(
         self: @This(),
         cmds: *CmdBuf,
         comp: Any,
@@ -223,14 +223,14 @@ pub const Entity = packed struct {
 
     /// Similar to `addCompCmd`, but doesn't require compile time types and forces the component to
     /// be copied by pointer. Prefer `addCompCmd`.
-    pub fn addCompPtrCmd(self: @This(), cmds: *CmdBuf, comp: Any) void {
-        self.addCompPtrCmdOrErr(cmds, comp) catch |err|
+    pub fn addCompCmdByPtr(self: @This(), cmds: *CmdBuf, comp: Any) void {
+        self.addCompCmdByPtrOrErr(cmds, comp) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `addCompPtrCmd`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
+    /// Similar to `addCompCmdByPtr`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
     /// panicking.
-    pub fn addCompPtrCmdOrErr(
+    pub fn addCompCmdByPtrOrErr(
         self: @This(),
         cmds: *CmdBuf,
         comp: Any,
@@ -244,43 +244,47 @@ pub const Entity = packed struct {
         try Cmd.encode(cmds, .{ .add_comp_ptr = comp });
     }
 
-    /// Similar to `addCompCmd`, but queues an event instead of a component addition.
-    pub inline fn eventCmd(self: @This(), cmds: *CmdBuf, T: type, event: T) void {
-        self.eventCmdOrErr(cmds, T, event) catch |err|
+    /// Queues an extension command.
+    ///
+    /// Adding commands to an entity that no longer exists has no effect.
+    ///
+    /// See notes on `addCompCmd` with regards to performance and pass by value vs pointer.
+    pub inline fn extCmd(self: @This(), cmds: *CmdBuf, T: type, payload: T) void {
+        self.extCmdOrErr(cmds, T, payload) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `eventCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
+    /// Similar to `extCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
-    pub inline fn eventCmdOrErr(
+    pub inline fn extCmdOrErr(
         self: @This(),
         cmds: *CmdBuf,
         T: type,
-        event: T,
+        payload: T,
     ) error{ZcsCmdBufOverflow}!void {
-        if (@sizeOf(T) > @sizeOf(*T) and isComptimeKnown(event)) {
+        if (@sizeOf(T) > @sizeOf(*T) and isComptimeKnown(payload)) {
             const Interned = struct {
-                const value = event;
+                const value = payload;
             };
-            try self.eventPtrCmdOrErr(cmds, .init(T, comptime &Interned.value));
+            try self.extCmdByPtrOrErr(cmds, .init(T, comptime &Interned.value));
         } else {
-            try self.eventValCmdOrErr(cmds, .init(T, &event));
+            try self.extCmdByValOrErr(cmds, .init(T, &payload));
         }
     }
 
-    /// Similar to `eventCmd`, but doesn't require compile time types and forces the event to be
-    /// copied by value. Prefer `eventCmd`.
-    pub fn eventValCmd(self: @This(), cmds: *CmdBuf, event: Any) void {
-        self.eventValCmdOrErr(cmds, event) catch |err|
+    /// Similar to `extCmd`, but doesn't require compile time types and forces the command to be
+    /// copied by value. Prefer `extCmd`.
+    pub fn extCmdByVal(self: @This(), cmds: *CmdBuf, payload: Any) void {
+        self.extCmdByValOrErr(cmds, payload) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `eventValCmd`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
+    /// Similar to `extCmdByVal`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
     /// panicking.
-    pub fn eventValCmdOrErr(
+    pub fn extCmdByValOrErr(
         self: @This(),
         cmds: *CmdBuf,
-        event: Any,
+        payload: Any,
     ) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cmds.*;
@@ -288,22 +292,22 @@ pub const Entity = packed struct {
 
         // Issue the commands
         try Cmd.encode(cmds, .{ .bind_entity = self });
-        try Cmd.encode(cmds, .{ .event_val = event });
+        try Cmd.encode(cmds, .{ .ext_val = payload });
     }
 
-    /// Similar to `eventCmd`, but doesn't require compile time types and forces the component to
-    /// be copied by pointer. Prefer `eventCmd`.
-    pub fn eventPtrCmd(self: @This(), cmds: *CmdBuf, event: Any) void {
-        self.eventPtrCmdOrErr(cmds, event) catch |err|
+    /// Similar to `extCmd`, but doesn't require compile time types and forces the command to be
+    /// passed by pointer. Prefer `extCmd`.
+    pub fn extCmdByPtr(self: @This(), cmds: *CmdBuf, payload: Any) void {
+        self.extCmdByPtrOrErr(cmds, payload) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `eventPtrCmd`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
+    /// Similar to `extCmdByPtr`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
     /// panicking.
-    pub fn eventPtrCmdOrErr(
+    pub fn extCmdByPtrOrErr(
         self: @This(),
         cmds: *CmdBuf,
-        event: Any,
+        payload: Any,
     ) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cmds.*;
@@ -311,7 +315,7 @@ pub const Entity = packed struct {
 
         // Issue the commands
         try Cmd.encode(cmds, .{ .bind_entity = self });
-        try Cmd.encode(cmds, .{ .event_ptr = event });
+        try Cmd.encode(cmds, .{ .ext_ptr = payload });
     }
 
     /// Queues the given component to be removed. Has no effect if the component is not present, or
@@ -364,7 +368,7 @@ pub const Entity = packed struct {
     }
 
     /// Queues the entity to be committed. Has no effect if it has already been committed, called
-    /// implicitly on add/remove/event. In practice only necessary when creating an empty entity.
+    /// implicitly on add/remove/cmd. In practice only necessary when creating an empty entity.
     pub fn commitCmd(self: @This(), cmds: *CmdBuf) void {
         self.commitCmdOrErr(cmds) catch |err|
             @panic(@errorName(err));
