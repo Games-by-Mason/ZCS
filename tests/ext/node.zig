@@ -12,6 +12,7 @@ const CompFlag = zcs.CompFlag;
 const CmdBuf = zcs.CmdBuf;
 const Node = zcs.ext.Node;
 const SetParent = zcs.ext.Node.SetParent;
+const DirtyEvent = zcs.ext.DirtyEvent;
 
 const gpa = std.testing.allocator;
 const expect = std.testing.expect;
@@ -20,6 +21,10 @@ const expectEqual = std.testing.expectEqual;
 const log = false;
 
 const cmds_capacity = 1000;
+
+const Transform = struct {
+    dirty: bool = false,
+};
 
 test "node immediate" {
     defer CompFlag.unregisterAll();
@@ -128,7 +133,11 @@ const OracleNode = struct {
 };
 
 const Oracle = struct {
+    /// The ground truth nodes.
     nodes: std.AutoHashMapUnmanaged(Entity, OracleNode),
+    /// The max dirty events that may have been emitted. Not worth trying to match the dedup logic
+    /// exactly, just verify that they're not accumulating more than they should.
+    max_dirty: usize = 0,
 
     fn init() @This() {
         return .{
@@ -219,15 +228,16 @@ fn fuzzNodesCmdBuf(input: []const u8) !void {
                 set_parent,
                 destroy,
             })) {
-                .reserve => try reserve(&fz, &o),
+                .reserve => try reserveCmd(&fz, &o),
                 .set_parent => try setParentCmd(&fz, &o, &cb),
                 .destroy => try destroyCmd(&fz, &o, &cb),
             }
         }
 
-        Node.Exec.allImmediate(&fz.es, &.{cb});
+        Node.Exec(Transform).allImmediate(&fz.es, &.{cb});
         try checkOracle(&fz, &o);
         clear(&fz, &cb, &o);
+        DirtyEvent(Transform).recycleAll(&fz.es);
     }
 }
 
@@ -259,20 +269,28 @@ fn fuzzNodeCyclesCmdBuf(input: []const u8) !void {
             try setParentCmd(&fz, &o, &cb);
         }
 
-        Node.Exec.allImmediate(&fz.es, &.{cb});
+        Node.Exec(Transform).allImmediate(&fz.es, &.{cb});
         try checkOracle(&fz, &o);
         clear(&fz, &cb, &o);
+        DirtyEvent(Transform).recycleAll(&fz.es);
     }
 }
 
 fn clear(fz: *Fuzzer, cb: *CmdBuf, o: *Oracle) void {
-    _ = o;
     cb.clear(&fz.es);
+    o.max_dirty = 0;
 }
 
 fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
     // Check the total entity count
-    try expectEqual(o.nodes.count(), fz.es.count() + fz.es.reserved());
+    var dirty: usize = 0;
+    var dirty_iter = fz.es.viewIterator(struct { dirty: *DirtyEvent(Transform) });
+    while (dirty_iter.next()) |vw| {
+        if (vw.dirty.entity.getComp(&fz.es, Transform)) |tr| tr.dirty = false;
+        dirty += 1;
+    }
+    try expectEqual(o.nodes.count(), fz.es.count() + fz.es.reserved() - dirty);
+    try expect(dirty <= o.max_dirty);
 
     // Check each entity
     var iterator = o.nodes.iterator();
@@ -300,6 +318,14 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
 
 fn reserve(fz: *Fuzzer, o: *Oracle) !void {
     const entity = (try fz.reserveImmediate()).unwrap() orelse return;
+    try o.nodes.put(gpa, entity, .{});
+}
+
+fn reserveCmd(fz: *Fuzzer, o: *Oracle) !void {
+    const entity = (try fz.reserveImmediate()).unwrap() orelse return;
+    try expect(entity.changeArchImmediate(&fz.es, .{ .add = &.{
+        .init(Transform, &.{}),
+    } }));
     try o.nodes.put(gpa, entity, .{});
 }
 
@@ -334,6 +360,7 @@ fn setParentCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
 
     child.extCmd(cb, SetParent, .{parent});
     try setParentInOracle(fz, o, child, parent);
+    o.max_dirty += 1;
 }
 
 fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Optional) !void {
