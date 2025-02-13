@@ -161,8 +161,8 @@ fn setParentImmediateInner(
 }
 
 /// Destroys an entity and all of its children. Returns true if the entity was destroyed, false if
-/// it didn't exist. This behavior occurs automatically via `Exec` when an entity with a node is
-/// destroyed.
+/// it didn't exist. This behavior occurs automatically via `Exec` when an entity with an entity
+/// with a node is destroyed.
 pub fn destroyImmediate(es: *Entities, e: Entity) bool {
     destroyChildrenAndUnparentImmediate(es, e);
     return e.destroyImmediate(es);
@@ -171,27 +171,11 @@ pub fn destroyImmediate(es: *Entities, e: Entity) bool {
 /// Destroys an entity's children and then unparents it. This behavior occurs automatically via
 /// `Exec` when a node is removed from an entity.
 pub fn destroyChildrenAndUnparentImmediate(es: *Entities, e: Entity) void {
-    // Iterate the children depth first, destroying each as we go
-    const node = e.getComp(es, Node) orelse return;
-    if (node.first_child.unwrap()) |start| {
-        var curr = start.view(es, View).?;
-        while (true) {
-            if (curr.node.first_child.unwrap()) |first_child| {
-                curr = first_child.view(es, View).?;
-            } else {
-                const prev = curr;
-                if (curr.node.next_sib.unwrap()) |next_sib| {
-                    curr = next_sib.view(es, View).?;
-                } else {
-                    curr = curr.node.parent.unwrap().?.view(es, View).?;
-                    curr.node.first_child = .none;
-                }
-                assert(prev.entity.destroyImmediate(es));
-            }
-            if (curr.entity == e) break;
-        }
+    var iter = Node.postOrderIterator(es, e);
+    while (iter.next(es)) |curr| {
+        assert(curr.destroyImmediate(es));
     }
-    assert(setParentImmediate(es, e, .none));
+    _ = setParentImmediate(es, e, .none);
 }
 
 /// Returns true if `ancestor` is an ancestor of `descendant`, otherwise returns false. Entities
@@ -215,12 +199,81 @@ pub fn childIterator(es: *const Entities, e: Entity) ChildIterator {
 const ChildIterator = struct {
     curr: Entity.Optional,
 
-    /// Returns the next child, or `.none` if there are none.
+    /// Returns the next child, or `null` if there are none.
     pub fn next(self: *@This(), es: *const Entities) ?Entity {
         const entity = self.curr.unwrap() orelse return null;
         const node = entity.getComp(es, Node).?;
         self.curr = node.next_sib;
         return entity;
+    }
+};
+
+/// Iterates over the entity's children pre-order. Pre-order traversal visits parents before
+/// children.
+pub fn preOrderIterator(es: *const Entities, e: Entity) PreOrderIterator {
+    return .{
+        .start = e,
+        .curr = View.init(es, e),
+    };
+}
+
+/// A pre-order node iterator over `(start, ...]`.
+const PreOrderIterator = struct {
+    start: Entity,
+    curr: ?View,
+
+    /// Returns the next child, or `null` if there are none.
+    pub fn next(self: *@This(), es: *const Entities) ?Entity {
+        const pre = self.curr orelse return null;
+        if (pre.getFirstChild(es)) |first_child| {
+            self.curr = first_child;
+            return pre;
+        } else {
+            while (self.curr.next_sib == .none) {
+                if (self.curr.?.parent == self.start) return null;
+                self.curr = self.curr.?.getParent(es).?;
+            }
+            self.curr = self.curr.?.getNextSib(es);
+            return pre;
+        }
+    }
+};
+
+/// Iterates over the entity's children post-order. Post-order traversal visits parents after
+/// children.
+pub fn postOrderIterator(es: *const Entities, e: Entity) PostOrderIterator {
+    return .{
+        // We start on the leftmost leaf
+        .curr = b: {
+            var curr = e.view(es, View);
+            if (curr != null) {
+                while (curr.?.getFirstChild(es)) |first_child| {
+                    curr = first_child;
+                }
+            }
+            break :b curr;
+        },
+        // And we end when we reach the entity we were given
+        .end = e,
+    };
+}
+
+/// A post-order iterator over `[curr, end)`.
+const PostOrderIterator = struct {
+    curr: ?View,
+    end: Entity,
+
+    /// Returns the next child, or `null` if there are none.
+    pub fn next(self: *@This(), es: *const Entities) ?Entity {
+        if (self.curr == null or self.curr.?.entity == self.end) return null;
+        const post = self.curr.?;
+        if (self.curr.?.getNextSib(es)) |next_sib| {
+            self.curr = next_sib;
+            while (self.curr.?.getFirstChild(es)) |fc| self.curr = fc;
+        } else {
+            self.curr = self.curr.?.getParent(es).?;
+        }
+        return post.entity;
     }
 };
 
