@@ -33,42 +33,44 @@ test "node immediate" {
     defer es.deinit(gpa);
 
     const empty = Entity.reserveImmediate(&es);
+    try expect(empty.changeArchImmediate(&es, .{ .add = &.{.init(Node, &.{})} }));
     const parent = Entity.reserveImmediate(&es);
+    try expect(parent.changeArchImmediate(&es, .{ .add = &.{.init(Node, &.{})} }));
     const child_1 = Entity.reserveImmediate(&es);
+    try expect(child_1.changeArchImmediate(&es, .{ .add = &.{.init(Node, &.{})} }));
     const child_2 = Entity.reserveImmediate(&es);
+    try expect(child_2.changeArchImmediate(&es, .{ .add = &.{.init(Node, &.{})} }));
     const descendant = Entity.reserveImmediate(&es);
-    try expect(Node.setParentImmediate(&es, child_2, parent.toOptional()));
-    try expect(Node.setParentImmediate(&es, child_1, parent.toOptional()));
-    try expect(Node.setParentImmediate(&es, descendant, child_1.toOptional()));
+    try expect(descendant.changeArchImmediate(&es, .{ .add = &.{.init(Node, &.{})} }));
 
-    try expect(!Node.isAncestorOf(&es, empty, child_1));
-    try expect(!Node.isAncestorOf(&es, child_1, empty));
-    try expect(!Node.isAncestorOf(&es, empty, empty));
+    child_2.getComp(&es, Node).?.setParentImmediate(&es, parent.getComp(&es, Node).?);
+    child_1.getComp(&es, Node).?.setParentImmediate(&es, parent.getComp(&es, Node).?);
+    descendant.getComp(&es, Node).?.setParentImmediate(&es, child_1.getComp(&es, Node).?);
+
+    try expect(!empty.getComp(&es, Node).?.isAncestorOf(&es, child_1.getComp(&es, Node).?));
+    try expect(!child_1.getComp(&es, Node).?.isAncestorOf(&es, empty.getComp(&es, Node).?));
+    try expect(!empty.getComp(&es, Node).?.isAncestorOf(&es, empty.getComp(&es, Node).?));
 
     try expectEqualEntity(parent, child_1.getComp(&es, Node).?.parent.unwrap().?);
     try expectEqualEntity(parent, child_2.getComp(&es, Node).?.parent.unwrap().?);
-    try expect(!Node.isAncestorOf(&es, parent, parent));
-    try expect(Node.isAncestorOf(&es, parent, descendant));
-    try expect(!Node.isAncestorOf(&es, descendant, parent));
-    try expect(Node.isAncestorOf(&es, parent, child_1));
-    try expect(Node.isAncestorOf(&es, parent, child_2));
-    try expect(!Node.isAncestorOf(&es, child_1, child_2));
+    try expect(!parent.getComp(&es, Node).?.isAncestorOf(&es, parent.getComp(&es, Node).?));
+    try expect(parent.getComp(&es, Node).?.isAncestorOf(&es, descendant.getComp(&es, Node).?));
+    try expect(!descendant.getComp(&es, Node).?.isAncestorOf(&es, parent.getComp(&es, Node).?));
+    try expect(parent.getComp(&es, Node).?.isAncestorOf(&es, child_1.getComp(&es, Node).?));
+    try expect(parent.getComp(&es, Node).?.isAncestorOf(&es, child_2.getComp(&es, Node).?));
+    try expect(!child_1.getComp(&es, Node).?.isAncestorOf(&es, child_2.getComp(&es, Node).?));
 
-    var children = Node.childIterator(&es, parent);
-    try expectEqualEntity(child_1, children.next(&es).?);
-    try expectEqualEntity(child_2, children.next(&es).?);
+    var children = parent.getComp(&es, Node).?.childIterator();
+    try expectEqualEntity(child_1, Entity.fromComp(&es, children.next(&es).?));
+    try expectEqualEntity(child_2, Entity.fromComp(&es, children.next(&es).?));
     try expectEqual(null, children.next(&es));
 
-    try expect(Node.destroyImmediate(&es, parent));
+    try expect(parent.getComp(&es, Node).?.destroyImmediate(&es));
     try expect(!parent.exists(&es));
     try expect(!child_1.exists(&es));
     try expect(!child_2.exists(&es));
 
-    try expect(!Node.isAncestorOf(&es, child_1, child_2));
-    try expect(!Node.isAncestorOf(&es, child_1, child_1));
-    try expect(!Node.isAncestorOf(&es, child_1, empty));
-    try expect(!Node.isAncestorOf(&es, empty, child_1));
-    try expect(!Node.isAncestorOf(&es, empty, empty));
+    try expect(!empty.getComp(&es, Node).?.isAncestorOf(&es, empty.getComp(&es, Node).?));
 }
 
 test "fuzz nodes immediate" {
@@ -302,19 +304,22 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
 
         // Check the children. We don't bother checking for dups since they would result in
         // the list being infinitely long and failing the implicit size check.
-        var children = Node.childIterator(&fz.es, entry.key_ptr.*);
-        var prev_sibling: Entity.Optional = .none;
-        const keys = entry.value_ptr.children.keys();
-        for (0..keys.len) |i| {
-            const expected = keys[keys.len - i - 1];
-            const child = children.next(&fz.es).?;
-            try expectEqualEntity(expected, child);
+        if (node) |n| {
+            var children = n.childIterator();
+            var prev_sibling: Entity.Optional = .none;
+            const keys = entry.value_ptr.children.keys();
+            for (0..keys.len) |i| {
+                const expected = keys[keys.len - i - 1];
+                const child = children.next(&fz.es).?;
+                const child_entity = Entity.fromComp(&fz.es, child);
+                try expectEqualEntity(expected, child_entity);
 
-            // Validate prev pointers to catch issues sooner
-            try expectEqualEntity(prev_sibling, child.getComp(&fz.es, Node).?.prev_sib);
-            prev_sibling = child.toOptional();
+                // Validate prev pointers to catch issues sooner
+                try expectEqualEntity(prev_sibling, child.prev_sib);
+                prev_sibling = child_entity.toOptional();
+            }
+            try expectEqual(null, children.next(&fz.es));
         }
-        try expectEqual(null, children.next(&fz.es));
 
         try checkPostOrder(fz, o, entry.key_ptr.*);
         try checkPreOrder(fz, o, entry.key_ptr.*);
@@ -322,7 +327,9 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
 }
 
 fn checkPostOrder(fz: *Fuzzer, o: *const Oracle, e: Entity) !void {
-    var iter = Node.postOrderIterator(&fz.es, e);
+    var iter: Node.PostOrderIterator = if (e.getComp(&fz.es, Node)) |node| b: {
+        break :b node.postOrderIterator(&fz.es);
+    } else .{ .curr = null, .end = undefined };
     try checkPostOrderInner(fz, o, e, e, &iter);
 }
 
@@ -341,12 +348,17 @@ fn checkPostOrderInner(
     if (curr == start) {
         try expectEqual(null, iter.next(&fz.es));
     } else {
-        try expectEqualEntity(curr, iter.next(&fz.es) orelse return error.ExpectedNext);
+        try expectEqualEntity(
+            curr,
+            Entity.fromComp(&fz.es, iter.next(&fz.es) orelse return error.ExpectedNext),
+        );
     }
 }
 
 fn checkPreOrder(fz: *Fuzzer, o: *const Oracle, e: Entity) !void {
-    var iter = Node.preOrderIterator(&fz.es, e);
+    var iter: Node.PreOrderIterator = if (e.getComp(&fz.es, Node)) |node| b: {
+        break :b node.preOrderIterator(&fz.es);
+    } else .{ .start = undefined, .curr = null };
     try checkPreOrderInner(fz, o, e, e, &iter);
     try expectEqual(null, iter.next(&fz.es));
 }
@@ -360,7 +372,10 @@ fn checkPreOrderInner(
 ) !void {
     if (curr != start) {
         const actual = iter.next(&fz.es);
-        try expectEqualEntity(curr, actual orelse return error.ExpectedNext);
+        try expectEqualEntity(
+            curr,
+            Entity.fromComp(&fz.es, actual orelse return error.ExpectedNext),
+        );
     }
     const oracle_children = o.nodes.get(curr).?.children.keys();
     for (0..oracle_children.len) |i| {
@@ -399,9 +414,11 @@ fn setParent(fz: *Fuzzer, o: *Oracle) !void {
     const child = fz.randomEntity().unwrap() orelse return;
     if (log) std.debug.print("{}.parent = {}\n", .{ child, parent });
 
-    const result = Node.setParentImmediate(&fz.es, child, parent);
-    const exists_after = child.exists(&fz.es);
-    try expectEqual(exists_after, result);
+    const child_node = (child.viewOrAddCompsImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
+    const parent_node = if (parent.unwrap()) |p| b: {
+        break :b (p.viewOrAddCompsImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
+    } else null;
+    child_node.setParentImmediate(&fz.es, parent_node);
     try setParentInOracle(fz, o, child, parent);
 }
 
@@ -469,7 +486,11 @@ fn destroy(fz: *Fuzzer, o: *Oracle) !void {
     if (log) std.debug.print("destroy {}\n", .{entity});
 
     // Destroy the real entity
-    _ = Node.destroyImmediate(&fz.es, entity);
+    if (entity.getComp(&fz.es, Node)) |node| {
+        _ = node.destroyImmediate(&fz.es);
+    } else {
+        _ = entity.destroyImmediate(&fz.es);
+    }
 
     // Destroy it in the oracle
     try destroyInOracle(fz, o, entity);
