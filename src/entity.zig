@@ -50,6 +50,36 @@ pub const Entity = packed struct {
 
     key: SlotMap(Entities.Slot, .{}).Key,
 
+    /// Given a pointer to a component, returns the component's entity.
+    pub fn fromComp(es: *const Entities, ptr: anytype) @This() {
+        return fromCompAny(es, .init(@typeInfo(@TypeOf(ptr)).pointer.child, ptr));
+    }
+
+    /// Similar to `fromComp`, but does not require compile time types.
+    pub fn fromCompAny(es: *const Entities, comp: Any) @This() {
+        if (comp.id.size == 0) {
+            // Our pointer math doesn't work on zero bit types, since they may all occupy the same
+            // address. To work around this, zero sized types are "allocated" at the address of the
+            // entity ID they're attached to. Without this strategy, we'd have to make zero bit
+            // types take up a byte to make the math work.
+            return @bitCast(@intFromPtr(comp.ptr));
+        }
+
+        const flag = comp.id.comp_flag.?;
+        const comp_array = es.comps[@intFromEnum(flag)];
+
+        const loc = @intFromPtr(comp.ptr);
+        const start = @intFromPtr(comp_array.ptr);
+        const end = @intFromPtr(comp_array.ptr) + comp_array.len + comp.id.size;
+        assert(loc >= start and loc <= end);
+
+        const index = (loc - start) / comp.id.size;
+        return .{ .key = .{
+            .index = @intCast(index),
+            .generation = es.slots.generations[index],
+        } };
+    }
+
     /// Pops a reserved entity.
     ///
     /// A reserved entity is given a persistent key, but no storage. As such, it will behave like
@@ -175,6 +205,10 @@ pub const Entity = packed struct {
     pub fn getCompFromId(self: @This(), es: *const Entities, id: TypeId) ?[]u8 {
         const flag = id.comp_flag orelse return null;
         if (!self.hastypeId(es, id)) return null;
+
+        // See `Entity.fromComp`.
+        if (id.size == 0) return @as([*]u8, @ptrFromInt(@as(u64, @bitCast(self))))[0..0];
+
         const comp_buffer = es.comps[@intFromEnum(flag)];
         const comp_offset = self.key.index * id.size;
         const bytes = comp_buffer.ptr + comp_offset;

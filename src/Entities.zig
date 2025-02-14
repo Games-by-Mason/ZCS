@@ -222,9 +222,14 @@ pub fn ViewIterator(View: type) type {
                         // Set the field's comp pointer
                         if (has_comp) {
                             // We have the component, pass it to the caller
-                            const base = @intFromPtr(@field(self.base, field.name));
-                            const offset = entity.key.index * @sizeOf(T);
-                            const comp: *T = @ptrFromInt(base + offset);
+                            const comp: *T = if (@sizeOf(T) == 0) b: {
+                                // See `Entity.fromComp`.
+                                break :b @ptrFromInt(@as(u64, @bitCast(entity)));
+                            } else b: {
+                                const base = @intFromPtr(@field(self.base, field.name));
+                                const offset = entity.key.index * @sizeOf(T);
+                                break :b @ptrFromInt(base + offset);
+                            };
                             @field(result, field.name) = comp;
                         } else {
                             // This component is optional and we don't have it, set our result to
