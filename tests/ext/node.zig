@@ -71,7 +71,7 @@ test "node immediate" {
     try expect(!Node.isAncestorOf(&es, empty, empty));
 }
 
-test "fuzz nodes" {
+test "fuzz nodes immediate" {
     try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
 }
 
@@ -79,7 +79,7 @@ test "fuzz node cycles" {
     try std.testing.fuzz(fuzzNodeCycles, .{ .corpus = &.{} });
 }
 
-test "rand nodes" {
+test "rand nodes immediate" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
     const input: []u8 = try gpa.alloc(u8, 8192);
@@ -125,7 +125,7 @@ test "rand node cycles cmdbuf" {
 
 const OracleNode = struct {
     parent: Entity.Optional = .none,
-    children: std.AutoHashMapUnmanaged(Entity, void) = .{},
+    children: std.AutoArrayHashMapUnmanaged(Entity, void) = .{},
 
     fn deinit(self: *@This()) void {
         self.children.deinit(gpa);
@@ -304,15 +304,68 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
         // the list being infinitely long and failing the implicit size check.
         var children = Node.childIterator(&fz.es, entry.key_ptr.*);
         var prev_sibling: Entity.Optional = .none;
-        for (0..entry.value_ptr.children.count()) |_| {
+        const keys = entry.value_ptr.children.keys();
+        for (0..keys.len) |i| {
+            const expected = keys[keys.len - i - 1];
             const child = children.next(&fz.es).?;
-            try expect(entry.value_ptr.children.contains(child));
+            try expectEqualEntity(expected, child);
 
             // Validate prev pointers to catch issues sooner
             try expectEqualEntity(prev_sibling, child.getComp(&fz.es, Node).?.prev_sib);
             prev_sibling = child.toOptional();
         }
         try expectEqual(null, children.next(&fz.es));
+
+        try checkPostOrder(fz, o, entry.key_ptr.*);
+        try checkPreOrder(fz, o, entry.key_ptr.*);
+    }
+}
+
+fn checkPostOrder(fz: *Fuzzer, o: *const Oracle, e: Entity) !void {
+    var iter = Node.postOrderIterator(&fz.es, e);
+    try checkPostOrderInner(fz, o, e, e, &iter);
+}
+
+fn checkPostOrderInner(
+    fz: *Fuzzer,
+    o: *const Oracle,
+    start: Entity,
+    curr: Entity,
+    iter: *Node.PostOrderIterator,
+) !void {
+    const oracle_children = o.nodes.get(curr).?.children.keys();
+    for (0..oracle_children.len) |i| {
+        const child = oracle_children[oracle_children.len - i - 1];
+        try checkPostOrderInner(fz, o, start, child, iter);
+    }
+    if (curr == start) {
+        try expectEqual(null, iter.next(&fz.es));
+    } else {
+        try expectEqualEntity(curr, iter.next(&fz.es) orelse return error.ExpectedNext);
+    }
+}
+
+fn checkPreOrder(fz: *Fuzzer, o: *const Oracle, e: Entity) !void {
+    var iter = Node.preOrderIterator(&fz.es, e);
+    try checkPreOrderInner(fz, o, e, e, &iter);
+    try expectEqual(null, iter.next(&fz.es));
+}
+
+fn checkPreOrderInner(
+    fz: *Fuzzer,
+    o: *const Oracle,
+    start: Entity,
+    curr: Entity,
+    iter: *Node.PreOrderIterator,
+) !void {
+    if (curr != start) {
+        const actual = iter.next(&fz.es);
+        try expectEqualEntity(curr, actual orelse return error.ExpectedNext);
+    }
+    const oracle_children = o.nodes.get(curr).?.children.keys();
+    for (0..oracle_children.len) |i| {
+        const child = oracle_children[oracle_children.len - i - 1];
+        try checkPreOrderInner(fz, o, start, child, iter);
     }
 }
 
@@ -383,7 +436,7 @@ fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Opti
         if (try isAncestorOf(fz, o, child, unwrapped)) {
             const parent_o = o.nodes.getPtr(unwrapped).?;
             const parent_parent = parent_o.parent.unwrap().?;
-            try expect(o.nodes.getPtr(parent_parent).?.children.remove(unwrapped));
+            try expect(o.nodes.getPtr(parent_parent).?.children.orderedRemove(unwrapped));
             parent_o.parent = child_o.parent;
             if (child_o.parent.unwrap()) |child_parent| {
                 try o.nodes.getPtr(child_parent).?.children.put(gpa, unwrapped, {});
@@ -395,7 +448,7 @@ fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Opti
     const prev_parent = child_o.parent;
     if (prev_parent.unwrap()) |unwrapped| {
         const prev_parent_o = o.nodes.getPtr(unwrapped).?;
-        try expect(prev_parent_o.children.remove(child));
+        try expect(prev_parent_o.children.orderedRemove(child));
     }
     child_o.parent = .none;
 
@@ -439,7 +492,7 @@ fn destroyCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
 fn destroyInOracle(fz: *Fuzzer, o: *Oracle, e: Entity) !void {
     if (o.nodes.getPtr(e)) |n| {
         if (n.parent.unwrap()) |unwrapped| {
-            try expect(o.nodes.getPtr(unwrapped).?.children.remove(e));
+            try expect(o.nodes.getPtr(unwrapped).?.children.orderedRemove(e));
         }
     }
     try destroyInOracleInner(fz, o, e);
