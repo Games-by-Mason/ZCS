@@ -1,19 +1,13 @@
 //! A component that tracks parent child relationships.
 //!
-//! Node fields must be kept logically consistent. It's recommended that you only modify them
+//! Node fields must be kept logically consistent. The recommended approach is to only modify nodes
 //! through command buffers, and then use the provided command buffer processing to synchronize
 //! your changes.
-//!
-//! If you need to make immediate changes to an entity's hierarchy, some helpers are also provided
-//! for this. This is discouraged as this approach requires you to remember to call these functions
-//! at the correct times, whereas the command buffer approach is just requires you process the
-//! command buffer before executing it.
 
 const std = @import("std");
 const assert = std.debug.assert;
 
 const zcs = @import("../root.zig");
-const types = zcs.types;
 const typeId = zcs.typeId;
 const TypeId = zcs.TypeId;
 const Entities = zcs.Entities;
@@ -29,35 +23,42 @@ first_child: Entity.Optional = .none,
 prev_sib: Entity.Optional = .none,
 next_sib: Entity.Optional = .none,
 
+/// Returns the entity associated with this node.
 pub fn getEntity(self: *const @This(), es: *const Entities) Entity {
     return .from(es, self);
 }
 
+/// Returns the associated component, or null if none exists.
 pub fn get(self: *const @This(), es: *const Entities, T: type) ?*T {
+    comptime assert(T != Node); // Redundant
     return self.getEntity(es).get(es, T);
 }
 
+/// Returns the parent node, or null if none exists.
 pub fn getParent(self: *const @This(), es: *const Entities) ?*Node {
     const parent = self.parent.unwrap() orelse return null;
     return parent.get(es, Node).?;
 }
 
+/// Returns the first child, or null if none exists.
 pub fn getFirstChild(self: *const @This(), es: *const Entities) ?*Node {
     const first_child = self.first_child.unwrap() orelse return null;
     return first_child.get(es, Node).?;
 }
 
+/// Returns the previous sibling, or null if none exists.
 pub fn getPrevSib(self: *const @This(), es: *const Entities) ?*Node {
     const prev_sib = self.prev_sib.unwrap() orelse return null;
     return prev_sib.get(es, Node).?;
 }
 
+/// Returns the next sibling, or null if none exists.
 pub fn getNextSib(self: *const @This(), es: *const Entities) ?*Node {
     const next_sib = self.next_sib.unwrap() orelse return null;
     return next_sib.get(es, Node).?;
 }
 
-/// Similar to `SetParent`, but sets the parent immediately.
+/// Similar to the `SetParent` command, but sets the parent immediately.
 pub fn setParentImmediate(self: *Node, es: *Entities, parent: ?*Node) void {
     self.setParentImmediateOrErr(es, parent) catch |err|
         @panic(@errorName(err));
@@ -121,15 +122,14 @@ fn setParentImmediateInner(
     }
 }
 
-/// Destroys an entity and all of its children. Returns true if the entity was destroyed, false if
-/// it didn't exist. This behavior occurs automatically via `Exec` when an entity with an entity
-/// with a node is destroyed.
-pub fn destroyImmediate(self: *@This(), es: *Entities) bool {
+/// Destroys a node, its entity, and all of its children. This behavior occurs automatically via
+/// `Exec` when an entity with an entity with a node is destroyed.
+pub fn destroyImmediate(self: *@This(), es: *Entities) void {
     self.destroyChildrenAndUnparentImmediate(es);
-    return self.getEntity(es).destroyImmediate(es);
+    assert(self.getEntity(es).destroyImmediate(es));
 }
 
-/// Destroys an entity's children and then unparents it. This behavior occurs automatically via
+/// Destroys an node's children and then unparents it. This behavior occurs automatically via
 /// `Exec` when a node is removed from an entity.
 pub fn destroyChildrenAndUnparentImmediate(self: *@This(), es: *Entities) void {
     var iter = self.postOrderIterator(es);
@@ -140,8 +140,8 @@ pub fn destroyChildrenAndUnparentImmediate(self: *@This(), es: *Entities) void {
     self.first_child = .none;
 }
 
-/// Returns true if `ancestor` is an ancestor of `descendant`, otherwise returns false. Entities
-/// cannot be ancestors of themselves.
+/// Returns true if an ancestor of `descendant`, false otherwise. Entities are not ancestors of
+/// themselves.
 pub fn isAncestorOf(self: *const @This(), es: *const Entities, descendant: *const Node) bool {
     var curr = descendant.getParent(es) orelse return false;
     while (true) {
@@ -150,12 +150,12 @@ pub fn isAncestorOf(self: *const @This(), es: *const Entities, descendant: *cons
     }
 }
 
-/// Returns an iterator over the given entity's immediate children.
+/// Returns an iterator over the node's immediate children.
 pub fn childIterator(self: *const @This()) ChildIterator {
     return .{ .curr = self.first_child };
 }
 
-/// An iterator over an entity's immediate children.
+/// An iterator over a node's immediate children.
 const ChildIterator = struct {
     curr: Entity.Optional,
 
@@ -168,69 +168,72 @@ const ChildIterator = struct {
     }
 };
 
-/// Iterates over the entity's children pre-order. Pre-order traversal visits parents before
+/// Returns a pre-order iterator over a node's children. Pre-order traversal visits parents before
 /// children.
 pub fn preOrderIterator(self: *const @This(), es: *const Entities) PreOrderIterator {
     return .{
-        .start = self,
-        .curr = self.getFirstChild(es),
+        .start = self.getEntity(es),
+        .curr = self.first_child,
     };
 }
 
-/// A pre-order node iterator over `(start, ...]`.
+/// A pre-order iterator over `(start, ...]`.
 pub const PreOrderIterator = struct {
-    start: *const Node,
-    curr: ?*Node,
+    start: Entity,
+    curr: Entity.Optional,
 
     /// Returns the next child, or `null` if there are none.
     pub fn next(self: *@This(), es: *const Entities) ?*Node {
-        const pre = self.curr orelse return null;
-        if (pre.getFirstChild(es)) |first_child| {
-            self.curr = first_child;
+        const pre_entity = self.curr.unwrap() orelse return null;
+        const pre = pre_entity.get(es, Node).?;
+        if (pre.first_child.unwrap()) |first_child| {
+            self.curr = first_child.toOptional();
         } else {
             var has_next_sib = pre;
             while (has_next_sib.next_sib.unwrap() == null) {
-                if (has_next_sib.parent == self.start.getEntity(es).toOptional()) {
-                    self.curr = null;
+                if (has_next_sib.parent.unwrap().? == self.start) {
+                    self.curr = .none;
                     return pre;
                 }
                 has_next_sib = has_next_sib.getParent(es).?;
             }
-            self.curr = has_next_sib.getNextSib(es).?;
+            self.curr = has_next_sib.next_sib.unwrap().?.toOptional();
         }
         return pre;
     }
 };
 
-/// Iterates over the entity's children post-order. Post-order traversal visits parents after
+/// Returns a post-order iterator over a node's children. Post-order traversal visits parents after
 /// children.
 pub fn postOrderIterator(self: *const @This(), es: *const Entities) PostOrderIterator {
     return .{
         // We start on the leftmost leaf
         .curr = b: {
-            var curr = self.getFirstChild(es) orelse break :b null;
-            while (curr.getFirstChild(es)) |first_child| curr = first_child;
-            break :b curr;
+            var curr = self.first_child.unwrap() orelse break :b .none;
+            while (curr.get(es, Node).?.first_child.unwrap()) |fc| curr = fc;
+            break :b curr.toOptional();
         },
         // And we end when we reach the given entity
-        .end = self,
+        .end = self.getEntity(es),
     };
 }
 
 /// A post-order iterator over `[curr, end)`.
 pub const PostOrderIterator = struct {
-    curr: ?*Node,
-    end: *const Node,
+    curr: Entity.Optional,
+    end: Entity,
 
     /// Returns the next child, or `null` if there are none.
     pub fn next(self: *@This(), es: *const Entities) ?*Node {
-        if (self.curr == null or self.curr == self.end) return null;
-        const post = self.curr.?;
-        if (self.curr.?.getNextSib(es)) |next_sib| {
-            self.curr = next_sib;
-            while (self.curr.?.getFirstChild(es)) |fc| self.curr = fc;
+        const post_entity = self.curr.unwrap() orelse return null;
+        if (post_entity == self.end) return null;
+        const post = post_entity.get(es, Node).?;
+        if (post.next_sib.unwrap()) |next_sib| {
+            var curr = next_sib;
+            while (curr.get(es, Node).?.first_child.unwrap()) |fc| curr = fc;
+            self.curr = curr.toOptional();
         } else {
-            self.curr = self.curr.?.getParent(es).?;
+            self.curr = self.curr.unwrap().?.get(es, Node).?.parent.unwrap().?.toOptional();
         }
         return post;
     }
@@ -328,7 +331,6 @@ pub fn Exec(
         ) error{ ZcsCompOverflow, ZcsEntityOverflow }!void {
             switch (cmd) {
                 .ext => |ev| if (ev.as(SetParent)) |set_parent| {
-                    const parent = set_parent[0];
                     if (self.init_node and !arch_change.from.contains(typeId(Node).comp_flag.?)) {
                         if (batch.entity.get(es, Node)) |node| {
                             node.* = .{};
@@ -336,7 +338,7 @@ pub fn Exec(
                         self.init_node = false;
                     }
                     if (batch.entity.get(es, Node)) |node| {
-                        if (parent.unwrap()) |parent| {
+                        if (set_parent[0].unwrap()) |parent| {
                             if (try parent.viewOrAddImmediateOrErr(
                                 es,
                                 struct { node: *Node },
@@ -347,7 +349,7 @@ pub fn Exec(
                                     DirtyEvent(T).emitImmediate(es, batch.entity);
                                 }
                             } else {
-                                assert(node.destroyImmediate(es));
+                                node.destroyImmediate(es);
                             }
                         } else {
                             try node.setParentImmediateOrErr(es, null);

@@ -2,8 +2,11 @@
 
 const std = @import("std");
 const zcs = @import("zcs");
+const types = @import("../types.zig");
 
 const Fuzzer = @import("../EntitiesFuzzer.zig");
+
+const Model = types.Model;
 
 const Entity = zcs.Entity;
 const Entities = zcs.Entities;
@@ -33,7 +36,10 @@ test "node immediate" {
     defer es.deinit(gpa);
 
     const empty = Entity.reserveImmediate(&es);
-    try expect(empty.changeArchImmediate(&es, .{ .add = &.{.init(Node, &.{})} }));
+    try expect(empty.changeArchImmediate(&es, .{ .add = &.{
+        .init(Node, &.{}),
+        .init(Model, &Model.interned[0]),
+    } }));
     const parent = Entity.reserveImmediate(&es);
     try expect(parent.changeArchImmediate(&es, .{ .add = &.{.init(Node, &.{})} }));
     const child_1 = Entity.reserveImmediate(&es);
@@ -44,7 +50,7 @@ test "node immediate" {
     try expect(descendant.changeArchImmediate(&es, .{ .add = &.{.init(Node, &.{})} }));
 
     // Make sure this compiles
-    try expectEqual(empty.get(&es, Node), empty.get(&es, Node).?.get(&es, Node));
+    try expectEqual(empty.get(&es, Node).?.getEntity(&es).get(&es, Model), empty.get(&es, Model).?);
 
     child_2.get(&es, Node).?.setParentImmediate(&es, parent.get(&es, Node).?);
     child_1.get(&es, Node).?.setParentImmediate(&es, parent.get(&es, Node).?);
@@ -68,7 +74,7 @@ test "node immediate" {
     try expectEqualEntity(child_2, children.next(&es).?.getEntity(&es));
     try expectEqual(null, children.next(&es));
 
-    try expect(parent.get(&es, Node).?.destroyImmediate(&es));
+    parent.get(&es, Node).?.destroyImmediate(&es);
     try expect(!parent.exists(&es));
     try expect(!child_1.exists(&es));
     try expect(!child_2.exists(&es));
@@ -332,7 +338,7 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
 fn checkPostOrder(fz: *Fuzzer, o: *const Oracle, e: Entity) !void {
     var iter: Node.PostOrderIterator = if (e.get(&fz.es, Node)) |node| b: {
         break :b node.postOrderIterator(&fz.es);
-    } else .{ .curr = null, .end = undefined };
+    } else .{ .curr = .none, .end = undefined };
     try checkPostOrderInner(fz, o, e, e, &iter);
 }
 
@@ -361,7 +367,7 @@ fn checkPostOrderInner(
 fn checkPreOrder(fz: *Fuzzer, o: *const Oracle, e: Entity) !void {
     var iter: Node.PreOrderIterator = if (e.get(&fz.es, Node)) |node| b: {
         break :b node.preOrderIterator(&fz.es);
-    } else .{ .start = undefined, .curr = null };
+    } else .{ .start = undefined, .curr = .none };
     try checkPreOrderInner(fz, o, e, e, &iter);
     try expectEqual(null, iter.next(&fz.es));
 }
