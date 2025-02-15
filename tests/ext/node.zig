@@ -43,6 +43,9 @@ test "node immediate" {
     const descendant = Entity.reserveImmediate(&es);
     try expect(descendant.changeArchImmediate(&es, .{ .add = &.{.init(Node, &.{})} }));
 
+    // Make sure this compiles
+    try expectEqual(empty.get(&es, Node), empty.get(&es, Node).?.get(&es, Node));
+
     child_2.get(&es, Node).?.setParentImmediate(&es, parent.get(&es, Node).?);
     child_1.get(&es, Node).?.setParentImmediate(&es, parent.get(&es, Node).?);
     descendant.get(&es, Node).?.setParentImmediate(&es, child_1.get(&es, Node).?);
@@ -61,8 +64,8 @@ test "node immediate" {
     try expect(!child_1.get(&es, Node).?.isAncestorOf(&es, child_2.get(&es, Node).?));
 
     var children = parent.get(&es, Node).?.childIterator();
-    try expectEqualEntity(child_1, Entity.from(&es, children.next(&es).?));
-    try expectEqualEntity(child_2, Entity.from(&es, children.next(&es).?));
+    try expectEqualEntity(child_1, children.next(&es).?.getEntity(&es));
+    try expectEqualEntity(child_2, children.next(&es).?.getEntity(&es));
     try expectEqual(null, children.next(&es));
 
     try expect(parent.get(&es, Node).?.destroyImmediate(&es));
@@ -311,7 +314,7 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
             for (0..keys.len) |i| {
                 const expected = keys[keys.len - i - 1];
                 const child = children.next(&fz.es).?;
-                const child_entity = Entity.from(&fz.es, child);
+                const child_entity = child.getEntity(&fz.es);
                 try expectEqualEntity(expected, child_entity);
 
                 // Validate prev pointers to catch issues sooner
@@ -350,7 +353,7 @@ fn checkPostOrderInner(
     } else {
         try expectEqualEntity(
             curr,
-            Entity.from(&fz.es, iter.next(&fz.es) orelse return error.ExpectedNext),
+            (iter.next(&fz.es) orelse return error.ExpectedNext).getEntity(&fz.es),
         );
     }
 }
@@ -374,7 +377,7 @@ fn checkPreOrderInner(
         const actual = iter.next(&fz.es);
         try expectEqualEntity(
             curr,
-            Entity.from(&fz.es, actual orelse return error.ExpectedNext),
+            (actual orelse return error.ExpectedNext).getEntity(&fz.es),
         );
     }
     const oracle_children = o.nodes.get(curr).?.children.keys();

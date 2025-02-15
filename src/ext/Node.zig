@@ -30,6 +30,14 @@ first_child: Entity.Optional = .none,
 prev_sib: Entity.Optional = .none,
 next_sib: Entity.Optional = .none,
 
+pub fn getEntity(self: *const @This(), es: *const Entities) Entity {
+    return .from(es, self);
+}
+
+pub fn get(self: *const @This(), es: *const Entities, T: type) ?*T {
+    return self.getEntity(es).get(es, T);
+}
+
 pub fn getParent(self: *const @This(), es: *const Entities) ?*Node {
     const parent = self.parent.unwrap() orelse return null;
     return parent.get(es, Node).?;
@@ -118,8 +126,8 @@ pub fn setParentImmediateOrErr(
     if (self == parent) return;
     setParentImmediateInner(
         es,
-        .{ .node = self, .entity = .from(es, self) },
-        if (parent) |p| .{ .node = p, .entity = .from(es, p) } else null,
+        .{ .node = self, .entity = self.getEntity(es) },
+        if (parent) |p| .{ .node = p, .entity = p.getEntity(es) } else null,
         true,
     );
 }
@@ -174,7 +182,7 @@ fn setParentImmediateInner(
 /// with a node is destroyed.
 pub fn destroyImmediate(self: *@This(), es: *Entities) bool {
     self.destroyChildrenAndUnparentImmediate(es);
-    return Entity.from(es, self).destroyImmediate(es);
+    return self.getEntity(es).destroyImmediate(es);
 }
 
 /// Destroys an entity's children and then unparents it. This behavior occurs automatically via
@@ -182,7 +190,7 @@ pub fn destroyImmediate(self: *@This(), es: *Entities) bool {
 pub fn destroyChildrenAndUnparentImmediate(self: *@This(), es: *Entities) void {
     var iter = self.postOrderIterator(es);
     while (iter.next(es)) |curr| {
-        assert(Entity.from(es, curr).destroyImmediate(es));
+        assert(curr.getEntity(es).destroyImmediate(es));
     }
     self.setParentImmediate(es, null);
     self.first_child = .none;
@@ -238,7 +246,7 @@ pub const PreOrderIterator = struct {
         } else {
             var has_next_sib = pre;
             while (has_next_sib.next_sib.unwrap() == null) {
-                if (has_next_sib.parent == Entity.from(es, self.start).toOptional()) {
+                if (has_next_sib.parent == self.start.getEntity(es).toOptional()) {
                     self.curr = null;
                     return pre;
                 }
