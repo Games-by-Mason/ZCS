@@ -13,7 +13,6 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const zcs = @import("../root.zig");
-const view = zcs.view;
 const types = zcs.types;
 const typeId = zcs.typeId;
 const TypeId = zcs.TypeId;
@@ -58,57 +57,6 @@ pub fn getNextSib(self: *const @This(), es: *const Entities) ?*Node {
     return next_sib.get(es, Node).?;
 }
 
-/// A view of an entity containing a node.
-pub const View = struct {
-    entity: Entity,
-    node: *Node,
-
-    pub const initOrAddNodeImmediate = Mixins(@This()).initOrAddNodeImmediate;
-    pub const initOrAddNodeImmediateOrErr = Mixins(@This()).initOrAddNodeImmediateOrErr;
-    pub const getParent = Mixins(@This()).getParent;
-    pub const getFirstChild = Mixins(@This()).getFirstChild;
-    pub const getPrevSib = Mixins(@This()).getPrevSib;
-    pub const getNextSib = Mixins(@This()).getNextSib;
-
-    /// View mixins for working with custom views that contain nodes.
-    pub fn Mixins(Self: type) type {
-        return struct {
-            pub fn initOrAddNodeImmediate(e: Entity, es: *Entities) ?Self {
-                return @This().initOrAddNodeImmediateOrErr(e, es) catch |err|
-                    @panic(@errorName(err));
-            }
-
-            pub fn initOrAddNodeImmediateOrErr(e: Entity, es: *Entities) error{ZcsCompOverflow}!?Self {
-                return e.viewOrAddImmediateOrErr(es, Self, .{ .node = &Node{} });
-            }
-
-            pub fn getParent(self: Self, es: *const Entities) ?Self {
-                const node = view.asOptional(self.node) orelse return null;
-                const parent = node.parent.unwrap() orelse return null;
-                return parent.view(es, Self).?;
-            }
-
-            pub fn getFirstChild(self: Self, es: *const Entities) ?Self {
-                const node = view.asOptional(self.node) orelse return null;
-                const first_child = node.first_child.unwrap() orelse return null;
-                return first_child.view(es, Self).?;
-            }
-
-            pub fn getPrevSib(self: Self, es: *const Entities) ?Self {
-                const node = view.asOptional(self.node) orelse return null;
-                const prev_sib = node.prev_sib.unwrap() orelse return null;
-                return prev_sib.view(es, Self).?;
-            }
-
-            pub fn getNextSib(self: Self, es: *const Entities) ?Self {
-                const node = view.asOptional(self.node) orelse return null;
-                const next_sib = node.next_sib.unwrap() orelse return null;
-                return next_sib.view(es, Self).?;
-            }
-        };
-    }
-};
-
 /// Similar to `SetParent`, but sets the parent immediately.
 pub fn setParentImmediate(self: *Node, es: *Entities, parent: ?*Node) void {
     self.setParentImmediateOrErr(es, parent) catch |err|
@@ -124,56 +72,52 @@ pub fn setParentImmediateOrErr(
     parent: ?*Node,
 ) error{ZcsCompOverflow}!void {
     if (self == parent) return;
-    setParentImmediateInner(
-        es,
-        .{ .node = self, .entity = self.getEntity(es) },
-        if (parent) |p| .{ .node = p, .entity = p.getEntity(es) } else null,
-        true,
-    );
+    self.setParentImmediateInner(es, parent, true);
 }
 
 fn setParentImmediateInner(
+    child: *Node,
     es: *Entities,
-    child: View,
-    optional_parent: ?View,
+    parent_opt: ?*Node,
     break_cycles: bool,
 ) void {
-    const original_parent = child.node.parent;
+    const original_parent_opt = child.parent;
 
     // Unparent the child
     if (child.getParent(es)) |curr_parent| {
         if (child.getPrevSib(es)) |prev_sib| {
-            prev_sib.node.next_sib = child.node.next_sib;
+            prev_sib.next_sib = child.next_sib;
         } else {
-            curr_parent.node.first_child = child.node.next_sib;
+            curr_parent.first_child = child.next_sib;
         }
-        if (child.node.next_sib.unwrap()) |next_sib| {
-            next_sib.get(es, Node).?.prev_sib = child.node.prev_sib;
-            child.node.next_sib = .none;
+        if (child.next_sib.unwrap()) |next_sib| {
+            next_sib.get(es, Node).?.prev_sib = child.prev_sib;
+            child.next_sib = .none;
         }
-        child.node.prev_sib = .none;
-        child.node.parent = .none;
+        child.prev_sib = .none;
+        child.parent = .none;
     }
 
     // Set the new parent
-    if (optional_parent) |parent| {
+    if (parent_opt) |parent| {
         // If this relationship would create a cycle, parent the new parent to the child's original
         // parent
-        if (break_cycles and child.node.isAncestorOf(es, parent.node)) {
-            const op: ?View = if (original_parent.unwrap()) |unwrapped| b: {
-                const op = unwrapped.view(es, View).?;
-                break :b op;
-            } else null;
-            setParentImmediateInner(es, parent, op, false);
+        if (break_cycles and child.isAncestorOf(es, parent)) {
+            if (original_parent_opt.unwrap()) |original_parent| {
+                parent.setParentImmediateInner(es, original_parent.get(es, Node).?, false);
+            } else {
+                parent.setParentImmediateInner(es, null, false);
+            }
         }
 
         // Parent the child
-        child.node.parent = parent.entity.toOptional();
-        child.node.next_sib = parent.node.first_child;
-        if (parent.node.first_child.unwrap()) |first_child| {
-            first_child.get(es, Node).?.prev_sib = child.entity.toOptional();
+        child.parent = parent.getEntity(es).toOptional();
+        child.next_sib = parent.first_child;
+        const child_entity = child.getEntity(es);
+        if (parent.first_child.unwrap()) |first_child| {
+            first_child.get(es, Node).?.prev_sib = child_entity.toOptional();
         }
-        parent.node.first_child = child.entity.toOptional();
+        parent.first_child = child_entity.toOptional();
     }
 }
 
@@ -384,6 +328,7 @@ pub fn Exec(
         ) error{ ZcsCompOverflow, ZcsEntityOverflow }!void {
             switch (cmd) {
                 .ext => |ev| if (ev.as(SetParent)) |set_parent| {
+                    const parent = set_parent[0];
                     if (self.init_node and !arch_change.from.contains(typeId(Node).comp_flag.?)) {
                         if (batch.entity.get(es, Node)) |node| {
                             node.* = .{};
@@ -391,7 +336,7 @@ pub fn Exec(
                         self.init_node = false;
                     }
                     if (batch.entity.get(es, Node)) |node| {
-                        if (set_parent[0].unwrap()) |parent| {
+                        if (parent.unwrap()) |parent| {
                             if (try parent.viewOrAddImmediateOrErr(
                                 es,
                                 struct { node: *Node },

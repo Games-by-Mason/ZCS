@@ -6,8 +6,6 @@
 //! memory.
 //!
 //! This file provides infrastructure to support entity views.
-//!
-//! See `ext.Node.View.Mixins` for an example of adding methods to a view in a composable way.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -51,21 +49,4 @@ pub fn UnwrapField(T: type) type {
     const C = @typeInfo(Ptr).pointer.child;
     zcs.TypeInfo.checkType(C);
     return C;
-}
-
-/// If the type is optional, returns it. Otherwise makes it optional and returns it.
-///
-/// See `makeOptional`.
-pub fn AsOptional(T: type) type {
-    return switch (@typeInfo(T)) {
-        .optional => T,
-        else => ?T,
-    };
-}
-
-/// Given an optional value, returns it unchanged. Given a non-optional value, returns it as an
-/// optional. Useful for referencing components on a view that may or may not be optional from a
-/// mixin.
-pub fn asOptional(self: anytype) AsOptional(@TypeOf(self)) {
-    return self;
 }
