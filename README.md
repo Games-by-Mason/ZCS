@@ -61,12 +61,12 @@ defer cb.deinit(gpa, &es);
 
 // Get the next reserved entity. By reserving entities up front, the command buffer allows you to
 // create entities on background threads safely.
-const e = Entity.popReserved(&cb);
+const e = Entity.reserve(&cb);
 
 // Schedule an archetype change for the reserved entity, this will assign it storage when the
 // command buffer executes.
-e.addCompCmd(&cb, RigidBody, .{ .mass = 20 });
-e.addCompCmd(&cb, Sprite, .{ .index = .cat });
+e.add(&cb, RigidBody, .{ .mass = 20 });
+e.add(&cb, Sprite, .{ .index = .cat });
 
 // Execute the command buffer, and then clear it for reuse. This would be done from the main thread.
 cb.execute(&es);

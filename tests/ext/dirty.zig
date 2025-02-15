@@ -60,9 +60,9 @@ test "dirty immediate" {
     DirtyEvent(Foo).emitImmediate(&es, empty);
     DirtyEvent(Foo).emitImmediate(&es, foo_2);
 
-    try expect(foo_0.getComp(&es, Foo).?.dirty);
-    try expect(!foo_1.getComp(&es, Foo).?.dirty);
-    try expect(foo_2.getComp(&es, Foo).?.dirty);
+    try expect(foo_0.get(&es, Foo).?.dirty);
+    try expect(!foo_1.get(&es, Foo).?.dirty);
+    try expect(foo_2.get(&es, Foo).?.dirty);
 
     try expectEqual(6, es.count());
     try expectEqual(0, es.reserved());
@@ -75,9 +75,9 @@ test "dirty immediate" {
     }
 
     DirtyEvent(Foo).recycleAll(&es);
-    try expect(foo_0.getComp(&es, Foo).?.dirty);
-    try expect(!foo_1.getComp(&es, Foo).?.dirty);
-    try expect(foo_2.getComp(&es, Foo).?.dirty);
+    try expect(foo_0.get(&es, Foo).?.dirty);
+    try expect(!foo_1.get(&es, Foo).?.dirty);
+    try expect(foo_2.get(&es, Foo).?.dirty);
     try expectEqual(4, es.count());
     try expectEqual(0, es.reserved());
 
@@ -91,22 +91,22 @@ test "dirty immediate" {
     try expectEqual(0, es.reserved());
 
     {
-        try expect(foo_0.getComp(&es, Foo).?.dirty);
-        try expect(!foo_1.getComp(&es, Foo).?.dirty);
-        try expect(foo_2.getComp(&es, Foo).?.dirty);
+        try expect(foo_0.get(&es, Foo).?.dirty);
+        try expect(!foo_1.get(&es, Foo).?.dirty);
+        try expect(foo_2.get(&es, Foo).?.dirty);
         var iter = es.viewIterator(struct { dirty: *const DirtyEvent(Foo) });
         try expectEqual(null, iter.next());
     }
 
-    foo_0.getComp(&es, Foo).?.dirty = false;
+    foo_0.get(&es, Foo).?.dirty = false;
     DirtyEvent(Foo).emitImmediate(&es, foo_0);
     try expectEqual(5, es.count());
     try expectEqual(0, es.reserved());
 
     {
-        try expect(foo_0.getComp(&es, Foo).?.dirty);
-        try expect(!foo_1.getComp(&es, Foo).?.dirty);
-        try expect(foo_2.getComp(&es, Foo).?.dirty);
+        try expect(foo_0.get(&es, Foo).?.dirty);
+        try expect(!foo_1.get(&es, Foo).?.dirty);
+        try expect(foo_2.get(&es, Foo).?.dirty);
         var iter = es.viewIterator(struct { dirty: *const DirtyEvent(Foo) });
         try expectEqual(foo_0, iter.next().?.dirty.*.entity);
         try expectEqual(null, iter.next());
@@ -136,17 +136,17 @@ test "dirty cmd" {
     });
     defer cb.deinit(gpa, &es);
 
-    const foo_0 = Entity.popReserved(&cb);
-    foo_0.addCompCmd(&cb, Foo, .{});
+    const foo_0 = Entity.reserve(&cb);
+    foo_0.add(&cb, Foo, .{});
 
-    const foo_1 = Entity.popReserved(&cb);
-    foo_1.addCompCmd(&cb, Foo, .{});
+    const foo_1 = Entity.reserve(&cb);
+    foo_1.add(&cb, Foo, .{});
 
-    const foo_2 = Entity.popReserved(&cb);
-    foo_2.addCompCmd(&cb, Foo, .{});
+    const foo_2 = Entity.reserve(&cb);
+    foo_2.add(&cb, Foo, .{});
 
-    const empty = Entity.popReserved(&cb);
-    empty.commitCmd(&cb);
+    const empty = Entity.reserve(&cb);
+    empty.commit(&cb);
 
     try execImmediateOrErr(&es, &cb);
     cb.clear(&es);
@@ -165,8 +165,8 @@ test "dirty cmd" {
         cb.clear(&es);
         try expectEqual(6, es.count());
 
-        try expect(foo_0.getComp(&es, Foo).?.dirty);
-        try expect(foo_2.getComp(&es, Foo).?.dirty);
+        try expect(foo_0.get(&es, Foo).?.dirty);
+        try expect(foo_2.get(&es, Foo).?.dirty);
 
         var iter = es.viewIterator(struct { dirty: *const DirtyEvent(Foo) });
         try expectEqual(foo_0, iter.next().?.dirty.*.entity);
@@ -175,8 +175,8 @@ test "dirty cmd" {
     }
 
     DirtyEvent(Foo).recycleAll(&es);
-    try expect(foo_0.getComp(&es, Foo).?.dirty);
-    try expect(foo_2.getComp(&es, Foo).?.dirty);
+    try expect(foo_0.get(&es, Foo).?.dirty);
+    try expect(foo_2.get(&es, Foo).?.dirty);
     try expectEqual(4, es.count());
 
     {
@@ -196,7 +196,7 @@ test "dirty cmd" {
 
     {
         DirtyEvent(Foo).emitCmd(&cb, foo_0);
-        foo_0.getComp(&es, Foo).?.dirty = false;
+        foo_0.get(&es, Foo).?.dirty = false;
         try execImmediateOrErr(&es, &cb);
         cb.clear(&es);
         try expectEqual(5, es.count());

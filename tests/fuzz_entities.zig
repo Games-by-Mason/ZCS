@@ -143,9 +143,9 @@ fn checkOracle(fz: *Fuzzer, cb: *const CmdBuf) !void {
         const expected = entry.value_ptr;
         try expect(entity.exists(&fz.es));
         try expect(entity.committed(&fz.es));
-        try expectEqual(expected.rb, if (entity.getComp(&fz.es, RigidBody)) |v| v.* else null);
-        try expectEqual(expected.model, if (entity.getComp(&fz.es, Model)) |v| v.* else null);
-        try expectEqual(expected.tag, if (entity.getComp(&fz.es, Tag)) |v| v.* else null);
+        try expectEqual(expected.rb, if (entity.get(&fz.es, RigidBody)) |v| v.* else null);
+        try expectEqual(expected.model, if (entity.get(&fz.es, Model)) |v| v.* else null);
+        try expectEqual(expected.tag, if (entity.get(&fz.es, Tag)) |v| v.* else null);
     }
 
     // Check the tracked deleted entities
@@ -154,9 +154,9 @@ fn checkOracle(fz: *Fuzzer, cb: *const CmdBuf) !void {
         const entity = entry.key_ptr.*;
         try expect(!entity.exists(&fz.es));
         try expect(!entity.committed(&fz.es));
-        try expectEqual(null, if (entity.getComp(&fz.es, RigidBody)) |v| v.* else null);
-        try expectEqual(null, if (entity.getComp(&fz.es, Model)) |v| v.* else null);
-        try expectEqual(null, if (entity.getComp(&fz.es, Tag)) |v| v.* else null);
+        try expectEqual(null, if (entity.get(&fz.es, RigidBody)) |v| v.* else null);
+        try expectEqual(null, if (entity.get(&fz.es, Model)) |v| v.* else null);
+        try expectEqual(null, if (entity.get(&fz.es, Tag)) |v| v.* else null);
     }
 
     // Check the iterators
@@ -170,7 +170,7 @@ fn reserve(fz: *Fuzzer, cb: *CmdBuf) !void {
     }
 
     // Reserve an entity and update the oracle
-    const entity = Entity.popReserved(cb);
+    const entity = Entity.reserve(cb);
     try fz.reserved.putNoClobber(gpa, entity, {});
 }
 
@@ -179,7 +179,7 @@ fn destroy(fz: *Fuzzer, cb: *CmdBuf) !void {
 
     // Destroy a random entity
     const entity = fz.randomEntity().unwrap() orelse return;
-    entity.destroyCmd(cb);
+    entity.destroy(cb);
 
     // Destroy the entity in the oracle as well, displacing an existing
     // destroyed entity if there are already too many to prevent the destroyed
@@ -212,15 +212,15 @@ fn changeArch(fz: *Fuzzer, cb: *CmdBuf) !void {
                 tag,
             })) {
                 .rb => {
-                    const rb = addRandomComp(fz, cb, entity, RigidBody);
+                    const rb = try addRandomComp(fz, cb, entity, RigidBody);
                     if (expected) |e| e.rb = rb;
                 },
                 .model => {
-                    const model = addRandomComp(fz, cb, entity, Model);
+                    const model = try addRandomComp(fz, cb, entity, Model);
                     if (expected) |e| e.model = model;
                 },
                 .tag => {
-                    const tag = addRandomComp(fz, cb, entity, Tag);
+                    const tag = try addRandomComp(fz, cb, entity, Tag);
                     if (expected) |e| e.tag = tag;
                 },
             }
@@ -232,19 +232,19 @@ fn changeArch(fz: *Fuzzer, cb: *CmdBuf) !void {
                 commit,
             })) {
                 .rb => {
-                    entity.remCompCmd(cb, RigidBody);
+                    entity.remove(cb, RigidBody);
                     if (expected) |e| e.rb = null;
                 },
                 .model => {
-                    entity.remCompCmd(cb, Model);
+                    entity.remove(cb, Model);
                     if (expected) |e| e.model = null;
                 },
                 .tag => {
-                    entity.remCompCmd(cb, Tag);
+                    entity.remove(cb, Tag);
                     if (expected) |e| e.tag = null;
                 },
                 .commit => {
-                    entity.commitCmd(cb);
+                    entity.commit(cb);
                 },
             }
         }
@@ -253,21 +253,21 @@ fn changeArch(fz: *Fuzzer, cb: *CmdBuf) !void {
 
 /// Adds a random value for the given component by value, or a random value from it's interned
 /// list by pointer. Returns the value.
-fn addRandomComp(fz: *Fuzzer, cb: *CmdBuf, e: Entity, T: type) T {
+fn addRandomComp(fz: *Fuzzer, cb: *CmdBuf, e: Entity, T: type) !T {
     const i = fz.smith.next(u8);
     const by_ptr = i < 40;
     if (by_ptr) {
         switch (i % T.interned.len) {
             inline 0...(T.interned.len - 1) => |n| {
                 const val = T.interned[n];
-                e.addCompCmdByPtr(cb, .init(T, &val));
+                try e.addAnyPtr(cb, .init(T, &val));
                 return val;
             },
             else => unreachable,
         }
     } else {
         const val = fz.smith.next(T);
-        e.addCompCmd(cb, T, val);
+        e.add(cb, T, val);
         return val;
     }
 }

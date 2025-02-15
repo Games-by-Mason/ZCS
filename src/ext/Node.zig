@@ -32,22 +32,22 @@ next_sib: Entity.Optional = .none,
 
 pub fn getParent(self: *const @This(), es: *const Entities) ?*Node {
     const parent = self.parent.unwrap() orelse return null;
-    return parent.getComp(es, Node).?;
+    return parent.get(es, Node).?;
 }
 
 pub fn getFirstChild(self: *const @This(), es: *const Entities) ?*Node {
     const first_child = self.first_child.unwrap() orelse return null;
-    return first_child.getComp(es, Node).?;
+    return first_child.get(es, Node).?;
 }
 
 pub fn getPrevSib(self: *const @This(), es: *const Entities) ?*Node {
     const prev_sib = self.prev_sib.unwrap() orelse return null;
-    return prev_sib.getComp(es, Node).?;
+    return prev_sib.get(es, Node).?;
 }
 
 pub fn getNextSib(self: *const @This(), es: *const Entities) ?*Node {
     const next_sib = self.next_sib.unwrap() orelse return null;
-    return next_sib.getComp(es, Node).?;
+    return next_sib.get(es, Node).?;
 }
 
 /// A view of an entity containing a node.
@@ -71,7 +71,7 @@ pub const View = struct {
             }
 
             pub fn initOrAddNodeImmediateOrErr(e: Entity, es: *Entities) error{ZcsCompOverflow}!?Self {
-                return e.viewOrAddCompsImmediateOrErr(es, Self, .{ .node = &Node{} });
+                return e.viewOrAddImmediateOrErr(es, Self, .{ .node = &Node{} });
             }
 
             pub fn getParent(self: Self, es: *const Entities) ?Self {
@@ -118,8 +118,8 @@ pub fn setParentImmediateOrErr(
     if (self == parent) return;
     setParentImmediateInner(
         es,
-        .{ .node = self, .entity = .fromComp(es, self) },
-        if (parent) |p| .{ .node = p, .entity = .fromComp(es, p) } else null,
+        .{ .node = self, .entity = .from(es, self) },
+        if (parent) |p| .{ .node = p, .entity = .from(es, p) } else null,
         true,
     );
 }
@@ -140,7 +140,7 @@ fn setParentImmediateInner(
             curr_parent.node.first_child = child.node.next_sib;
         }
         if (child.node.next_sib.unwrap()) |next_sib| {
-            next_sib.getComp(es, Node).?.prev_sib = child.node.prev_sib;
+            next_sib.get(es, Node).?.prev_sib = child.node.prev_sib;
             child.node.next_sib = .none;
         }
         child.node.prev_sib = .none;
@@ -163,7 +163,7 @@ fn setParentImmediateInner(
         child.node.parent = parent.entity.toOptional();
         child.node.next_sib = parent.node.first_child;
         if (parent.node.first_child.unwrap()) |first_child| {
-            first_child.getComp(es, Node).?.prev_sib = child.entity.toOptional();
+            first_child.get(es, Node).?.prev_sib = child.entity.toOptional();
         }
         parent.node.first_child = child.entity.toOptional();
     }
@@ -174,7 +174,7 @@ fn setParentImmediateInner(
 /// with a node is destroyed.
 pub fn destroyImmediate(self: *@This(), es: *Entities) bool {
     self.destroyChildrenAndUnparentImmediate(es);
-    return Entity.fromComp(es, self).destroyImmediate(es);
+    return Entity.from(es, self).destroyImmediate(es);
 }
 
 /// Destroys an entity's children and then unparents it. This behavior occurs automatically via
@@ -182,7 +182,7 @@ pub fn destroyImmediate(self: *@This(), es: *Entities) bool {
 pub fn destroyChildrenAndUnparentImmediate(self: *@This(), es: *Entities) void {
     var iter = self.postOrderIterator(es);
     while (iter.next(es)) |curr| {
-        assert(Entity.fromComp(es, curr).destroyImmediate(es));
+        assert(Entity.from(es, curr).destroyImmediate(es));
     }
     self.setParentImmediate(es, null);
     self.first_child = .none;
@@ -210,7 +210,7 @@ const ChildIterator = struct {
     /// Returns the next child, or `null` if there are none.
     pub fn next(self: *@This(), es: *const Entities) ?*Node {
         const entity = self.curr.unwrap() orelse return null;
-        const node = entity.getComp(es, Node).?;
+        const node = entity.get(es, Node).?;
         self.curr = node.next_sib;
         return node;
     }
@@ -238,7 +238,7 @@ pub const PreOrderIterator = struct {
         } else {
             var has_next_sib = pre;
             while (has_next_sib.next_sib.unwrap() == null) {
-                if (has_next_sib.parent == Entity.fromComp(es, self.start).toOptional()) {
+                if (has_next_sib.parent == Entity.from(es, self.start).toOptional()) {
                     self.curr = null;
                     return pre;
                 }
@@ -377,14 +377,14 @@ pub fn Exec(
             switch (cmd) {
                 .ext => |ev| if (ev.as(SetParent)) |set_parent| {
                     if (self.init_node and !arch_change.from.contains(typeId(Node).comp_flag.?)) {
-                        if (batch.entity.getComp(es, Node)) |node| {
+                        if (batch.entity.get(es, Node)) |node| {
                             node.* = .{};
                         }
                         self.init_node = false;
                     }
-                    if (batch.entity.getComp(es, Node)) |node| {
+                    if (batch.entity.get(es, Node)) |node| {
                         if (set_parent[0].unwrap()) |parent| {
-                            if (try parent.viewOrAddCompsImmediateOrErr(
+                            if (try parent.viewOrAddImmediateOrErr(
                                 es,
                                 struct { node: *Node },
                                 .{ .node = &Node{} },
@@ -420,7 +420,7 @@ pub fn Exec(
         }
 
         pub fn beforeDestroyImmediate(es: *Entities, batch: CmdBuf.Batch) void {
-            if (batch.entity.getComp(es, Node)) |node| {
+            if (batch.entity.get(es, Node)) |node| {
                 _ = node.destroyChildrenAndUnparentImmediate(es);
             }
         }
@@ -428,7 +428,7 @@ pub fn Exec(
         /// Preprocessing for remove component commands. Destroys children of removed nodes.
         pub fn beforeRemoveCompImmediate(es: *Entities, batch: CmdBuf.Batch, id: TypeId) void {
             if (id != typeId(Node)) return;
-            if (batch.entity.getComp(es, Node)) |node| {
+            if (batch.entity.get(es, Node)) |node| {
                 _ = node.destroyChildrenAndUnparentImmediate(es);
             }
         }

@@ -39,7 +39,7 @@ pub fn DirtyEvent(T: type) type {
             entity: Entity,
         ) error{ ZcsEntityOverflow, ZcsCompOverflow }!void {
             // If we don't have `T`, early out
-            const comp = entity.getComp(es, T) orelse return;
+            const comp = entity.get(es, T) orelse return;
 
             // If `T` is already marked as dirty early out, otherwise mark it as dirty
             if (comp.dirty) return;
@@ -61,7 +61,7 @@ pub fn DirtyEvent(T: type) type {
         /// Similar to `emitCmd`, but returns `error.ZcsCmdBufOverflow` on error instead of
         /// panicking.
         pub inline fn emitCmdOrErr(cb: *CmdBuf, entity: Entity) error{ZcsCmdBufOverflow}!void {
-            try entity.extCmdOrErr(cb, Cmd, .{});
+            try entity.cmdOrErr(cb, Cmd, .{});
         }
 
         /// Recycles all events, allowing for reuse of their entities.

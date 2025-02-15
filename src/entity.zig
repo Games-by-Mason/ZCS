@@ -50,13 +50,13 @@ pub const Entity = packed struct {
 
     key: SlotMap(Entities.Slot, .{}).Key,
 
-    /// Given a pointer to a component, returns the component's entity.
-    pub fn fromComp(es: *const Entities, ptr: anytype) @This() {
-        return fromCompAny(es, .init(@typeInfo(@TypeOf(ptr)).pointer.child, ptr));
+    /// Given a pointer to a component, returns the corresponding entity.
+    pub fn from(es: *const Entities, comp: anytype) @This() {
+        return fromAny(es, .init(@typeInfo(@TypeOf(comp)).pointer.child, comp));
     }
 
-    /// Similar to `fromComp`, but does not require compile time types.
-    pub fn fromCompAny(es: *const Entities, comp: Any) @This() {
+    /// Similar to `from`, but does not require compile time types.
+    pub fn fromAny(es: *const Entities, comp: Any) @This() {
         if (comp.id.size == 0) {
             // Our pointer math doesn't work on zero bit types, since they may all occupy the same
             // address. To work around this, zero sized types are "allocated" at the address of the
@@ -85,21 +85,21 @@ pub const Entity = packed struct {
     /// A reserved entity is given a persistent key, but no storage. As such, it will behave like
     /// an empty entity, but not show up in iteration.
     ///
-    /// You can commit a reserved entity explicitly with `commitCmd`, but this isn't usually
+    /// You can commit a reserved entity explicitly with `commit`, but this isn't usually
     /// necessary as adding or attempting to remove a component implicitly commits the entity.
-    pub fn popReserved(cb: *CmdBuf) Entity {
-        return popReservedOrErr(cb) catch |err|
+    pub fn reserve(cb: *CmdBuf) Entity {
+        return reserveOrErr(cb) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `popReserved`, but returns `error.ZcsReservedEntityUnderflow` if there are no
+    /// Similar to `reserve`, but returns `error.ZcsReservedEntityUnderflow` if there are no
     /// more reserved entities instead of panicking.
-    pub fn popReservedOrErr(cb: *CmdBuf) error{ZcsReservedEntityUnderflow}!Entity {
+    pub fn reserveOrErr(cb: *CmdBuf) error{ZcsReservedEntityUnderflow}!Entity {
         return cb.reserved.popOrNull() orelse error.ZcsReservedEntityUnderflow;
     }
 
-    /// Similar to `popReserved`, but reserves a new entity instead of popping one from a command
-    /// buffers reserve. Prefer `popReserved`.
+    /// Similar to `reserve`, but reserves a new entity instead of popping one from a command
+    /// buffers reserve. Prefer `reserve`.
     ///
     /// This does not invalidate iterators, but it's not thread safe.
     pub fn reserveImmediate(es: *Entities) Entity {
@@ -124,14 +124,14 @@ pub const Entity = packed struct {
     /// Queues an entity for destruction.
     ///
     /// Destroying an entity that no longer exists has no effect.
-    pub fn destroyCmd(self: @This(), cb: *CmdBuf) void {
-        self.destroyCmdOrErr(cb) catch |err|
+    pub fn destroy(self: @This(), cb: *CmdBuf) void {
+        self.destroyOrErr(cb) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `destroyCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
+    /// Similar to `destroy`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
-    pub fn destroyCmdOrErr(self: @This(), cb: *CmdBuf) error{ZcsCmdBufOverflow}!void {
+    pub fn destroyOrErr(self: @This(), cb: *CmdBuf) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cb.*;
         errdefer cb.* = restore;
@@ -139,7 +139,7 @@ pub const Entity = packed struct {
         try Cmd.encode(cb, .destroy);
     }
 
-    /// Similar to `destroyCmd`, but destroys the entity immediately. Prefer `destroyCmd`.
+    /// Similar to `destroy`, but destroys the entity immediately. Prefer `destroy`.
     ///
     /// Invalidates iterators.
     pub fn destroyImmediate(self: @This(), es: *Entities) bool {
@@ -182,12 +182,12 @@ pub const Entity = packed struct {
 
     /// Returns true if the entity has the given component type, false otherwise or if the entity
     /// has been destroyed.
-    pub fn hasComp(self: @This(), es: *const Entities, T: type) bool {
-        return self.hastypeId(es, typeId(T));
+    pub fn has(self: @This(), es: *const Entities, T: type) bool {
+        return self.hasId(es, typeId(T));
     }
 
-    /// Similar to `hasComp`, but operates on component IDs instead of types.
-    pub fn hastypeId(self: @This(), es: *const Entities, id: TypeId) bool {
+    /// Similar to `has`, but operates on component IDs instead of types.
+    pub fn hasId(self: @This(), es: *const Entities, id: TypeId) bool {
         const flag = id.comp_flag orelse return false;
         const arch = self.getArch(es);
         return arch.contains(flag);
@@ -195,18 +195,18 @@ pub const Entity = packed struct {
 
     /// Retrieves the given component type. Returns null if the entity does not have this component
     /// or has been destroyed.
-    pub fn getComp(self: @This(), es: *const Entities, T: type) ?*T {
-        const untyped = self.getCompFromId(es, typeId(T)) orelse return null;
+    pub fn get(self: @This(), es: *const Entities, T: type) ?*T {
+        const untyped = self.getId(es, typeId(T)) orelse return null;
         // Don't need `.ptr` once this is merged: https://github.com/ziglang/zig/pull/22706
         return @alignCast(@ptrCast(untyped.ptr));
     }
 
-    /// Similar to `getComp`, but operates on component IDs instead of types.
-    pub fn getCompFromId(self: @This(), es: *const Entities, id: TypeId) ?[]u8 {
+    /// Similar to `get`, but operates on component IDs instead of types.
+    pub fn getId(self: @This(), es: *const Entities, id: TypeId) ?[]u8 {
         const flag = id.comp_flag orelse return null;
-        if (!self.hastypeId(es, id)) return null;
+        if (!self.hasId(es, id)) return null;
 
-        // See `Entity.fromComp`.
+        // See `Entity.from`.
         if (id.size == 0) return @as([*]u8, @ptrFromInt(@as(u64, @bitCast(self))))[0..0];
 
         const comp_buffer = es.comps[@intFromEnum(flag)];
@@ -224,14 +224,13 @@ pub const Entity = packed struct {
     /// sized.
     ///
     /// Adding components to an entity that no longer exists has no effect.
-    pub inline fn addCompCmd(self: @This(), cb: *CmdBuf, T: type, comp: T) void {
-        self.addCompCmdOrErr(cb, T, comp) catch |err|
+    pub inline fn add(self: @This(), cb: *CmdBuf, T: type, comp: T) void {
+        self.addOrErr(cb, T, comp) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `addCompCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
-    /// panicking.
-    pub inline fn addCompCmdOrErr(
+    /// Similar to `add`, but returns `error.ZcsCmdBufOverflow` on error instead of panicking.
+    pub inline fn addOrErr(
         self: @This(),
         cb: *CmdBuf,
         T: type,
@@ -241,26 +240,15 @@ pub const Entity = packed struct {
             const Interned = struct {
                 const value = comp;
             };
-            try self.addCompCmdByPtrOrErr(cb, .init(T, comptime &Interned.value));
+            try self.addAnyPtr(cb, .init(T, comptime &Interned.value));
         } else {
-            try self.addCompCmdByValOrErr(cb, .init(T, &comp));
+            try self.addAnyVal(cb, .init(T, &comp));
         }
     }
 
-    /// Similar to `addCompCmd`, but doesn't require compile time types and forces the component to
-    /// be copied by value. Prefer `addCompCmd`.
-    pub fn addCompCmdByVal(self: @This(), cb: *CmdBuf, comp: Any) void {
-        self.addCompCmdByValOrErr(cb, comp) catch |err|
-            @panic(@errorName(err));
-    }
-
-    /// Similar to `addCompCmdByVal`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
-    /// panicking.
-    pub fn addCompCmdByValOrErr(
-        self: @This(),
-        cb: *CmdBuf,
-        comp: Any,
-    ) error{ZcsCmdBufOverflow}!void {
+    /// Similar to `addOrErr`, but doesn't require compile time types and forces the component to be
+    /// copied by value to the command buffer. Prefer `add`.
+    pub fn addAnyVal(self: @This(), cb: *CmdBuf, comp: Any) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cb.*;
         errdefer cb.* = restore;
@@ -270,20 +258,9 @@ pub const Entity = packed struct {
         try Cmd.encode(cb, .{ .add_comp_val = comp });
     }
 
-    /// Similar to `addCompCmd`, but doesn't require compile time types and forces the component to
-    /// be copied by pointer. Prefer `addCompCmd`.
-    pub fn addCompCmdByPtr(self: @This(), cb: *CmdBuf, comp: Any) void {
-        self.addCompCmdByPtrOrErr(cb, comp) catch |err|
-            @panic(@errorName(err));
-    }
-
-    /// Similar to `addCompCmdByPtr`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
-    /// panicking.
-    pub fn addCompCmdByPtrOrErr(
-        self: @This(),
-        cb: *CmdBuf,
-        comp: Any,
-    ) error{ZcsCmdBufOverflow}!void {
+    /// Similar to `addOrErr`, but doesn't require compile time types and forces the component to be
+    /// copied by pointer to the command buffer. Prefer `add`.
+    pub fn addAnyPtr(self: @This(), cb: *CmdBuf, comp: Any) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cb.*;
         errdefer cb.* = restore;
@@ -297,15 +274,15 @@ pub const Entity = packed struct {
     ///
     /// Adding commands to an entity that no longer exists has no effect.
     ///
-    /// See notes on `addCompCmd` with regards to performance and pass by value vs pointer.
-    pub inline fn extCmd(self: @This(), cb: *CmdBuf, T: type, payload: T) void {
-        self.extCmdOrErr(cb, T, payload) catch |err|
+    /// See notes on `add` with regards to performance and pass by value vs pointer.
+    pub inline fn cmd(self: @This(), cb: *CmdBuf, T: type, payload: T) void {
+        self.cmdOrErr(cb, T, payload) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `extCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
+    /// Similar to `cmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
-    pub inline fn extCmdOrErr(
+    pub inline fn cmdOrErr(
         self: @This(),
         cb: *CmdBuf,
         T: type,
@@ -315,26 +292,15 @@ pub const Entity = packed struct {
             const Interned = struct {
                 const value = payload;
             };
-            try self.extCmdByPtrOrErr(cb, .init(T, comptime &Interned.value));
+            try self.cmdAnyPtr(cb, .init(T, comptime &Interned.value));
         } else {
-            try self.extCmdByValOrErr(cb, .init(T, &payload));
+            try self.cmdAnyVal(cb, .init(T, &payload));
         }
     }
 
-    /// Similar to `extCmd`, but doesn't require compile time types and forces the command to be
-    /// copied by value. Prefer `extCmd`.
-    pub fn extCmdByVal(self: @This(), cb: *CmdBuf, payload: Any) void {
-        self.extCmdByValOrErr(cb, payload) catch |err|
-            @panic(@errorName(err));
-    }
-
-    /// Similar to `extCmdByVal`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
-    /// panicking.
-    pub fn extCmdByValOrErr(
-        self: @This(),
-        cb: *CmdBuf,
-        payload: Any,
-    ) error{ZcsCmdBufOverflow}!void {
+    /// Similar to `cmdOrErr`, but doesn't require compile time types and forces the command to be
+    /// copied by value to the command buffer. Prefer `cmd`.
+    pub fn cmdAnyVal(self: @This(), cb: *CmdBuf, payload: Any) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cb.*;
         errdefer cb.* = restore;
@@ -344,20 +310,9 @@ pub const Entity = packed struct {
         try Cmd.encode(cb, .{ .ext_val = payload });
     }
 
-    /// Similar to `extCmd`, but doesn't require compile time types and forces the command to be
-    /// passed by pointer. Prefer `extCmd`.
-    pub fn extCmdByPtr(self: @This(), cb: *CmdBuf, payload: Any) void {
-        self.extCmdByPtrOrErr(cb, payload) catch |err|
-            @panic(@errorName(err));
-    }
-
-    /// Similar to `extCmdByPtr`, but returns `error.ZcsCmdBufOVerflow` on failure instead of
-    /// panicking.
-    pub fn extCmdByPtrOrErr(
-        self: @This(),
-        cb: *CmdBuf,
-        payload: Any,
-    ) error{ZcsCmdBufOverflow}!void {
+    /// Similar to `cmdOrErr`, but doesn't require compile time types and forces the command to be
+    /// copied by pointer to the command buffer. Prefer `cmd`.
+    pub fn cmdAnyPtr(self: @This(), cb: *CmdBuf, payload: Any) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cb.*;
         errdefer cb.* = restore;
@@ -370,39 +325,19 @@ pub const Entity = packed struct {
     /// Queues the given component to be removed. Has no effect if the component is not present, or
     /// the entity no longer exists.
     ///
-    /// See note on `addCompCmd` with regards to performance.
-    pub fn remCompCmd(
+    /// See note on `add` with regards to performance.
+    pub fn remove(
         self: @This(),
         cb: *CmdBuf,
         T: type,
     ) void {
-        self.remCompCmdOrErr(cb, T) catch |err|
+        self.removeId(cb, typeId(T)) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `remCompCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
-    /// panicking.
-    pub fn remCompCmdOrErr(
-        self: @This(),
-        cb: *CmdBuf,
-        T: type,
-    ) error{ZcsCmdBufOverflow}!void {
-        try self.remtypeIdCmdOrErr(cb, typeId(T));
-    }
-
-    /// Similar to `remCompCmd`, but doesn't require compile time types.
-    pub fn remtypeIdCmd(
-        self: @This(),
-        cb: *CmdBuf,
-        id: TypeId,
-    ) void {
-        self.remtypeIdCmdOrErr(cb, id) catch |err|
-            @panic(@errorName(err));
-    }
-
-    /// Similar to `remCompCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
-    /// panicking.
-    pub fn remtypeIdCmdOrErr(
+    /// Similar to `remove`, but doesn't require compile time types and returns
+    /// `error.ZcsCmdBufOverflow` instead of panicking on failure.
+    pub fn removeId(
         self: @This(),
         cb: *CmdBuf,
         id: TypeId,
@@ -418,13 +353,13 @@ pub const Entity = packed struct {
 
     /// Queues the entity to be committed. Has no effect if it has already been committed, called
     /// implicitly on add/remove/cmd. In practice only necessary when creating an empty entity.
-    pub fn commitCmd(self: @This(), cb: *CmdBuf) void {
-        self.commitCmdOrErr(cb) catch |err|
+    pub fn commit(self: @This(), cb: *CmdBuf) void {
+        self.commitOrErr(cb) catch |err|
             @panic(@errorName(err));
     }
-    /// Similar to `commitCmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
+    /// Similar to `commit`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking.
-    pub fn commitCmdOrErr(self: @This(), cb: *CmdBuf) error{ZcsCmdBufOverflow}!void {
+    pub fn commitOrErr(self: @This(), cb: *CmdBuf) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cb.*;
         errdefer cb.* = restore;
@@ -462,14 +397,14 @@ pub const Entity = packed struct {
         if (!self.exists(es)) return false;
 
         // Build a set of component types to add/remove
-        var add: CompFlag.Set = .{};
+        var add_comps: CompFlag.Set = .{};
         for (changes.add) |comp| {
-            add.insert(CompFlag.registerImmediate(comp.id));
+            add_comps.insert(CompFlag.registerImmediate(comp.id));
         }
 
         // Apply the archetype change. We already verified the entity exists.
         assert(try self.changeArchUninitImmediateOrErr(es, .{
-            .add = add,
+            .add = add_comps,
             .remove = changes.remove,
         }));
 
@@ -479,7 +414,7 @@ pub const Entity = packed struct {
             const flag = comp.id.comp_flag.?;
             if (!changes.remove.contains(flag)) {
                 // Unwrapping the component is safe because we added it above
-                const dest = self.getCompFromId(es, comp.id).?;
+                const dest = self.getId(es, comp.id).?;
                 @memcpy(dest, comp.bytes());
             }
         }
@@ -557,26 +492,26 @@ pub const Entity = packed struct {
 
     /// Similar to `view`, but will attempt to fill in any non-optional missing components with
     /// the defaults from the `comps` view if present.
-    pub fn viewOrAddCompsImmediate(
+    pub fn viewOrAddImmediate(
         self: @This(),
         es: *Entities,
         View: type,
         comps: anytype,
     ) ?View {
-        return self.viewOrAddCompsImmediateOrErr(es, View, comps) catch |err|
+        return self.viewOrAddImmediateOrErr(es, View, comps) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `viewOrAddCompsImmediate` but returns, but returns `error.ZcsCompOverflow`
+    /// Similar to `viewOrAddImmediate` but returns, but returns `error.ZcsCompOverflow`
     /// on failure instead of panicking.
-    pub fn viewOrAddCompsImmediateOrErr(
+    pub fn viewOrAddImmediateOrErr(
         self: @This(),
         es: *Entities,
         View: type,
         comps: anytype,
     ) error{ZcsCompOverflow}!?View {
         // Create the view, possibly leaving some components uninitialized
-        const result = (try self.viewOrAddCompsUninitImmediateOrErr(es, View)) orelse return null;
+        const result = (try self.viewOrAddUninitImmediateOrErr(es, View)) orelse return null;
 
         // Fill in any uninitialized components and return the view
         inline for (@typeInfo(View).@"struct".fields) |field| {
@@ -598,19 +533,19 @@ pub const Entity = packed struct {
         };
     }
 
-    /// Similar to `viewOrAddCompsImmediate`, but leaves the added components uninitialized.
-    pub fn viewOrAddCompsUninitImmediate(
+    /// Similar to `viewOrAddImmediate`, but leaves the added components uninitialized.
+    pub fn viewOrAddUninitImmediate(
         self: @This(),
         es: *Entities,
         View: type,
     ) ?VoaUninitResult(View) {
-        return self.viewOrAddCompsUninitImmediate(es, View) catch |err|
+        return self.viewOrAddUninitImmediate(es, View) catch |err|
             @panic(@errorName(err));
     }
 
-    /// Similar to `viewOrAddCompsImmediate`, but returns `error.ZcsCompOverflow` on failure instead
+    /// Similar to `viewOrAddImmediate`, but returns `error.ZcsCompOverflow` on failure instead
     /// of panicking.
-    pub fn viewOrAddCompsUninitImmediateOrErr(
+    pub fn viewOrAddUninitImmediateOrErr(
         self: @This(),
         es: *Entities,
         View: type,
@@ -647,7 +582,7 @@ pub const Entity = packed struct {
                 continue;
             }
 
-            const comp = self.getComp(es, Unwrapped);
+            const comp = self.get(es, Unwrapped);
             if (@typeInfo(field.type) == .optional) {
                 @field(result, field.name) = comp;
             } else {

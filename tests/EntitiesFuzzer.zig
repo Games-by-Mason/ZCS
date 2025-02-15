@@ -133,8 +133,8 @@ pub fn checkIterators(self: *@This()) !void {
         defer self.found_buf.clearRetainingCapacity();
         var iter = self.es.viewIterator(struct { rb: *RigidBody, e: Entity });
         while (iter.next()) |vw| {
-            try expectEqual(vw.rb, vw.e.getComp(&self.es, RigidBody).?);
-            try expectEqual(vw.e, Entity.fromComp(&self.es, vw.rb));
+            try expectEqual(vw.rb, vw.e.get(&self.es, RigidBody).?);
+            try expectEqual(vw.e, Entity.from(&self.es, vw.rb));
             try self.found_buf.putNoClobber(gpa, vw.e, {});
         }
 
@@ -151,8 +151,8 @@ pub fn checkIterators(self: *@This()) !void {
         defer self.found_buf.clearRetainingCapacity();
         var iter = self.es.viewIterator(struct { model: *Model, e: Entity });
         while (iter.next()) |vw| {
-            try expectEqual(vw.model, vw.e.getComp(&self.es, Model).?);
-            try expectEqual(vw.e, Entity.fromComp(&self.es, vw.model));
+            try expectEqual(vw.model, vw.e.get(&self.es, Model).?);
+            try expectEqual(vw.e, Entity.from(&self.es, vw.model));
             try self.found_buf.putNoClobber(gpa, vw.e, {});
         }
 
@@ -169,8 +169,8 @@ pub fn checkIterators(self: *@This()) !void {
         defer self.found_buf.clearRetainingCapacity();
         var iter = self.es.viewIterator(struct { tag: *const Tag, e: Entity });
         while (iter.next()) |vw| {
-            try expectEqual(vw.tag, vw.e.getComp(&self.es, Tag).?);
-            try expectEqual(vw.e, Entity.fromComp(&self.es, vw.tag));
+            try expectEqual(vw.tag, vw.e.get(&self.es, Tag).?);
+            try expectEqual(vw.e, Entity.from(&self.es, vw.tag));
             try self.found_buf.putNoClobber(gpa, vw.e, {});
         }
 
@@ -192,12 +192,12 @@ pub fn checkIterators(self: *@This()) !void {
             e: Entity,
         });
         while (iter.next()) |vw| {
-            try expectEqual(vw.rb, vw.e.getComp(&self.es, RigidBody).?);
-            try expectEqual(vw.model, vw.e.getComp(&self.es, Model).?);
-            try expectEqual(vw.tag, vw.e.getComp(&self.es, Tag).?);
-            try expectEqual(vw.e, Entity.fromComp(&self.es, vw.rb));
-            try expectEqual(vw.e, Entity.fromComp(&self.es, vw.model));
-            try expectEqual(vw.e, Entity.fromComp(&self.es, vw.tag));
+            try expectEqual(vw.rb, vw.e.get(&self.es, RigidBody).?);
+            try expectEqual(vw.model, vw.e.get(&self.es, Model).?);
+            try expectEqual(vw.tag, vw.e.get(&self.es, Tag).?);
+            try expectEqual(vw.e, Entity.from(&self.es, vw.rb));
+            try expectEqual(vw.e, Entity.from(&self.es, vw.model));
+            try expectEqual(vw.e, Entity.from(&self.es, vw.tag));
             try self.found_buf.putNoClobber(gpa, vw.e, {});
         }
 
@@ -219,12 +219,12 @@ pub fn checkIterators(self: *@This()) !void {
             e: Entity,
         });
         while (iter.next()) |vw| {
-            try expectEqual(vw.rb, vw.e.getComp(&self.es, RigidBody));
-            try expectEqual(vw.model, vw.e.getComp(&self.es, Model));
-            try expectEqual(vw.tag, vw.e.getComp(&self.es, Tag));
-            if (vw.rb) |rb| try expectEqual(vw.e, Entity.fromComp(&self.es, rb));
-            if (vw.model) |model| try expectEqual(vw.e, Entity.fromComp(&self.es, model));
-            if (vw.tag) |tag| try expectEqual(vw.e, Entity.fromComp(&self.es, tag));
+            try expectEqual(vw.rb, vw.e.get(&self.es, RigidBody));
+            try expectEqual(vw.model, vw.e.get(&self.es, Model));
+            try expectEqual(vw.tag, vw.e.get(&self.es, Tag));
+            if (vw.rb) |rb| try expectEqual(vw.e, Entity.from(&self.es, rb));
+            if (vw.model) |model| try expectEqual(vw.e, Entity.from(&self.es, model));
+            if (vw.tag) |tag| try expectEqual(vw.e, Entity.from(&self.es, tag));
             try self.found_buf.putNoClobber(gpa, vw.e, {});
         }
 
@@ -243,12 +243,12 @@ pub fn checkIterators(self: *@This()) !void {
             e: Entity,
         });
         while (iter.next()) |vw| {
-            try expectEqual(vw.rb, vw.e.getComp(&self.es, RigidBody));
-            try expectEqual(vw.model, vw.e.getComp(&self.es, Model));
-            try expectEqual(vw.tag, vw.e.getComp(&self.es, Tag));
-            try expectEqual(vw.e, Entity.fromComp(&self.es, vw.rb));
-            if (vw.model) |model| try expectEqual(vw.e, Entity.fromComp(&self.es, model));
-            try expectEqual(vw.e, Entity.fromComp(&self.es, vw.tag));
+            try expectEqual(vw.rb, vw.e.get(&self.es, RigidBody));
+            try expectEqual(vw.model, vw.e.get(&self.es, Model));
+            try expectEqual(vw.tag, vw.e.get(&self.es, Tag));
+            try expectEqual(vw.e, Entity.from(&self.es, vw.rb));
+            if (vw.model) |model| try expectEqual(vw.e, Entity.from(&self.es, model));
+            try expectEqual(vw.e, Entity.from(&self.es, vw.tag));
             try self.found_buf.putNoClobber(gpa, vw.e, {});
         }
 
@@ -306,9 +306,9 @@ pub fn modifyImmediate(self: *@This()) !void {
     const tag = self.smith.next(Tag);
 
     // If the entity has these components, update them
-    if (entity.getComp(&self.es, RigidBody)) |old| old.* = rb;
-    if (entity.getComp(&self.es, Model)) |old| old.* = model;
-    if (entity.getComp(&self.es, Tag)) |old| old.* = tag;
+    if (entity.get(&self.es, RigidBody)) |old| old.* = rb;
+    if (entity.get(&self.es, Model)) |old| old.* = model;
+    if (entity.get(&self.es, Tag)) |old| old.* = tag;
 
     // Update the oracle
     if (self.committed.getPtr(entity)) |e| {

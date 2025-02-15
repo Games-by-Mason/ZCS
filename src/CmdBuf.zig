@@ -276,7 +276,7 @@ pub const Batch = struct {
         var ops = self.iterator();
         while (ops.next()) |op| {
             switch (op) {
-                .add_comp => |comp| if (self.entity.getCompFromId(es, comp.id)) |dest| {
+                .add_comp => |comp| if (self.entity.getId(es, comp.id)) |dest| {
                     @memcpy(dest, comp.bytes());
                 },
                 .remove_comp,
