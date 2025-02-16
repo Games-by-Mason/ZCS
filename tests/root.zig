@@ -19,5 +19,5 @@ test {
     _ = @import("fuzz_entities.zig");
     _ = @import("fuzz_cmdbuf_encoding.zig");
     _ = @import("events.zig");
-    _ = @import("ext/index.zig");
+    _ = @import("ext.zig");
 }

@@ -15,7 +15,7 @@ pub const CmdBuf = @import("CmdBuf.zig");
 pub const TypeInfo = @import("type_id.zig").TypeInfo;
 pub const TypeId = @import("type_id.zig").TypeId;
 pub const view = @import("view.zig");
-pub const ext = @import("ext/index.zig");
+pub const ext = @import("ext.zig");
 
 /// Returns the component ID for the given type.
 pub const typeId = TypeInfo.init;
