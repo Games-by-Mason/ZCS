@@ -214,11 +214,11 @@ pub const Batch = struct {
         var iter = self.iterator();
         while (iter.next()) |cmd| {
             switch (cmd) {
-                .add_comp => |comp| {
+                .add => |comp| {
                     result.add.insert(CompFlag.registerImmediate(comp.id));
                     result.remove.remove(CompFlag.registerImmediate(comp.id));
                 },
-                .remove_comp => |id| {
+                .remove => |id| {
                     result.remove.insert(CompFlag.registerImmediate(id));
                     result.add.remove(CompFlag.registerImmediate(id));
                 },
@@ -276,10 +276,10 @@ pub const Batch = struct {
         var ops = self.iterator();
         while (ops.next()) |op| {
             switch (op) {
-                .add_comp => |comp| if (self.entity.getId(es, comp.id)) |dest| {
+                .add => |comp| if (self.entity.getId(es, comp.id)) |dest| {
                     @memcpy(dest, comp.bytes());
                 },
-                .remove_comp,
+                .remove,
                 .destroy,
                 .ext,
                 => {},
@@ -291,8 +291,8 @@ pub const Batch = struct {
 
     /// A decoded command.
     pub const Item = union(enum) {
-        add_comp: Any,
-        remove_comp: TypeId,
+        add: Any,
+        remove: TypeId,
         destroy: void,
         ext: Any,
     };
@@ -305,11 +305,11 @@ pub const Batch = struct {
         pub fn next(self: *@This()) ?Item {
             while (self.decoder.peekTag()) |tag| {
                 const cmd: Item = switch (tag) {
-                    .add_comp_val => .{ .add_comp = self.decoder.next().?.add_comp_val },
-                    .add_comp_ptr => .{ .add_comp = self.decoder.next().?.add_comp_ptr },
+                    .add_val => .{ .add = self.decoder.next().?.add_val },
+                    .add_ptr => .{ .add = self.decoder.next().?.add_ptr },
                     .ext_val => .{ .ext = self.decoder.next().?.ext_val },
                     .ext_ptr => .{ .ext = self.decoder.next().?.ext_ptr },
-                    .remove_comp => .{ .remove_comp = self.decoder.next().?.remove_comp },
+                    .remove => .{ .remove = self.decoder.next().?.remove },
                     .destroy => b: {
                         _ = self.decoder.next().?.destroy;
                         break :b .destroy;
@@ -345,11 +345,11 @@ pub const Iterator = struct {
                 },
                 // Skip decoder ops here, they're handled in command. We always start with a bind so
                 // this will never miss ops.
-                .add_comp_ptr,
-                .add_comp_val,
+                .add_ptr,
+                .add_val,
                 .ext_ptr,
                 .ext_val,
-                .remove_comp,
+                .remove,
                 .destroy,
                 => {},
             }

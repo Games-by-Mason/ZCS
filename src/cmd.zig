@@ -18,10 +18,10 @@ pub const Cmd = union(enum) {
     destroy: void,
     /// Queues a component to be added by value. The type ID is passed as an argument, component
     /// data is passed via any bytes.
-    add_comp_val: Any,
+    add_val: Any,
     /// Queues a component to be added by pointer. The type ID and a pointer to the component data
     /// are passed as arguments.
-    add_comp_ptr: Any,
+    add_ptr: Any,
     /// Queues an extension command to be added by value. The type ID is passed as an argument, the
     /// payload is passed via any bytes.
     ext_val: Any,
@@ -29,7 +29,7 @@ pub const Cmd = union(enum) {
     /// component data are passed as arguments.
     ext_ptr: Any,
     /// Queues a component to be removed.
-    remove_comp: TypeId,
+    remove: TypeId,
 
     /// If a new worst case command is introduced, also update the tests!
     pub const rename_when_changing_encoding = {};
@@ -53,7 +53,7 @@ pub const Cmd = union(enum) {
                         const entity: Entity = @bitCast(self.nextArg().?);
                         return .{ .bind_entity = entity };
                     },
-                    inline .add_comp_val, .ext_val => |add| {
+                    inline .add_val, .ext_val => |add| {
                         const id: TypeId = @ptrFromInt(self.nextArg().?);
                         const ptr = self.nextAny(id);
                         const any: Any = .{
@@ -61,12 +61,12 @@ pub const Cmd = union(enum) {
                             .ptr = ptr,
                         };
                         return switch (add) {
-                            .add_comp_val => .{ .add_comp_val = any },
+                            .add_val => .{ .add_val = any },
                             .ext_val => .{ .ext_val = any },
                             else => comptime unreachable,
                         };
                     },
-                    inline .add_comp_ptr, .ext_ptr => |add| {
+                    inline .add_ptr, .ext_ptr => |add| {
                         const id: TypeId = @ptrFromInt(self.nextArg().?);
                         const ptr: *const anyopaque = @ptrFromInt(self.nextArg().?);
                         const any: Any = .{
@@ -74,14 +74,14 @@ pub const Cmd = union(enum) {
                             .ptr = ptr,
                         };
                         switch (add) {
-                            .add_comp_ptr => return .{ .add_comp_ptr = any },
+                            .add_ptr => return .{ .add_ptr = any },
                             .ext_ptr => return .{ .ext_ptr = any },
                             else => comptime unreachable,
                         }
                     },
-                    .remove_comp => {
+                    .remove => {
                         const id: TypeId = @ptrFromInt(self.nextArg().?);
-                        return .{ .remove_comp = id };
+                        return .{ .remove = id };
                     },
                     .destroy => return .destroy,
                 }
@@ -152,7 +152,7 @@ pub const Cmd = union(enum) {
                 cb.tags.appendAssumeCapacity(.bind_entity);
                 cb.args.appendAssumeCapacity(@bitCast(entity));
             },
-            inline .add_comp_val, .ext_val => |comp| {
+            inline .add_val, .ext_val => |comp| {
                 const aligned = std.mem.alignForward(
                     usize,
                     cb.any_bytes.items.len,
@@ -168,17 +168,17 @@ pub const Cmd = union(enum) {
                 cb.any_bytes.items.len = aligned;
                 cb.any_bytes.appendSliceAssumeCapacity(comp.constSlice());
             },
-            .add_comp_ptr, .ext_ptr => |comp| {
+            .add_ptr, .ext_ptr => |comp| {
                 if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (cb.args.items.len + 2 > cb.args.capacity) return error.ZcsCmdBufOverflow;
                 cb.tags.appendAssumeCapacity(cmd);
                 cb.args.appendAssumeCapacity(@intFromPtr(comp.id));
                 cb.args.appendAssumeCapacity(@intFromPtr(comp.ptr));
             },
-            .remove_comp => |id| {
+            .remove => |id| {
                 if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (cb.args.items.len >= cb.args.capacity) return error.ZcsCmdBufOverflow;
-                cb.tags.appendAssumeCapacity(.remove_comp);
+                cb.tags.appendAssumeCapacity(.remove);
                 cb.args.appendAssumeCapacity(@intFromPtr(id));
             },
         }

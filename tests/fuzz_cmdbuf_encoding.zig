@@ -45,8 +45,8 @@ test "rand cmdbuf encoding" {
 
 const OracleBatch = struct {
     const Cmd = union(enum) {
-        add_comp: Any,
-        remove_comp: TypeId,
+        add: Any,
+        remove: TypeId,
         ext: Any,
         destroy,
     };
@@ -56,7 +56,7 @@ const OracleBatch = struct {
     fn deinit(self: *@This()) void {
         for (self.cb.items) |cmd| {
             switch (cmd) {
-                .add_comp, .ext => |any| if (any.as(RigidBody)) |v| {
+                .add, .ext => |any| if (any.as(RigidBody)) |v| {
                     gpa.destroy(v);
                 } else if (any.as(Model)) |v| {
                     gpa.destroy(v);
@@ -71,7 +71,7 @@ const OracleBatch = struct {
                 } else {
                     @panic("unexpected type");
                 },
-                .remove_comp, .destroy => {},
+                .remove, .destroy => {},
             }
         }
         self.cb.deinit(gpa);
@@ -160,21 +160,21 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                             val.* = smith.next(RigidBody);
                             const comp: Any = .init(RigidBody, val);
                             try e.addAnyVal(&cb, comp);
-                            try oracle_batch.cb.append(gpa, .{ .add_comp = comp });
+                            try oracle_batch.cb.append(gpa, .{ .add = comp });
                         },
                         .model => {
                             const val = try gpa.create(Model);
                             val.* = smith.next(Model);
                             const comp: Any = .init(Model, val);
                             try e.addAnyVal(&cb, comp);
-                            try oracle_batch.cb.append(gpa, .{ .add_comp = comp });
+                            try oracle_batch.cb.append(gpa, .{ .add = comp });
                         },
                         .tag => {
                             const val = try gpa.create(Tag);
                             val.* = smith.next(Tag);
                             const comp: Any = .init(Tag, val);
                             try e.addAnyVal(&cb, comp);
-                            try oracle_batch.cb.append(gpa, .{ .add_comp = comp });
+                            try oracle_batch.cb.append(gpa, .{ .add = comp });
                         },
                     },
                     .add_comp_ptr => switch (smith.next(enum { rb, model, tag })) {
@@ -183,21 +183,21 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                             val.* = RigidBody.interned[smith.nextLessThan(u8, RigidBody.interned.len)];
                             const comp: Any = .init(RigidBody, val);
                             try e.addAnyPtr(&cb, comp);
-                            try oracle_batch.cb.append(gpa, .{ .add_comp = comp });
+                            try oracle_batch.cb.append(gpa, .{ .add = comp });
                         },
                         .model => {
                             const val = try gpa.create(Model);
                             val.* = Model.interned[smith.nextLessThan(u8, Model.interned.len)];
                             const comp: Any = .init(Model, val);
                             try e.addAnyPtr(&cb, comp);
-                            try oracle_batch.cb.append(gpa, .{ .add_comp = comp });
+                            try oracle_batch.cb.append(gpa, .{ .add = comp });
                         },
                         .tag => {
                             const val = try gpa.create(Tag);
                             val.* = Tag.interned[smith.nextLessThan(u8, Tag.interned.len)];
                             const comp: Any = .init(Tag, val);
                             try e.addAnyPtr(&cb, comp);
-                            try oracle_batch.cb.append(gpa, .{ .add_comp = comp });
+                            try oracle_batch.cb.append(gpa, .{ .add = comp });
                         },
                     },
                     .ext_val => switch (smith.next(enum { foo, bar, baz })) {
@@ -253,19 +253,19 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                         .rb => {
                             e.remove(&cb, RigidBody);
                             try oracle_batch.cb.append(gpa, .{
-                                .remove_comp = zcs.typeId(RigidBody),
+                                .remove = zcs.typeId(RigidBody),
                             });
                         },
                         .model => {
                             e.remove(&cb, Model);
                             try oracle_batch.cb.append(gpa, .{
-                                .remove_comp = zcs.typeId(Model),
+                                .remove = zcs.typeId(Model),
                             });
                         },
                         .tag => {
                             e.remove(&cb, Tag);
                             try oracle_batch.cb.append(gpa, .{
-                                .remove_comp = zcs.typeId(Tag),
+                                .remove = zcs.typeId(Tag),
                             });
                         },
                     },
@@ -282,8 +282,8 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
             var batch_iter = batch.iterator();
             for (oracle_batch.cb.items) |oracle_op| {
                 switch (oracle_op) {
-                    .add_comp => |oracle_comp| {
-                        const add = batch_iter.next().?.add_comp;
+                    .add => |oracle_comp| {
+                        const add = batch_iter.next().?.add;
                         try expectEqual(oracle_comp.id, add.id);
 
                         if (oracle_comp.as(RigidBody)) |v| {
@@ -296,8 +296,8 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                             @panic("unexpected comp");
                         }
                     },
-                    .remove_comp => |oracle_id| {
-                        try expectEqual(oracle_id, batch_iter.next().?.remove_comp);
+                    .remove => |oracle_id| {
+                        try expectEqual(oracle_id, batch_iter.next().?.remove);
                     },
                     .ext => |oracle_ext| {
                         const ext = batch_iter.next().?.ext;

@@ -255,7 +255,7 @@ pub const Entity = packed struct {
 
         // Issue the commands
         try Cmd.encode(cb, .{ .bind_entity = self });
-        try Cmd.encode(cb, .{ .add_comp_val = comp });
+        try Cmd.encode(cb, .{ .add_val = comp });
     }
 
     /// Similar to `addOrErr`, but doesn't require compile time types and forces the component to be
@@ -267,7 +267,7 @@ pub const Entity = packed struct {
 
         // Issue the commands
         try Cmd.encode(cb, .{ .bind_entity = self });
-        try Cmd.encode(cb, .{ .add_comp_ptr = comp });
+        try Cmd.encode(cb, .{ .add_ptr = comp });
     }
 
     /// Queues an extension command.
@@ -348,7 +348,7 @@ pub const Entity = packed struct {
 
         // Issue the commands
         try Cmd.encode(cb, .{ .bind_entity = self });
-        try Cmd.encode(cb, .{ .remove_comp = id });
+        try Cmd.encode(cb, .{ .remove = id });
     }
 
     /// Queues the entity to be committed. Has no effect if it has already been committed, called

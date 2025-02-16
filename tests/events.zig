@@ -28,8 +28,8 @@ const Event = struct {
         return e;
     }
 
-    pub fn recycleImmediate(e: *Entities) void {
-        e.recycleArchImmediate(.initOne(.registerImmediate(typeId(Event))));
+    pub fn recycleImmediate(es: *Entities) void {
+        es.recycleArchImmediate(.initOne(.registerImmediate(typeId(Event))));
     }
 };
 

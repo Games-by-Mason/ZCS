@@ -19,7 +19,7 @@ const SetParent = zcs.ext.Node.SetParent;
 const gpa = std.testing.allocator;
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
-const expectEqualEntity = @import("root").expectEqualEntity;
+const expectEqualEntity = @import("../root.zig").expectEqualEntity;
 
 const log = false;
 
@@ -238,7 +238,7 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
             }
         }
 
-        Node.Exec.allImmediate(&fz.es, &.{cb});
+        Node.Exec.immediate(&fz.es, cb);
         try checkOracle(&fz, &o);
         cb.clear(&fz.es);
     }
@@ -272,7 +272,7 @@ fn fuzzNodeCyclesCmdBuf(_: void, input: []const u8) !void {
             try setParentCmd(&fz, &o, &cb);
         }
 
-        Node.Exec.allImmediate(&fz.es, &.{cb});
+        Node.Exec.immediate(&fz.es, cb);
         try checkOracle(&fz, &o);
         cb.clear(&fz.es);
     }

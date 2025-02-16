@@ -227,10 +227,10 @@ test "command buffer interning" {
         try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.remove);
         try expect(!arch_change.destroy);
         var batches = cmd.iterator();
-        const comp1 = batches.next().?.add_comp;
+        const comp1 = batches.next().?.add;
         try expect(isInAnyBytes(cb, comp1.as(Model).?));
         try expectEqual(model_value, comp1.as(Model).?.*);
-        const comp2 = batches.next().?.add_comp;
+        const comp2 = batches.next().?.add;
         try expect(!isInAnyBytes(cb, comp2.as(RigidBody).?));
         try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
         const ev1 = batches.next().?.ext;
@@ -252,10 +252,10 @@ test "command buffer interning" {
         try expect(!arch_change.destroy);
         try expectEqual(e1, cmd.entity);
         var batches = cmd.iterator();
-        const comp1 = batches.next().?.add_comp;
+        const comp1 = batches.next().?.add;
         try expect(isInAnyBytes(cb, comp1.as(Model).?)); // By value because it's too small!
         try expectEqual(model_interned, comp1.as(Model).?.*);
-        const comp2 = batches.next().?.add_comp;
+        const comp2 = batches.next().?.add;
         try expect(isInAnyBytes(cb, comp2.as(RigidBody).?));
         try expectEqual(rb_value, comp2.as(RigidBody).?.*);
         const ev1 = batches.next().?.ext;
@@ -277,10 +277,10 @@ test "command buffer interning" {
         try expect(!arch_change.destroy);
         try expectEqual(e0, cmd.entity);
         var batches = cmd.iterator();
-        const comp1 = batches.next().?.add_comp;
+        const comp1 = batches.next().?.add;
         try expect(isInAnyBytes(cb, comp1.as(Model).?));
         try expectEqual(model_value, comp1.as(Model).?.*);
-        const comp2 = batches.next().?.add_comp;
+        const comp2 = batches.next().?.add;
         try expect(isInAnyBytes(cb, comp2.as(RigidBody).?));
         try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
         const ev1 = batches.next().?.ext;
@@ -302,10 +302,10 @@ test "command buffer interning" {
         try expect(!arch_change.destroy);
         try expectEqual(e1, cmd.entity);
         var batches = cmd.iterator();
-        const comp1 = batches.next().?.add_comp;
+        const comp1 = batches.next().?.add;
         try expect(isInAnyBytes(cb, comp1.as(Model).?));
         try expectEqual(model_interned, comp1.as(Model).?.*);
-        const comp2 = batches.next().?.add_comp;
+        const comp2 = batches.next().?.add;
         try expect(isInAnyBytes(cb, comp2.as(RigidBody).?));
         try expectEqual(rb_value, comp2.as(RigidBody).?.*);
         const ev1 = batches.next().?.ext;
@@ -341,10 +341,10 @@ test "command buffer interning" {
         try expect(!arch_change.destroy);
         try expectEqual(e0, cmd.entity);
         var batches = cmd.iterator();
-        const comp1 = batches.next().?.add_comp;
+        const comp1 = batches.next().?.add;
         try expect(!isInAnyBytes(cb, comp1.as(RigidBody).?));
         try expectEqual(rb_interned, comp1.as(RigidBody).?.*);
-        const comp2 = batches.next().?.add_comp;
+        const comp2 = batches.next().?.add;
         try expect(!isInAnyBytes(cb, comp2.as(Model).?));
         try expectEqual(model_interned, comp2.as(Model).?.*);
         const ev1 = batches.next().?.ext;
@@ -365,13 +365,13 @@ test "command buffer interning" {
         try expect(!arch_change.destroy);
         try expectEqual(e1, cmd.entity);
         var batches = cmd.iterator();
-        const comp1 = batches.next().?.add_comp;
+        const comp1 = batches.next().?.add;
         try expect(isInAnyBytes(cb, comp1.as(Tag).?));
         try expectEqual(Tag{}, comp1.as(Tag).?.*);
-        const comp2 = batches.next().?.add_comp;
+        const comp2 = batches.next().?.add;
         try expect(isInAnyBytes(cb, comp2.as(Tag).?));
         try expectEqual(Tag{}, comp2.as(Tag).?.*);
-        const comp3 = batches.next().?.add_comp;
+        const comp3 = batches.next().?.add;
         try expect(!isInAnyBytes(cb, comp3.as(Tag).?));
         try expectEqual(Tag{}, comp3.as(Tag).?.*);
         const ev1 = batches.next().?.ext;
@@ -483,7 +483,7 @@ test "command buffer overflow" {
         {
             const cmd = iter.next().?;
             var batches = cmd.iterator();
-            const create_rb = batches.next().?.add_comp;
+            const create_rb = batches.next().?.add;
             try expectEqual(typeId(RigidBody), create_rb.id);
             try expectEqual(rb, create_rb.as(RigidBody).?.*);
             try expectEqual(null, batches.next());
