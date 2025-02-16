@@ -31,7 +31,7 @@ const cmds_capacity = 4096;
 const change_cap = 16;
 
 test "fuzz cmdbuf encoding" {
-    try std.testing.fuzz(fuzzCmdBufEncoding, .{ .corpus = &.{} });
+    try std.testing.fuzz({}, fuzzCmdBufEncoding, .{ .corpus = &.{} });
 }
 
 test "rand cmdbuf encoding" {
@@ -40,7 +40,7 @@ test "rand cmdbuf encoding" {
     const input: []u8 = try gpa.alloc(u8, 8192);
     defer gpa.free(input);
     rand.bytes(input);
-    try fuzzCmdBufEncoding(input);
+    try fuzzCmdBufEncoding({}, input);
 }
 
 const OracleBatch = struct {
@@ -97,7 +97,7 @@ fn randomizeEntity(smith: *Smith, entity: *Entity) void {
     entity.* = randomEntity(smith);
 }
 
-fn fuzzCmdBufEncoding(input: []const u8) !void {
+fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
     var smith: Smith = .init(input);
 
     var es: Entities = try .init(gpa, .{

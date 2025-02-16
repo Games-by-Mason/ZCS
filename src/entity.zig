@@ -95,7 +95,7 @@ pub const Entity = packed struct {
     /// Similar to `reserve`, but returns `error.ZcsReservedEntityUnderflow` if there are no
     /// more reserved entities instead of panicking.
     pub fn reserveOrErr(cb: *CmdBuf) error{ZcsReservedEntityUnderflow}!Entity {
-        return cb.reserved.popOrNull() orelse error.ZcsReservedEntityUnderflow;
+        return cb.reserved.pop() orelse error.ZcsReservedEntityUnderflow;
     }
 
     /// Similar to `reserve`, but reserves a new entity instead of popping one from a command

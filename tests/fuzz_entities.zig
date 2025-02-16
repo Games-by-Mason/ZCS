@@ -24,11 +24,11 @@ const cmds_capacity = 1000;
 const change_cap = 16;
 
 test "fuzz cmdbuf" {
-    try std.testing.fuzz(fuzzCmdBuf, .{ .corpus = &.{} });
+    try std.testing.fuzz({}, fuzzCmdBuf, .{ .corpus = &.{} });
 }
 
 test "fuzz cmdbuf saturated" {
-    try std.testing.fuzz(fuzzCmdBufSaturated, .{ .corpus = &.{} });
+    try std.testing.fuzz({}, fuzzCmdBufSaturated, .{ .corpus = &.{} });
 }
 
 test "rand cmdbuf" {
@@ -37,7 +37,7 @@ test "rand cmdbuf" {
     const input: []u8 = try gpa.alloc(u8, 8192);
     defer gpa.free(input);
     rand.bytes(input);
-    try fuzzCmdBuf(input);
+    try fuzzCmdBuf({}, input);
 }
 
 test "rand cmdbuf saturated" {
@@ -46,14 +46,14 @@ test "rand cmdbuf saturated" {
     const input: []u8 = try gpa.alloc(u8, 8192);
     defer gpa.free(input);
     rand.bytes(input);
-    try fuzzCmdBufSaturated(input);
+    try fuzzCmdBufSaturated({}, input);
 }
 
-fn fuzzCmdBuf(input: []const u8) !void {
+fn fuzzCmdBuf(_: void, input: []const u8) !void {
     try run(input, false);
 }
 
-fn fuzzCmdBufSaturated(input: []const u8) !void {
+fn fuzzCmdBufSaturated(_: void, input: []const u8) !void {
     try run(input, true);
 }
 

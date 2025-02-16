@@ -83,11 +83,11 @@ test "node immediate" {
 }
 
 test "fuzz nodes immediate" {
-    try std.testing.fuzz(fuzzNodes, .{ .corpus = &.{} });
+    try std.testing.fuzz({}, fuzzNodes, .{ .corpus = &.{} });
 }
 
 test "fuzz node cycles" {
-    try std.testing.fuzz(fuzzNodeCycles, .{ .corpus = &.{} });
+    try std.testing.fuzz({}, fuzzNodeCycles, .{ .corpus = &.{} });
 }
 
 test "rand nodes immediate" {
@@ -96,7 +96,7 @@ test "rand nodes immediate" {
     const input: []u8 = try gpa.alloc(u8, 8192);
     defer gpa.free(input);
     rand.bytes(input);
-    try fuzzNodes(input);
+    try fuzzNodes({}, input);
 }
 
 test "rand node cycles" {
@@ -105,15 +105,15 @@ test "rand node cycles" {
     const input: []u8 = try gpa.alloc(u8, 8192);
     defer gpa.free(input);
     rand.bytes(input);
-    try fuzzNodeCycles(input);
+    try fuzzNodeCycles({}, input);
 }
 
 test "fuzz nodes cmdbuf" {
-    try std.testing.fuzz(fuzzNodesCmdBuf, .{ .corpus = &.{} });
+    try std.testing.fuzz({}, fuzzNodesCmdBuf, .{ .corpus = &.{} });
 }
 
 test "fuzz node cycles cmdbuf" {
-    try std.testing.fuzz(fuzzNodeCyclesCmdBuf, .{ .corpus = &.{} });
+    try std.testing.fuzz({}, fuzzNodeCyclesCmdBuf, .{ .corpus = &.{} });
 }
 
 test "rand nodes cmdbuf" {
@@ -122,7 +122,7 @@ test "rand nodes cmdbuf" {
     const input: []u8 = try gpa.alloc(u8, 8192);
     defer gpa.free(input);
     rand.bytes(input);
-    try fuzzNodesCmdBuf(input);
+    try fuzzNodesCmdBuf({}, input);
 }
 
 test "rand node cycles cmdbuf" {
@@ -131,7 +131,7 @@ test "rand node cycles cmdbuf" {
     const input: []u8 = try gpa.alloc(u8, 8192);
     defer gpa.free(input);
     rand.bytes(input);
-    try fuzzNodeCyclesCmdBuf(input);
+    try fuzzNodeCyclesCmdBuf({}, input);
 }
 
 const OracleNode = struct {
@@ -167,7 +167,7 @@ const Oracle = struct {
 };
 
 /// Fuzz random node operations.
-fn fuzzNodes(input: []const u8) !void {
+fn fuzzNodes(_: void, input: []const u8) !void {
     defer CompFlag.unregisterAll();
 
     var fz: Fuzzer = try .init(input);
@@ -194,7 +194,7 @@ fn fuzzNodes(input: []const u8) !void {
 /// Fuzz random node operations that are likely to create cycles that need breaking. This doesn't
 /// occur very often when there are a large number of entities and entities are frequently removed,
 /// so we bias for it here.
-fn fuzzNodeCycles(input: []const u8) !void {
+fn fuzzNodeCycles(_: void, input: []const u8) !void {
     defer CompFlag.unregisterAll();
     var fz: Fuzzer = try .init(input);
     defer fz.deinit();
@@ -213,7 +213,7 @@ fn fuzzNodeCycles(input: []const u8) !void {
 }
 
 /// Similar to `fuzzNodes` but uses command buffers.
-fn fuzzNodesCmdBuf(input: []const u8) !void {
+fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
     defer CompFlag.unregisterAll();
 
     var fz: Fuzzer = try .init(input);
@@ -253,7 +253,7 @@ fn fuzzNodesCmdBuf(input: []const u8) !void {
 }
 
 /// Similar to `fuzzNodeCycles` but uses command buffers.
-fn fuzzNodeCyclesCmdBuf(input: []const u8) !void {
+fn fuzzNodeCyclesCmdBuf(_: void, input: []const u8) !void {
     defer CompFlag.unregisterAll();
     var fz: Fuzzer = try .init(input);
     defer fz.deinit();
