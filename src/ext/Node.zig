@@ -14,7 +14,6 @@ const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const CmdBuf = zcs.CmdBuf;
 const CompFlag = zcs.CompFlag;
-const DirtyEvent = zcs.ext.DirtyEvent;
 
 const Node = @This();
 
@@ -254,138 +253,127 @@ pub const SetParent = struct { Entity.Optional };
 /// By convention, `Exec` only calls into the stable public interface of the types it's working
 /// with. As such, documentation is sparse. You are welcome to call these methods directly, or
 /// use them as reference for implementing your own command buffer iterator.
-pub fn Exec(
-    /// If non null, `DirtyEvent` is emitted for the given component on parent change.
-    DirtyComp: ?type,
-) type {
-    return struct {
-        init_node: bool = false,
+pub const Exec = struct {
+    init_node: bool = false,
 
-        /// Provided as reference. Executes a list of command buffers, maintaining the hierarchy and
-        /// reacting to related events along the way. In practice, you likely want to call the finer
-        /// grained functions provided directly, so that other libraries you use can also hook into
-        /// the command buffer iterator.
-        pub fn allImmediate(es: *Entities, cbs: []const CmdBuf) void {
-            allImmediateOrErr(es, cbs) catch |err|
-                @panic(@errorName(err));
-        }
+    /// Provided as reference. Executes a list of command buffers, maintaining the hierarchy and
+    /// reacting to related events along the way. In practice, you likely want to call the finer
+    /// grained functions provided directly, so that other libraries you use can also hook into
+    /// the command buffer iterator.
+    pub fn allImmediate(es: *Entities, cbs: []const CmdBuf) void {
+        allImmediateOrErr(es, cbs) catch |err|
+            @panic(@errorName(err));
+    }
 
-        /// Similar to `allImmediate`, but returns `error.ZcsCompOverflow` and
-        /// `error.ZcsEntityOverflow` on error instead of panicking. On error the commands are left
-        /// partially evaluated.
-        pub fn allImmediateOrErr(
-            es: *Entities,
-            cbs: []const CmdBuf,
-        ) error{ ZcsCompOverflow, ZcsEntityOverflow }!void {
-            for (cbs) |cb| try immediate(es, cb);
-        }
+    /// Similar to `allImmediate`, but returns `error.ZcsCompOverflow` and
+    /// `error.ZcsEntityOverflow` on error instead of panicking. On error the commands are left
+    /// partially evaluated.
+    pub fn allImmediateOrErr(
+        es: *Entities,
+        cbs: []const CmdBuf,
+    ) error{ ZcsCompOverflow, ZcsEntityOverflow }!void {
+        for (cbs) |cb| try immediate(es, cb);
+    }
 
-        pub fn immediate(
-            es: *Entities,
-            cb: CmdBuf,
-        ) error{ ZcsCompOverflow, ZcsEntityOverflow }!void {
-            var batches = cb.iterator();
-            while (batches.next()) |batch| {
-                var node_exec: @This() = .{};
+    pub fn immediate(
+        es: *Entities,
+        cb: CmdBuf,
+    ) error{ ZcsCompOverflow, ZcsEntityOverflow }!void {
+        var batches = cb.iterator();
+        while (batches.next()) |batch| {
+            var node_exec: @This() = .{};
 
-                var arch_change = batch.getArchChangeImmediate(es);
-                {
-                    var iter = batch.iterator();
-                    while (iter.next()) |cmd| {
-                        node_exec.beforeCmdImmediate(es, batch, &arch_change, cmd);
-                    }
+            var arch_change = batch.getArchChangeImmediate(es);
+            {
+                var iter = batch.iterator();
+                while (iter.next()) |cmd| {
+                    node_exec.beforeCmdImmediate(es, batch, &arch_change, cmd);
                 }
+            }
 
-                _ = try batch.execImmediateOrErr(es, arch_change);
+            _ = try batch.execImmediateOrErr(es, arch_change);
 
-                {
-                    var iter = batch.iterator();
-                    while (iter.next()) |cmd| {
-                        try node_exec.afterCmdImmediate(es, batch, arch_change, cmd);
-                    }
+            {
+                var iter = batch.iterator();
+                while (iter.next()) |cmd| {
+                    try node_exec.afterCmdImmediate(es, batch, arch_change, cmd);
                 }
             }
         }
+    }
 
-        pub fn beforeCmdImmediate(
-            self: *@This(),
-            es: *Entities,
-            batch: CmdBuf.Batch,
-            arch_change: *CmdBuf.Batch.ArchChange,
-            cmd: CmdBuf.Batch.Item,
-        ) void {
-            switch (cmd) {
-                .ext => |payload| self.beforeExtImmediate(arch_change, payload),
-                .destroy => beforeDestroyImmediate(es, batch),
-                .remove_comp => |id| beforeRemoveCompImmediate(es, batch, id),
-                .add_comp => {},
-            }
+    pub fn beforeCmdImmediate(
+        self: *@This(),
+        es: *Entities,
+        batch: CmdBuf.Batch,
+        arch_change: *CmdBuf.Batch.ArchChange,
+        cmd: CmdBuf.Batch.Item,
+    ) void {
+        switch (cmd) {
+            .ext => |payload| self.beforeExtImmediate(arch_change, payload),
+            .destroy => beforeDestroyImmediate(es, batch),
+            .remove_comp => |id| beforeRemoveCompImmediate(es, batch, id),
+            .add_comp => {},
         }
+    }
 
-        pub fn afterCmdImmediate(
-            self: *@This(),
-            es: *Entities,
-            batch: CmdBuf.Batch,
-            arch_change: CmdBuf.Batch.ArchChange,
-            cmd: CmdBuf.Batch.Item,
-        ) error{ ZcsCompOverflow, ZcsEntityOverflow }!void {
-            switch (cmd) {
-                .ext => |ev| if (ev.as(SetParent)) |set_parent| {
-                    if (self.init_node and !arch_change.from.contains(typeId(Node).comp_flag.?)) {
-                        if (batch.entity.get(es, Node)) |node| {
-                            node.* = .{};
-                        }
-                        self.init_node = false;
-                    }
+    pub fn afterCmdImmediate(
+        self: *@This(),
+        es: *Entities,
+        batch: CmdBuf.Batch,
+        arch_change: CmdBuf.Batch.ArchChange,
+        cmd: CmdBuf.Batch.Item,
+    ) error{ ZcsCompOverflow, ZcsEntityOverflow }!void {
+        switch (cmd) {
+            .ext => |ev| if (ev.as(SetParent)) |set_parent| {
+                if (self.init_node and !arch_change.from.contains(typeId(Node).comp_flag.?)) {
                     if (batch.entity.get(es, Node)) |node| {
-                        if (set_parent[0].unwrap()) |parent| {
-                            if (try parent.viewOrAddImmediateOrErr(
-                                es,
-                                struct { node: *Node },
-                                .{ .node = &Node{} },
-                            )) |parent_view| {
-                                try node.setParentImmediateOrErr(es, parent_view.node);
-                                if (DirtyComp) |T| {
-                                    DirtyEvent(T).emitImmediate(es, batch.entity);
-                                }
-                            } else {
-                                node.destroyImmediate(es);
-                            }
-                        } else {
-                            try node.setParentImmediateOrErr(es, null);
-                            if (DirtyComp) |T| {
-                                DirtyEvent(T).emitImmediate(es, batch.entity);
-                            }
-                        }
+                        node.* = .{};
                     }
-                },
-                .destroy, .add_comp, .remove_comp => {},
-            }
+                    self.init_node = false;
+                }
+                if (batch.entity.get(es, Node)) |node| {
+                    if (set_parent[0].unwrap()) |parent| {
+                        if (try parent.viewOrAddImmediateOrErr(
+                            es,
+                            struct { node: *Node },
+                            .{ .node = &Node{} },
+                        )) |parent_view| {
+                            try node.setParentImmediateOrErr(es, parent_view.node);
+                        } else {
+                            node.destroyImmediate(es);
+                        }
+                    } else {
+                        try node.setParentImmediateOrErr(es, null);
+                    }
+                }
+            },
+            .destroy, .add_comp, .remove_comp => {},
         }
+    }
 
-        pub fn beforeExtImmediate(
-            self: *@This(),
-            arch_change: *CmdBuf.Batch.ArchChange,
-            ext: zcs.Any,
-        ) void {
-            if (ext.id != typeId(SetParent)) return;
-            if (arch_change.from.contains(.registerImmediate(typeId(Node)))) return;
-            arch_change.add.insert(typeId(Node).comp_flag.?);
-            self.init_node = true;
-        }
+    pub fn beforeExtImmediate(
+        self: *@This(),
+        arch_change: *CmdBuf.Batch.ArchChange,
+        ext: zcs.Any,
+    ) void {
+        if (ext.id != typeId(SetParent)) return;
+        if (arch_change.from.contains(.registerImmediate(typeId(Node)))) return;
+        arch_change.add.insert(typeId(Node).comp_flag.?);
+        self.init_node = true;
+    }
 
-        pub fn beforeDestroyImmediate(es: *Entities, batch: CmdBuf.Batch) void {
-            if (batch.entity.get(es, Node)) |node| {
-                _ = node.destroyChildrenAndUnparentImmediate(es);
-            }
+    pub fn beforeDestroyImmediate(es: *Entities, batch: CmdBuf.Batch) void {
+        if (batch.entity.get(es, Node)) |node| {
+            _ = node.destroyChildrenAndUnparentImmediate(es);
         }
+    }
 
-        /// Preprocessing for remove component commands. Destroys children of removed nodes.
-        pub fn beforeRemoveCompImmediate(es: *Entities, batch: CmdBuf.Batch, id: TypeId) void {
-            if (id != typeId(Node)) return;
-            if (batch.entity.get(es, Node)) |node| {
-                _ = node.destroyChildrenAndUnparentImmediate(es);
-            }
+    /// Preprocessing for remove component commands. Destroys children of removed nodes.
+    pub fn beforeRemoveCompImmediate(es: *Entities, batch: CmdBuf.Batch, id: TypeId) void {
+        if (id != typeId(Node)) return;
+        if (batch.entity.get(es, Node)) |node| {
+            _ = node.destroyChildrenAndUnparentImmediate(es);
         }
-    };
-}
+    }
+};

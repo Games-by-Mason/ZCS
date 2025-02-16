@@ -25,7 +25,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
 
     const external_tests_exe = b.addTest(.{
-        .root_source_file = b.path("tests/index.zig"),
+        .root_source_file = b.path("tests/root.zig"),
         .target = target,
         .optimize = optimize,
         .filters = test_filters,
