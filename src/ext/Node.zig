@@ -294,6 +294,7 @@ pub const Exec = struct {
         }
     }
 
+    /// Call this before executing a command.
     pub inline fn beforeCmdImmediate(
         self: *@This(),
         es: *Entities,
@@ -302,14 +303,39 @@ pub const Exec = struct {
         cmd: CmdBuf.Batch.Item,
     ) void {
         switch (cmd) {
-            .ext => |payload| self.beforeExtImmediate(arch_change, payload),
-            .destroy => beforeDestroyImmediate(es, batch),
-            .remove => |id| beforeRemoveCompImmediate(es, batch, id),
+            .ext => |ext| if (ext.id == typeId(SetParent)) {
+                if (!arch_change.from.contains(.registerImmediate(typeId(Node)))) {
+                    arch_change.add.insert(typeId(Node).comp_flag.?);
+                    self.init_node = true;
+                }
+            },
+            .destroy => if (batch.entity.get(es, Node)) |node| {
+                _ = node.destroyChildrenAndUnparentImmediate(es);
+            },
+            .remove => |id| if (id == typeId(Node)) {
+                if (batch.entity.get(es, Node)) |node| {
+                    _ = node.destroyChildrenAndUnparentImmediate(es);
+                }
+            },
             .add => {},
         }
     }
 
+    /// Call this after executing a command.
     pub inline fn afterCmdImmediate(
+        self: *@This(),
+        es: *Entities,
+        batch: CmdBuf.Batch,
+        arch_change: CmdBuf.Batch.ArchChange,
+        cmd: CmdBuf.Batch.Item,
+    ) error{ ZcsCompOverflow, ZcsEntityOverflow }!void {
+        self.afterCmdImmediateOrErr(es, batch, arch_change, cmd) catch |err|
+            @panic(@errorName(err));
+    }
+
+    /// Similar to `afterCmdImmediate`, but returns `error.ZcsCompOverflow` or
+    /// `error.ZcsEntityOverflow` on failure instead of panicking.
+    pub inline fn afterCmdImmediateOrErr(
         self: *@This(),
         es: *Entities,
         batch: CmdBuf.Batch,
@@ -341,31 +367,6 @@ pub const Exec = struct {
                 }
             },
             .destroy, .add, .remove => {},
-        }
-    }
-
-    pub inline fn beforeExtImmediate(
-        self: *@This(),
-        arch_change: *CmdBuf.Batch.ArchChange,
-        ext: zcs.Any,
-    ) void {
-        if (ext.id != typeId(SetParent)) return;
-        if (arch_change.from.contains(.registerImmediate(typeId(Node)))) return;
-        arch_change.add.insert(typeId(Node).comp_flag.?);
-        self.init_node = true;
-    }
-
-    pub inline fn beforeDestroyImmediate(es: *Entities, batch: CmdBuf.Batch) void {
-        if (batch.entity.get(es, Node)) |node| {
-            _ = node.destroyChildrenAndUnparentImmediate(es);
-        }
-    }
-
-    /// Preprocessing for remove component commands. Destroys children of removed nodes.
-    pub inline fn beforeRemoveCompImmediate(es: *Entities, batch: CmdBuf.Batch, id: TypeId) void {
-        if (id != typeId(Node)) return;
-        if (batch.entity.get(es, Node)) |node| {
-            _ = node.destroyChildrenAndUnparentImmediate(es);
         }
     }
 };
