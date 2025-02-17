@@ -1,6 +1,7 @@
 const std = @import("std");
+const zcs = @import("../../root.zig");
 
-const Vec2 = @import("../math.zig").Vec2;
+const Vec2 = zcs.ext.math.Vec2;
 
 pub const Mat2x3 = extern struct {
     // zig fmt: off
