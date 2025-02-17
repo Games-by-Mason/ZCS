@@ -1,6 +1,10 @@
 const std = @import("std");
+const zcs = @import("../../root.zig");
 
 const math = std.math;
+
+const Bivec2 = zcs.ext.math.Bivec2;
+const Rotor2 = zcs.ext.math.Rotor2;
 
 pub const Vec2 = extern struct {
     x: f32,
@@ -59,17 +63,6 @@ pub const Vec2 = extern struct {
         self.* = self.minus(other);
     }
 
-    pub fn mul(self: Vec2, other: Vec2) Vec2 {
-        return .{
-            .x = self.x * other.x,
-            .y = self.y * other.y,
-        };
-    }
-
-    pub fn times(self: *Vec2, other: Vec2) void {
-        self.* = self.mul(other);
-    }
-
     pub fn floored(self: Vec2) Vec2 {
         return .{
             .x = @floor(self.x),
@@ -126,7 +119,33 @@ pub const Vec2 = extern struct {
         self.* = self.normalized();
     }
 
-    pub fn dot(self: Vec2, other: Vec2) f32 {
+    pub fn compProd(self: Vec2, other: Vec2) Vec2 {
+        return .{
+            .x = self.x * other.x,
+            .y = self.y * other.y,
+        };
+    }
+
+    pub fn times(self: *Vec2, other: Vec2) void {
+        self.* = self.mul(other);
+    }
+
+    /// Equivalent to the dot product.
+    pub fn innerProd(self: Vec2, other: Vec2) f32 {
         return self.x * other.x + self.y * other.y;
+    }
+
+    /// Generalized form of the cross product.
+    pub fn outerProd(lhs: Vec2, rhs: Vec2) Bivec2 {
+        return .{
+            .xy = lhs.x * rhs.y - lhs.y * rhs.x,
+        };
+    }
+
+    pub fn geomProd(lhs: Vec2, rhs: Vec2) Rotor2 {
+        return .{
+            .xy = lhs.outerProd(rhs).xy,
+            .a = lhs.innerProd(rhs) + 1.0,
+        };
     }
 };
