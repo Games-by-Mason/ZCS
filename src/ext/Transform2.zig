@@ -83,7 +83,7 @@ pub inline fn getLocalOrientation(self: @This()) f32 {
 }
 
 /// Returns the world space orientation calculated the last time `syncAllImmediate` was called.
-pub inline fn getAngle(self: @This()) f32 {
+pub inline fn getOrientation(self: @This()) f32 {
     return self.cached_world_from_local.getRotation();
 }
 
