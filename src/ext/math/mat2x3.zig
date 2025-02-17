@@ -2,6 +2,7 @@ const std = @import("std");
 const zcs = @import("../../root.zig");
 
 const Vec2 = zcs.ext.math.Vec2;
+const Rotor2 = zcs.ext.math.Rotor2;
 
 pub const Mat2x3 = extern struct {
     // zig fmt: off
@@ -16,13 +17,18 @@ pub const Mat2x3 = extern struct {
         // zig fmt: on
     };
 
-    pub fn rotation(angle: f32) @This() {
-        const sin = @sin(angle);
-        const cos = @cos(angle);
+    pub fn rotation(rotor: Rotor2) @This() {
+        // Rotate the axis vectors by the rotor, and then form a matrix from them.
+        const xx = rotor.a * rotor.a - rotor.xy * rotor.xy;
+        const xy = 2.0 * (rotor.a * rotor.xy);
+
+        const yx = 2.0 * (-rotor.xy * rotor.a);
+        const yy = -rotor.xy * rotor.xy + rotor.a * rotor.a;
+
         return .{
             // zig fmt: off
-            .xx = cos, .xy = -sin, .xw = 0,
-            .yx = sin, .yy =  cos, .yw = 0,
+            .xx = xx, .xy = yx, .xw = 0.0,
+            .yx = xy, .yy = yy, .yw = 0.0,
             // zig fmt: on
         };
     }
@@ -76,5 +82,12 @@ pub const Mat2x3 = extern struct {
         const cos = self.xx;
         const sin = self.yx;
         return std.math.atan2(sin, cos);
+    }
+
+    pub fn timesPoint(self: @This(), point: Vec2) Vec2 {
+        return .{
+            .x = self.xx * point.x + self.xy * point.y + self.xw,
+            .y = self.yx * point.x + self.yy * point.y + self.yw,
+        };
     }
 };

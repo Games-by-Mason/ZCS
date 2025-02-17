@@ -1,9 +1,9 @@
 const std = @import("std");
 const math = std.math;
 const zcs = @import("../../root.zig");
-const Vec2 = zcs.ext.Vec2;
-const Bivec2 = zcs.ext.Bivec2;
-const Mat2x3 = zcs.ext.Mat2x3;
+const Vec2 = zcs.ext.math.Vec2;
+const Bivec2 = zcs.ext.math.Bivec2;
+const Mat2x3 = zcs.ext.math.Mat2x3;
 
 pub const Rotor2 = extern struct {
     xy: f32,
@@ -55,6 +55,12 @@ pub const Rotor2 = extern struct {
         } else {
             return result.scaled(1.0 / res_mag);
         }
+    }
+
+    /// Creates a rotor that rotates from positive y to the given direction. Assumes `dir` is
+    /// normalized.
+    pub fn look(dir: Vec2) Rotor2 {
+        return .fromTo(.y_pos, dir);
     }
 
     /// Creates a rotor that from the given angle.
@@ -185,22 +191,5 @@ pub const Rotor2 = extern struct {
         } else {
             return result.scaled(1.0 / res_mag);
         }
-    }
-
-    pub fn toMat2x3(self: Rotor2) Mat2x3 {
-        // Rotate the axis vectors by the rotor, and then form a matrix from them.
-
-        const xx = self.a * self.a - self.xy * self.xy;
-        const xy = 2.0 * (self.a * self.xy);
-
-        const yx = 2.0 * (-self.xy * self.a);
-        const yy = -self.xy * self.xy + self.a * self.a;
-
-        return .{
-            // zig fmt: off
-            .xx = xx, .xy = yx, .xw = 0.0,
-            .yx = xy, .yy = yy, .yw = 0.0,
-            // zig fmt: on
-        };
     }
 };

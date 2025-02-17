@@ -6,11 +6,15 @@ const math = std.math;
 const Bivec2 = zcs.ext.math.Bivec2;
 const Rotor2 = zcs.ext.math.Rotor2;
 
-pub const Vec2 = extern struct {
+pub const Vec2 = packed struct {
     x: f32,
     y: f32,
 
     pub const zero: Vec2 = .{ .x = 0, .y = 0 };
+    pub const y_pos: Vec2 = .{ .x = 0, .y = 1 };
+    pub const y_neg: Vec2 = .{ .x = 0, .y = -1 };
+    pub const x_pos: Vec2 = .{ .x = 1, .y = 0 };
+    pub const x_neg: Vec2 = .{ .x = -1, .y = 0 };
 
     pub fn unit(rad: f32) Vec2 {
         return .{
@@ -147,5 +151,13 @@ pub const Vec2 = extern struct {
             .xy = lhs.outerProd(rhs).xy,
             .a = lhs.innerProd(rhs) + 1.0,
         };
+    }
+
+    pub fn normal(self: Vec2) Vec2 {
+        const result: Vec2 = .{
+            .x = -self.y,
+            .y = self.x,
+        };
+        return result.normalized();
     }
 };

@@ -19,18 +19,19 @@ const Entities = zcs.Entities;
 const CmdBuf = zcs.CmdBuf;
 const Node = zcs.ext.Node;
 const Vec2 = zcs.ext.math.Vec2;
+const Rotor2 = zcs.ext.math.Rotor2;
 const Mat2x3 = zcs.ext.math.Mat2x3;
 
 const Transform2 = @This();
 
 cached_local_pos: Vec2,
-cached_local_orientation: f32,
+cached_local_orientation: Rotor2,
 cached_world_from_local: Mat2x3,
 dirty: bool,
 
 pub const InitOptions = struct {
     local_pos: Vec2 = .zero,
-    local_orientation: f32 = 0.0,
+    local_orientation: Rotor2 = .identity,
 };
 
 /// Initialize a transform with the given position and orientation.
@@ -65,15 +66,20 @@ pub inline fn getPos(self: @This()) Vec2 {
     return self.cached_world_from_local.getTranslation();
 }
 
-/// Rotates in local space by `delta_rad`.
-pub fn rotate(self: *@This(), es: *const Entities, cb: *CmdBuf, delta_rad: f32) void {
-    self.cached_local_orientation = @mod(self.cached_local_orientation + delta_rad, 2 * math.pi);
+/// Rotates the local space.
+pub fn rotate(self: *@This(), es: *const Entities, cb: *CmdBuf, rotation: Rotor2) void {
+    self.cached_local_orientation.mul(rotation);
     self.markDirty(es, cb);
 }
 
-/// Sets the local orientation to `rad`.
-pub fn setLocalOrientation(self: *@This(), es: *const Entities, cb: *CmdBuf, rad: f32) void {
-    self.cached_local_orientation = @mod(rad, 2 * math.pi);
+/// Sets the local orientation.
+pub fn setLocalOrientation(
+    self: *@This(),
+    es: *const Entities,
+    cb: *CmdBuf,
+    orientation: Rotor2,
+) void {
+    self.cached_local_orientation = orientation;
     self.markDirty(es, cb);
 }
 
@@ -85,6 +91,10 @@ pub inline fn getLocalOrientation(self: @This()) f32 {
 /// Returns the world space orientation calculated the last time `syncAllImmediate` was called.
 pub inline fn getOrientation(self: @This()) f32 {
     return self.cached_world_from_local.getRotation();
+}
+
+pub inline fn getWorldFromLocal(self: @This()) Mat2x3 {
+    return self.cached_world_from_local;
 }
 
 /// Immediately synchronize the world space position and orientation of all dirty entities and their
@@ -117,12 +127,12 @@ pub fn syncAllImmediate(es: *Entities) void {
                     while (children.next(es)) |child| {
                         if (child.get(es, Transform2)) |child_transform| {
                             const parent = child.getParent(es).?;
+                            if (child_transform.dirty) updated += 1;
                             if (parent.get(es, Transform2)) |parent_transform| {
                                 child_transform.syncImmediate(parent_transform.cached_world_from_local);
                             } else {
                                 child_transform.syncImmediate(.identity);
                             }
-                            updated += 1;
                         }
                     }
                 }
@@ -141,10 +151,9 @@ pub fn syncAllImmediate(es: *Entities) void {
 
 /// Immediately synchronize this entity using the given `world_from_local` matrix.
 inline fn syncImmediate(self: *@This(), world_from_local: Mat2x3) void {
-    const local_from_model: Mat2x3 = .rotationTranslation(
-        self.cached_local_orientation,
-        self.cached_local_pos,
-    );
+    const translation: Mat2x3 = .translation(self.cached_local_pos);
+    const rotation: Mat2x3 = .rotation(self.cached_local_orientation);
+    const local_from_model = translation.times(rotation);
     self.cached_world_from_local = world_from_local.times(local_from_model);
     self.dirty = false;
 }

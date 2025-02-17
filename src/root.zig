@@ -21,5 +21,5 @@ pub const ext = @import("ext.zig");
 pub const typeId = TypeInfo.init;
 
 test {
-    _ = @import("entity.zig");
+    std.testing.refAllDecls(@This());
 }
