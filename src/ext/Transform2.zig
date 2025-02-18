@@ -26,7 +26,7 @@ const Transform2 = @This();
 
 cached_local_pos: Vec2,
 cached_local_orientation: Rotor2,
-cached_world_from_local: Mat2x3,
+cached_world_from_model: Mat2x3,
 dirty: bool,
 
 pub const InitOptions = struct {
@@ -39,7 +39,7 @@ pub fn init(options: InitOptions) @This() {
     return .{
         .cached_local_pos = options.local_pos,
         .cached_local_orientation = options.local_orientation,
-        .cached_world_from_local = undefined,
+        .cached_world_from_model = undefined,
         .dirty = true,
     };
 }
@@ -63,7 +63,7 @@ pub inline fn getLocalPos(self: @This()) Vec2 {
 
 /// Returns the world space position calculated during the last call to `syncAllImmediate`.
 pub inline fn getPos(self: @This()) Vec2 {
-    return self.cached_world_from_local.getTranslation();
+    return self.cached_world_from_model.getTranslation();
 }
 
 /// Rotates the local space.
@@ -90,11 +90,15 @@ pub inline fn getLocalOrientation(self: @This()) f32 {
 
 /// Returns the world space orientation calculated the last time `syncAllImmediate` was called.
 pub inline fn getOrientation(self: @This()) f32 {
-    return self.cached_world_from_local.getRotation();
+    return self.cached_world_from_model.getRotation();
 }
 
-pub inline fn getWorldFromLocal(self: @This()) Mat2x3 {
-    return self.cached_world_from_local;
+pub inline fn getWorldFromModel(self: @This()) Mat2x3 {
+    return self.cached_world_from_model;
+}
+
+pub fn getForward(self: @This()) Vec2 {
+    return self.cached_world_from_model.timesDir(.y_pos);
 }
 
 /// Immediately synchronize the world space position and orientation of all dirty entities and their
@@ -129,7 +133,7 @@ pub fn syncAllImmediate(es: *Entities) void {
                             const parent = child.getParent(es).?;
                             if (child_transform.dirty) updated += 1;
                             if (parent.get(es, Transform2)) |parent_transform| {
-                                child_transform.syncImmediate(parent_transform.cached_world_from_local);
+                                child_transform.syncImmediate(parent_transform.cached_world_from_model);
                             } else {
                                 child_transform.syncImmediate(.identity);
                             }
@@ -154,7 +158,7 @@ inline fn syncImmediate(self: *@This(), world_from_local: Mat2x3) void {
     const translation: Mat2x3 = .translation(self.cached_local_pos);
     const rotation: Mat2x3 = .rotation(self.cached_local_orientation);
     const local_from_model = translation.times(rotation);
-    self.cached_world_from_local = world_from_local.times(local_from_model);
+    self.cached_world_from_model = world_from_local.times(local_from_model);
     self.dirty = false;
 }
 

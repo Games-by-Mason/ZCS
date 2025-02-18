@@ -142,7 +142,7 @@ pub const Vec2 = packed struct {
     /// Generalized form of the cross product.
     pub fn outerProd(lhs: Vec2, rhs: Vec2) Bivec2 {
         return .{
-            .xy = lhs.x * rhs.y - lhs.y * rhs.x,
+            .xy = lhs.x * rhs.y - rhs.x * lhs.y,
         };
     }
 

@@ -4,41 +4,39 @@ const zcs = @import("../../root.zig");
 const Vec2 = zcs.ext.math.Vec2;
 const Rotor2 = zcs.ext.math.Rotor2;
 
-pub const Mat2x3 = extern struct {
-    // zig fmt: off
-    xx: f32, xy: f32, xw: f32,
-    yx: f32, yy: f32, yw: f32,
-    // zig fmt: on
+pub const Mat2x3 = packed struct {
+    x: Col,
+    y: Col,
 
-    pub const identity: @This() = .{
-        // zig fmt: off
-        .xx = 1, .xy = 0, .xw = 0,
-        .yx = 0, .yy = 1, .yw = 0,
-        // zig fmt: on
+    const Col = packed struct {
+        x: f32,
+        y: f32,
+        a: f32,
     };
 
-    pub fn rotation(rotor: Rotor2) @This() {
-        // Rotate the axis vectors by the rotor, and then form a matrix from them.
-        const xx = rotor.a * rotor.a - rotor.xy * rotor.xy;
-        const xy = 2.0 * (rotor.a * rotor.xy);
+    pub const identity: @This() = .{
+        .x = .{ .x = 1, .y = 0, .a = 0 },
+        .y = .{ .x = 0, .y = 1, .a = 0 },
+    };
 
-        const yx = 2.0 * (-rotor.xy * rotor.a);
-        const yy = -rotor.xy * rotor.xy + rotor.a * rotor.a;
-
+    pub fn fromBasis(x: Vec2, y: Vec2) Mat2x3 {
         return .{
-            // zig fmt: off
-            .xx = xx, .xy = yx, .xw = 0.0,
-            .yx = xy, .yy = yy, .yw = 0.0,
-            // zig fmt: on
+            .x = .{ .x = x.x, .y = x.y, .a = 0.0 },
+            .y = .{ .x = y.x, .y = y.y, .a = 0.0 },
         };
+    }
+
+    pub fn rotation(rotor: Rotor2) @This() {
+        const inverse = rotor.inverse();
+        const x = inverse.timesVec2(.x_pos);
+        const y = inverse.timesVec2(.y_pos);
+        return .fromBasis(x, y);
     }
 
     pub fn translation(delta: Vec2) @This() {
         return .{
-            // zig fmt: off
-            .xx = 1, .xy = 0, .xw = delta.x,
-            .yx = 0, .yy = 1, .yw = delta.y,
-            // zig fmt: on
+            .x = .{ .x = 1, .y = 0, .a = delta.x },
+            .y = .{ .x = 0, .y = 1, .a = delta.y },
         };
     }
 
@@ -46,27 +44,23 @@ pub const Mat2x3 = extern struct {
         const sin = @sin(angle);
         const cos = @cos(angle);
         return .{
-            // zig fmt: off
-            .xx = cos, .xy = -sin, .xw = delta.x,
-            .yx = sin, .yy =  cos, .yw = delta.y,
-            // zig fmt: on
+            .x = .{ .x = cos, .y = sin, .a = delta.x },
+            .y = .{ .x = -sin, .y = cos, .a = delta.y },
         };
     }
 
     pub fn times(lhs: @This(), rhs: @This()) @This() {
-        const xx = lhs.xx * rhs.xx + lhs.xy * rhs.yx;
-        const xy = lhs.xx * rhs.xy + lhs.xy * rhs.yy;
-        const xw = lhs.xx * rhs.xw + lhs.xy * rhs.yw + lhs.xw;
-
-        const yx = lhs.yx * rhs.xx + lhs.yy * rhs.yx;
-        const yy = lhs.yx * rhs.xy + lhs.yy * rhs.yy;
-        const yw = lhs.yx * rhs.xw + lhs.yy * rhs.yw + lhs.yw;
-
         return .{
-            // zig fmt: off
-            .xx = xx, .xy = xy, .xw = xw,
-            .yx = yx, .yy = yy, .yw = yw,
-            // zig fmt: on
+            .x = .{
+                .x = lhs.x.x * rhs.x.x + lhs.x.y * rhs.y.x,
+                .y = lhs.x.x * rhs.x.y + lhs.x.y * rhs.y.y,
+                .a = lhs.x.x * rhs.x.a + lhs.x.y * rhs.y.a + lhs.x.a,
+            },
+            .y = .{
+                .x = lhs.y.x * rhs.x.x + lhs.y.y * rhs.y.x,
+                .y = lhs.y.x * rhs.x.y + lhs.y.y * rhs.y.y,
+                .a = lhs.y.x * rhs.x.a + lhs.y.y * rhs.y.a + lhs.y.a,
+            },
         };
     }
 
@@ -75,19 +69,26 @@ pub const Mat2x3 = extern struct {
     }
 
     pub fn getTranslation(self: @This()) Vec2 {
-        return .{ .x = self.xw, .y = self.yw };
+        return .{ .x = self.x.a, .y = self.y.a };
     }
 
     pub fn getRotation(self: @This()) f32 {
-        const cos = self.xx;
-        const sin = self.yx;
+        const cos = self.x.x;
+        const sin = self.x.y;
         return std.math.atan2(sin, cos);
     }
 
     pub fn timesPoint(self: @This(), point: Vec2) Vec2 {
         return .{
-            .x = self.xx * point.x + self.xy * point.y + self.xw,
-            .y = self.yx * point.x + self.yy * point.y + self.yw,
+            .x = self.x.x * point.x + self.x.y * point.y + self.x.a,
+            .y = self.y.x * point.x + self.y.y * point.y + self.y.a,
+        };
+    }
+
+    pub fn timesDir(self: @This(), point: Vec2) Vec2 {
+        return .{
+            .x = self.x.x * point.x + self.x.y * point.y,
+            .y = self.y.x * point.x + self.y.y * point.y,
         };
     }
 };

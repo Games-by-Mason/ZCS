@@ -66,7 +66,7 @@ pub const Rotor2 = extern struct {
     /// Creates a rotor that from the given angle.
     pub fn fromAngle(rad: f32) Rotor2 {
         return .{
-            .xy = @sin(rad / 2.0),
+            .xy = -@sin(rad / 2.0),
             .a = @cos(rad / 2.0),
         };
     }
@@ -82,7 +82,7 @@ pub const Rotor2 = extern struct {
     pub fn inverse(self: Rotor2) Rotor2 {
         return .{
             .xy = -self.xy,
-            .w = self.w,
+            .a = self.a,
         };
     }
 
@@ -121,6 +121,18 @@ pub const Rotor2 = extern struct {
 
     pub fn mul(self: *Rotor2, other: Rotor2) void {
         self.* = self.times(other);
+    }
+
+    pub fn timesVec2(self: Rotor2, point: Vec2) Vec2 {
+        // temp = -rotor * point
+        const x = self.a * point.x - self.xy * point.y;
+        const y = self.a * point.y + self.xy * point.x;
+
+        // temp * rotor
+        return .{
+            .x = x * self.a - y * self.xy,
+            .y = x * self.xy + y * self.a,
+        };
     }
 
     /// Takes the natural log of the given rotor, resulting in a bivector representing the plane the
