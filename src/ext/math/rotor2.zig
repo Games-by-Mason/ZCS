@@ -71,6 +71,10 @@ pub const Rotor2 = extern struct {
         };
     }
 
+    pub fn toAngle(self: Rotor2) f32 {
+        return 2.0 * std.math.atan2(-self.xy, self.a);
+    }
+
     pub fn magSq(self: Rotor2) f32 {
         return self.a * self.a + self.xy * self.xy;
     }
@@ -123,7 +127,7 @@ pub const Rotor2 = extern struct {
         self.* = self.times(other);
     }
 
-    pub fn timesVec2(self: Rotor2, point: Vec2) Vec2 {
+    pub fn timesPoint(self: Rotor2, point: Vec2) Vec2 {
         // temp = -rotor * point
         const x = self.a * point.x - self.xy * point.y;
         const y = self.a * point.y + self.xy * point.x;

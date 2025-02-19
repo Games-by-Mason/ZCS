@@ -28,8 +28,8 @@ pub const Mat2x3 = packed struct {
 
     pub fn rotation(rotor: Rotor2) @This() {
         const inverse = rotor.inverse();
-        const x = inverse.timesVec2(.x_pos);
-        const y = inverse.timesVec2(.y_pos);
+        const x = inverse.timesPoint(.x_pos);
+        const y = inverse.timesPoint(.y_pos);
         return .fromBasis(x, y);
     }
 
@@ -72,7 +72,7 @@ pub const Mat2x3 = packed struct {
         return .{ .x = self.x.a, .y = self.y.a };
     }
 
-    pub fn getRotation(self: @This()) f32 {
+    pub fn getAngle(self: @This()) f32 {
         const cos = self.x.x;
         const sin = self.x.y;
         return std.math.atan2(sin, cos);
