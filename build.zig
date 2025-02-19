@@ -15,12 +15,18 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const geom = b.dependency("geom", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const zcs = b.addModule("zcs", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
     });
     zcs.addImport("slot_map", slot_map.module("slot_map"));
+    zcs.addImport("geom", geom.module("geom"));
 
     const test_step = b.step("test", "Run unit tests");
 

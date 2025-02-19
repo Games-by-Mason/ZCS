@@ -18,9 +18,9 @@ const Entity = zcs.Entity;
 const Entities = zcs.Entities;
 const CmdBuf = zcs.CmdBuf;
 const Node = zcs.ext.Node;
-const Vec2 = zcs.ext.math.Vec2;
-const Rotor2 = zcs.ext.math.Rotor2;
-const Mat2x3 = zcs.ext.math.Mat2x3;
+const Vec2 = zcs.ext.geom.Vec2;
+const Rotor2 = zcs.ext.geom.Rotor2;
+const Mat2x3 = zcs.ext.geom.Mat2x3;
 
 const Transform2 = @This();
 

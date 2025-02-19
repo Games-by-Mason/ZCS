@@ -7,6 +7,11 @@
             .url = "https://github.com/Games-by-Mason/SlotMap/archive/4aac9e43d5354df96d00a38b92eb46f7b9482744.tar.gz",
             .hash = "12204a000723d559a0b9d3272c3dc3daea1660088ff89fb08628ce35156466e76c2c",
         },
+        // Only used by extensions
+        .geom = .{
+            .url = "https://github.com/Games-by-Mason/geom/archive/36520212096589c7f8675e9546cd1ee376b032e5.tar.gz",
+            .hash = "1220cfbe7486b388337aebfce0c30b7a468738ffd37dd7b535303f228486ccae90b5",
+        },
     },
     .paths = .{
         "build.zig",
