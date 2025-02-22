@@ -9,8 +9,8 @@
         },
         // Only used by extensions
         .geom = .{
-            .url = "https://github.com/Games-by-Mason/geom/archive/36520212096589c7f8675e9546cd1ee376b032e5.tar.gz",
-            .hash = "1220cfbe7486b388337aebfce0c30b7a468738ffd37dd7b535303f228486ccae90b5",
+            .url = "https://github.com/Games-by-Mason/geom/archive/05bf1b1a38fd414e3780bfe6d8e86816d30b6b4f.tar.gz",
+            .hash = "122093d09d00e64c6ee8288834d1ad33f9656049e76561744ae9819b9146c37da361",
         },
     },
     .paths = .{

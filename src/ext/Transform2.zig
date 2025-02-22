@@ -109,16 +109,12 @@ pub fn syncAllImmediate(es: *Entities) void {
         })) |vw| {
             total += 1;
             if (vw.node) |node| {
-                // If this node has a parent, and its parent is dirty, skip it--we'll update it
-                // as part of the parent update
                 if (node.parent.unwrap()) |parent| {
                     if (parent.get(es, Transform2)) |parent_transform| {
                         if (parent_transform.dirty) continue;
                     }
-                }
-
-                // Update the transform and all its children
-                if (node.parent.unwrap() == null) {
+                } else {
+                    // Update the transform and all its children
                     vw.transform.syncImmediate(.identity);
                     updated += 1;
 
@@ -152,8 +148,7 @@ pub fn syncAllImmediate(es: *Entities) void {
 inline fn syncImmediate(self: *@This(), world_from_local: Mat2x3) void {
     const translation: Mat2x3 = .translation(self.cached_local_pos);
     const rotation: Mat2x3 = .rotation(self.cached_local_orientation);
-    const local_from_model = translation.times(rotation);
-    self.cached_world_from_model = world_from_local.times(local_from_model);
+    self.cached_world_from_model = rotation.applied(translation).applied(world_from_local);
     self.dirty = false;
 }
 
