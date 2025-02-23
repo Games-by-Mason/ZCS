@@ -167,6 +167,25 @@ const ChildIterator = struct {
     }
 };
 
+/// Returns an iterator over the node's ancestors. The iterator starts at the parent, if any, and
+/// then, follows the parent chain until it hits a node with no parent.
+pub fn ancestorIterator(self: *const @This()) AncestorIterator {
+    return .{ .curr = self.parent };
+}
+
+/// An iterator over a node's ancestors.
+const AncestorIterator = struct {
+    curr: Entity.Optional,
+
+    /// Returns the next ancestor, or `null` if there are none.
+    pub fn next(self: *@This(), es: *const Entities) ?*Node {
+        const entity = self.curr.unwrap() orelse return null;
+        const node = entity.get(es, Node).?;
+        self.curr = node.parent;
+        return node;
+    }
+};
+
 /// Returns a pre-order iterator over a node's children. Pre-order traversal visits parents before
 /// children.
 pub fn preOrderIterator(self: *const @This(), es: *const Entities) PreOrderIterator {

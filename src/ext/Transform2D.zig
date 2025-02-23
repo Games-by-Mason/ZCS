@@ -108,19 +108,19 @@ pub fn syncAllImmediate(es: *Entities) void {
             node: ?*const Node,
         })) |vw| {
             total += 1;
+
+            // If we're already processed this node, skip it
             if (!vw.transform.dirty) continue;
+
             if (vw.node) |unwrapped| {
                 // Move to the topmost dirty node in this tree of the hierarchy so that we don't
                 // reprocess nodes multiple times
                 const node = b: {
-                    var curr = unwrapped;
+                    var ancestors = unwrapped.ancestorIterator();
                     var topmost_dirty = unwrapped;
-                    while (curr.getParent(es)) |parent| {
-                        const parent_transform = parent.get(es, Transform2D) orelse break;
-                        if (parent_transform.dirty) {
-                            topmost_dirty = parent;
-                        }
-                        curr = parent;
+                    while (ancestors.next(es)) |curr| {
+                        const transform = curr.get(es, Transform2D) orelse break;
+                        if (transform.dirty) topmost_dirty = curr;
                     }
                     break :b topmost_dirty;
                 };
