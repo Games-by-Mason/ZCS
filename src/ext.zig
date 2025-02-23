@@ -3,7 +3,7 @@
 const std = @import("std");
 
 pub const Node = @import("ext/Node.zig");
-pub const Transform2 = @import("ext/Transform2.zig");
+pub const Transform2D = @import("ext/Transform2D.zig");
 pub const geom = @import("geom");
 
 test {

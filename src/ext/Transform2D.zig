@@ -22,7 +22,7 @@ const Vec2 = zcs.ext.geom.Vec2;
 const Rotor2 = zcs.ext.geom.Rotor2;
 const Mat2x3 = zcs.ext.geom.Mat2x3;
 
-const Transform2 = @This();
+const Transform2D = @This();
 
 cached_local_pos: Vec2,
 cached_local_orientation: Rotor2,
@@ -104,30 +104,40 @@ pub fn syncAllImmediate(es: *Entities) void {
     var updated: usize = 0;
     while (it.next()) |event| {
         if (event.dirty.entity.view(es, struct {
-            transform: *Transform2,
+            transform: *Transform2D,
             node: ?*const Node,
         })) |vw| {
             total += 1;
-            if (vw.node) |node| {
-                if (node.parent.unwrap()) |parent| {
-                    if (parent.get(es, Transform2)) |parent_transform| {
-                        if (parent_transform.dirty) continue;
+            if (!vw.transform.dirty) continue;
+            if (vw.node) |unwrapped| {
+                // Move to the topmost dirty node in this tree of the hierarchy so that we don't
+                // reprocess nodes multiple times
+                const node = b: {
+                    var curr = unwrapped;
+                    var topmost_dirty = unwrapped;
+                    while (curr.getParent(es)) |parent| {
+                        const parent_transform = parent.get(es, Transform2D) orelse break;
+                        if (parent_transform.dirty) {
+                            topmost_dirty = parent;
+                        }
+                        curr = parent;
                     }
-                } else {
-                    // Update the transform and all its children
-                    vw.transform.syncImmediate(.identity);
-                    updated += 1;
+                    break :b topmost_dirty;
+                };
 
-                    var children = node.preOrderIterator(es);
-                    while (children.next(es)) |child| {
-                        if (child.get(es, Transform2)) |child_transform| {
-                            const parent = child.getParent(es).?;
-                            if (child_transform.dirty) updated += 1;
-                            if (parent.get(es, Transform2)) |parent_transform| {
-                                child_transform.syncImmediate(parent_transform.cached_world_from_model);
-                            } else {
-                                child_transform.syncImmediate(.identity);
-                            }
+                // Update the transform and all its children
+                vw.transform.syncImmediate(.identity);
+                updated += 1;
+
+                var children = node.preOrderIterator(es);
+                while (children.next(es)) |child| {
+                    if (child.get(es, Transform2D)) |child_transform| {
+                        const parent = child.getParent(es).?;
+                        if (child_transform.dirty) updated += 1;
+                        if (parent.get(es, Transform2D)) |parent_transform| {
+                            child_transform.syncImmediate(parent_transform.cached_world_from_model);
+                        } else {
+                            child_transform.syncImmediate(.identity);
                         }
                     }
                 }
@@ -156,18 +166,18 @@ inline fn syncImmediate(self: *@This(), world_from_local: Mat2x3) void {
 pub fn afterCmdImmediate(es: *Entities, batch: CmdBuf.Batch, cmd: CmdBuf.Batch.Item) void {
     switch (cmd) {
         .ext => |ext| if (ext.id == typeId(Node.SetParent)) {
-            if (batch.entity.get(es, Transform2)) |transform| {
+            if (batch.entity.get(es, Transform2D)) |transform| {
                 transform.markDirtyImmediate(es);
             }
         },
-        .add => |comp| if (comp.id == typeId(Transform2)) {
-            if (batch.entity.get(es, Transform2)) |transform| {
+        .add => |comp| if (comp.id == typeId(Transform2D)) {
+            if (batch.entity.get(es, Transform2D)) |transform| {
                 transform.dirty = false;
                 transform.markDirtyImmediate(es);
             }
         },
         .remove => |id| if (id == typeId(Node)) {
-            if (batch.entity.get(es, Transform2)) |transform| {
+            if (batch.entity.get(es, Transform2D)) |transform| {
                 transform.markDirtyImmediate(es);
             }
         },
