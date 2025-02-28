@@ -41,7 +41,7 @@ test "events" {
 
     var cb: CmdBuf = try .init(gpa, &es, .{
         .cmds = 10,
-        .avg_any_bytes = @sizeOf(Event),
+        .avg_cmd_bytes = @sizeOf(Event),
     });
     defer cb.deinit(gpa, &es);
 

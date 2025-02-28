@@ -156,7 +156,7 @@ pub const Iterator = struct {
 };
 
 /// Similar to `iterator`, but returns a `view` with pointers to the requested components.
-pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
+pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
     var base: view.Comps(View) = undefined;
     var required_comps: CompFlag.Set = .{};
     const valid = inline for (@typeInfo(view.Comps(View)).@"struct".fields) |field| {

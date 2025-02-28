@@ -144,8 +144,9 @@ pub fn execImmediateOrErr(self: *@This(), es: *Entities) error{ZcsCompOverflow}!
 pub const Capacity = struct {
     /// Space for at least this many commands will be reserved.
     cmds: usize,
-    /// Space for an average of at least this many bytes per `Any` will be reserved.
-    avg_any_bytes: usize,
+    /// Space for an average of at least this many bytes of extra data per command will be reserved.
+    /// This is used for components and custom event payloads.
+    avg_cmd_bytes: usize,
 };
 
 /// Per buffer capacity. Prefer `Capacity`.
@@ -160,7 +161,7 @@ pub const GranularCapacity = struct {
         _ = Cmd.rename_when_changing_encoding;
 
         // Each command can have at most one component's worth of component data.
-        const comp_bytes_cap = (cap.avg_any_bytes + zcs.TypeInfo.max_align) * cap.cmds;
+        const cmd_bytes_cap = (cap.avg_cmd_bytes + zcs.TypeInfo.max_align) * cap.cmds;
 
         // Each command can have at most two tags
         const tags_cap = cap.cmds * 2;
@@ -176,7 +177,7 @@ pub const GranularCapacity = struct {
         return .{
             .tags = tags_cap,
             .args = args_cap,
-            .any_bytes = comp_bytes_cap,
+            .any_bytes = cmd_bytes_cap,
             .reserved = reserved_cap,
         };
     }

@@ -46,7 +46,7 @@ test "command buffer test execImmediate" {
 
     var capacity: CmdBuf.GranularCapacity = .init(.{
         .cmds = 4,
-        .avg_any_bytes = @sizeOf(RigidBody),
+        .avg_cmd_bytes = @sizeOf(RigidBody),
     });
     capacity.reserved = 0;
     var cb = try CmdBuf.initGranularCapacity(gpa, &es, capacity);
@@ -143,7 +143,7 @@ test "command buffer interning" {
     var es = try Entities.init(gpa, .{ .max_entities = 100, .comp_bytes = 4096 });
     defer es.deinit(gpa);
 
-    var cb = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .avg_any_bytes = @sizeOf(RigidBody) });
+    var cb = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .avg_cmd_bytes = @sizeOf(RigidBody) });
     defer cb.deinit(gpa, &es);
 
     const rb_interned: RigidBody = .{
@@ -601,7 +601,7 @@ test "command buffer worst case capacity" {
     });
     defer es.deinit(gpa);
 
-    var cb = try CmdBuf.init(gpa, &es, .{ .cmds = cb_capacity, .avg_any_bytes = 22 });
+    var cb = try CmdBuf.init(gpa, &es, .{ .cmds = cb_capacity, .avg_cmd_bytes = 22 });
     defer cb.deinit(gpa, &es);
 
     // Change archetype
@@ -860,7 +860,7 @@ test "getAll" {
     } }));
     // Should not result in a registration
     _ = typeId(i32);
-    var cb = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .avg_any_bytes = @sizeOf(RigidBody) });
+    var cb = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .avg_cmd_bytes = @sizeOf(RigidBody) });
     defer cb.deinit(gpa, &es);
     e.cmd(&cb, BarExt, .{ .bar = 1 });
     cb.execImmediate(&es);

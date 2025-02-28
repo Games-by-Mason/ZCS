@@ -108,7 +108,7 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
 
     var cb: CmdBuf = try .init(gpa, &es, .{
         .cmds = cmds_capacity,
-        .avg_any_bytes = @sizeOf(RigidBody),
+        .avg_cmd_bytes = @sizeOf(RigidBody),
     });
     defer cb.deinit(gpa, &es);
 

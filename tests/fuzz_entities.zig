@@ -65,7 +65,7 @@ fn run(input: []const u8, saturated: bool) !void {
 
     var cb: CmdBuf = try .init(gpa, &fz.es, .{
         .cmds = cmds_capacity,
-        .avg_any_bytes = @sizeOf(RigidBody),
+        .avg_cmd_bytes = @sizeOf(RigidBody),
     });
     defer cb.deinit(gpa, &fz.es);
 

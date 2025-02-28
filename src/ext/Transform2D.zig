@@ -29,16 +29,16 @@ cached_local_orientation: Rotor2,
 cached_world_from_model: Mat2x3,
 dirty: bool,
 
-pub const InitOptions = struct {
-    local_pos: Vec2 = .zero,
-    local_orientation: Rotor2 = .identity,
+pub const InitLocalOptions = struct {
+    pos: Vec2 = .zero,
+    orientation: Rotor2 = .identity,
 };
 
-/// Initialize a transform with the given position and orientation.
-pub fn init(options: InitOptions) @This() {
+/// Initialize a transform with the given local position and orientation.
+pub fn initLocal(options: InitLocalOptions) @This() {
     return .{
-        .cached_local_pos = options.local_pos,
-        .cached_local_orientation = options.local_orientation,
+        .cached_local_pos = options.pos,
+        .cached_local_orientation = options.orientation,
         .cached_world_from_model = undefined,
         .dirty = true,
     };

@@ -218,7 +218,7 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
     var cb: CmdBuf = try .initGranularCapacity(gpa, &fz.es, b: {
         var cap: CmdBuf.GranularCapacity = .init(.{
             .cmds = cmds_capacity,
-            .avg_any_bytes = @sizeOf(Node),
+            .avg_cmd_bytes = @sizeOf(Node),
         });
         cap.reserved = 0;
         break :b cap;
@@ -256,7 +256,7 @@ fn fuzzNodeCyclesCmdBuf(_: void, input: []const u8) !void {
     var cb: CmdBuf = try .initGranularCapacity(gpa, &fz.es, b: {
         var cap: CmdBuf.GranularCapacity = .init(.{
             .cmds = cmds_capacity,
-            .avg_any_bytes = @sizeOf(Node),
+            .avg_cmd_bytes = @sizeOf(Node),
         });
         cap.reserved = 0;
         break :b cap;
