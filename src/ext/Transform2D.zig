@@ -1,6 +1,8 @@
 //! A component that tracks the position and orientation of an entity in 2D. Hierarchical
 //! relationships formed by the `Node` component are respected if present.
 //!
+//! See `syncAllImmediate` and `Exec` for integration into your game.
+//!
 //! You're encouraged to access the state via the provided getters instead of reading/writing the
 //! fields directly.
 //!
@@ -175,28 +177,35 @@ inline fn syncImmediate(self: *@This(), world_from_model: Mat2x3) void {
     self.dirty = false;
 }
 
-/// Call this after executing a command.
-pub fn afterCmdImmediate(es: *Entities, batch: CmdBuf.Batch, cmd: CmdBuf.Batch.Item) void {
-    switch (cmd) {
-        .ext => |ext| if (ext.id == typeId(Node.SetParent)) {
-            if (batch.entity.get(es, Transform2D)) |transform| {
-                transform.markDirtyImmediate(es);
-            }
-        },
-        .add => |comp| if (comp.id == typeId(Transform2D)) {
-            if (batch.entity.get(es, Transform2D)) |transform| {
-                transform.dirty = false;
-                transform.markDirtyImmediate(es);
-            }
-        },
-        .remove => |id| if (id == typeId(Node)) {
-            if (batch.entity.get(es, Transform2D)) |transform| {
-                transform.markDirtyImmediate(es);
-            }
-        },
-        else => {},
+/// `Exec` provides helpers for processing hierarchy changes via the command buffer.
+///
+/// By convention, `Exec` only calls into the stable public interface of the types it's working
+/// with. As such, documentation is sparse. You are welcome to call these methods directly, or
+/// use them as reference for implementing your own command buffer iterator.
+pub const Exec = struct {
+    /// Call this after executing a command.
+    pub fn afterCmdImmediate(es: *Entities, batch: CmdBuf.Batch, cmd: CmdBuf.Batch.Item) void {
+        switch (cmd) {
+            .ext => |ext| if (ext.id == typeId(Node.SetParent)) {
+                if (batch.entity.get(es, Transform2D)) |transform| {
+                    transform.markDirtyImmediate(es);
+                }
+            },
+            .add => |comp| if (comp.id == typeId(Transform2D)) {
+                if (batch.entity.get(es, Transform2D)) |transform| {
+                    transform.dirty = false;
+                    transform.markDirtyImmediate(es);
+                }
+            },
+            .remove => |id| if (id == typeId(Node)) {
+                if (batch.entity.get(es, Transform2D)) |transform| {
+                    transform.markDirtyImmediate(es);
+                }
+            },
+            else => {},
+        }
     }
-}
+};
 
 /// Emits an event marking the transform as dirty if it is not already marked as dirty. Called
 /// automatically when the position or orientation are changed via the setters, or the node's parent

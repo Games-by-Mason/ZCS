@@ -91,12 +91,24 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
                 .reserve => try reserve(&cb, &smith, &all),
                 .destroy => {
                     // Sometimes destroy entities, but not too often
-                    if (all.items.len == 0 or smith.nextLessThan(u8, 100) > 1) {
+                    if (all.items.len == 0 or smith.nextLessThan(u8, 100) > 10) {
                         continue;
                     }
                     const e = all.items[smith.nextLessThan(usize, all.items.len)];
-                    if (log) std.debug.print("destroy {}\n", .{e});
-                    e.destroy(&cb);
+                    switch (smith.next(enum { transform, node, entity })) {
+                        .transform => {
+                            if (log) std.debug.print("remove transform {}\n", .{e});
+                            e.remove(&cb, Transform);
+                        },
+                        .node => {
+                            if (log) std.debug.print("remove node {}\n", .{e});
+                            e.remove(&cb, Node);
+                        },
+                        .entity => {
+                            if (log) std.debug.print("destroy {}\n", .{e});
+                            e.destroy(&cb);
+                        },
+                    }
                 },
                 .move => {
                     if (all.items.len == 0) continue;
@@ -148,7 +160,7 @@ pub fn exec(es: *Entities, cb: *CmdBuf) void {
             while (iter.next()) |cmd| {
                 node_exec.afterCmdImmediate(es, batch, arch_change, cmd) catch |err|
                     @panic(@errorName(err));
-                Transform.afterCmdImmediate(es, batch, cmd);
+                Transform.Exec.afterCmdImmediate(es, batch, cmd);
             }
         }
     }
