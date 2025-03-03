@@ -84,7 +84,7 @@ pub fn setLocalOrientation(
 }
 
 /// Returns the local orientation in radians.
-pub inline fn getLocalOrientation(self: @This()) f32 {
+pub inline fn getLocalOrientation(self: @This()) Rotor2 {
     return self.cached_local_orientation;
 }
 
@@ -115,30 +115,43 @@ pub fn syncAllImmediate(es: *Entities) void {
             if (vw.node) |unwrapped| {
                 // Move to the topmost dirty node in this tree of the hierarchy so that we don't
                 // reprocess nodes multiple times
-                const node = b: {
+                const top = b: {
                     var ancestors = unwrapped.ancestorIterator();
-                    var topmost_dirty = unwrapped;
+                    var top: struct { node: *const Node, transform: *Transform2D } = .{
+                        .node = unwrapped,
+                        .transform = vw.transform,
+                    };
                     while (ancestors.next(es)) |curr| {
                         const transform = curr.get(es, Transform2D) orelse break;
-                        if (transform.dirty) topmost_dirty = curr;
+                        if (transform.dirty) top = .{
+                            .transform = transform,
+                            .node = curr,
+                        };
                     }
-                    break :b topmost_dirty;
+                    break :b top;
                 };
 
                 // Update the transform and all its children
-                vw.transform.syncImmediate(.identity);
+                top.transform.syncImmediate(b: {
+                    if (top.node.parent.unwrap()) |parent| {
+                        if (parent.get(es, Transform2D)) |transform| {
+                            break :b transform.getWorldFromModel();
+                        }
+                    }
+                    break :b .identity;
+                });
                 updated += 1;
 
-                var children = node.preOrderIterator(es);
+                var children = top.node.preOrderIterator(es);
                 while (children.next(es)) |child| {
                     if (child.get(es, Transform2D)) |child_transform| {
-                        const parent = child.getParent(es).?;
                         if (child_transform.dirty) updated += 1;
-                        if (parent.get(es, Transform2D)) |parent_transform| {
-                            child_transform.syncImmediate(parent_transform.cached_world_from_model);
-                        } else {
-                            child_transform.syncImmediate(.identity);
-                        }
+                        const parent = child.getParent(es).?;
+                        const parent_wfm: Mat2x3 = if (parent.get(es, Transform2D)) |t|
+                            t.cached_world_from_model
+                        else
+                            .identity;
+                        child_transform.syncImmediate(parent_wfm);
                     }
                 }
             } else {
@@ -154,20 +167,28 @@ pub fn syncAllImmediate(es: *Entities) void {
     Dirty.recycleAllImmediate(es);
 }
 
-/// Immediately synchronize this entity using the given `world_from_local` matrix.
-inline fn syncImmediate(self: *@This(), world_from_local: Mat2x3) void {
+/// Immediately synchronize this entity using the given `world_from_model` matrix.
+inline fn syncImmediate(self: *@This(), world_from_model: Mat2x3) void {
     const translation: Mat2x3 = .translation(self.cached_local_pos);
     const rotation: Mat2x3 = .rotation(self.cached_local_orientation);
-    self.cached_world_from_model = rotation.applied(translation).applied(world_from_local);
+    self.cached_world_from_model = rotation.applied(translation).applied(world_from_model);
     self.dirty = false;
 }
 
 /// Call this after executing a command.
 pub fn afterCmdImmediate(es: *Entities, batch: CmdBuf.Batch, cmd: CmdBuf.Batch.Item) void {
     switch (cmd) {
-        .ext => |ext| if (ext.id == typeId(Node.SetParent)) {
+        .ext => |ext| if (ext.as(Node.SetParent)) |set_parent| {
             if (batch.entity.get(es, Transform2D)) |transform| {
                 transform.markDirtyImmediate(es);
+            }
+
+            // We have to invalidate the parent too, since setting the parent can move both entities
+            // in the hierarchy if it would have created a cycle.
+            if (set_parent[0].unwrap()) |parent| {
+                if (parent.get(es, Transform2D)) |transform| {
+                    transform.markDirtyImmediate(es);
+                }
             }
         },
         .add => |comp| if (comp.id == typeId(Transform2D)) {
