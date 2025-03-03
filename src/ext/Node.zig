@@ -69,51 +69,34 @@ pub fn setParentImmediate(self: *Node, es: *Entities, parent: ?*Node) void {
 pub fn setParentImmediateOrErr(
     self: *Node,
     es: *Entities,
-    parent: ?*Node,
-) error{ZcsCompOverflow}!void {
-    if (self == parent) return;
-    self.setParentImmediateInner(es, parent, true);
-}
-
-fn setParentImmediateInner(
-    child: *Node,
-    es: *Entities,
     parent_opt: ?*Node,
-    break_cycles: bool,
-) void {
-    const original_parent_opt = child.parent;
+) error{ZcsCompOverflow}!void {
+    // If the relationship would result in a cycle, or parent and child are equal, early out.
+    if (parent_opt) |parent| {
+        if (self == parent) return;
+        if (self.isAncestorOf(es, parent)) return;
+    }
 
     // Unparent the child
-    if (child.getParent(es)) |curr_parent| {
-        if (child.getPrevSib(es)) |prev_sib| {
-            prev_sib.next_sib = child.next_sib;
+    if (self.getParent(es)) |curr_parent| {
+        if (self.getPrevSib(es)) |prev_sib| {
+            prev_sib.next_sib = self.next_sib;
         } else {
-            curr_parent.first_child = child.next_sib;
+            curr_parent.first_child = self.next_sib;
         }
-        if (child.next_sib.unwrap()) |next_sib| {
-            next_sib.get(es, Node).?.prev_sib = child.prev_sib;
-            child.next_sib = .none;
+        if (self.next_sib.unwrap()) |next_sib| {
+            next_sib.get(es, Node).?.prev_sib = self.prev_sib;
+            self.next_sib = .none;
         }
-        child.prev_sib = .none;
-        child.parent = .none;
+        self.prev_sib = .none;
+        self.parent = .none;
     }
 
     // Set the new parent
     if (parent_opt) |parent| {
-        // If this relationship would create a cycle, parent the new parent to the child's original
-        // parent
-        if (break_cycles and child.isAncestorOf(es, parent)) {
-            if (original_parent_opt.unwrap()) |original_parent| {
-                parent.setParentImmediateInner(es, original_parent.get(es, Node).?, false);
-            } else {
-                parent.setParentImmediateInner(es, null, false);
-            }
-        }
-
-        // Parent the child
-        child.parent = parent.getEntity(es).toOptional();
-        child.next_sib = parent.first_child;
-        const child_entity = child.getEntity(es);
+        self.parent = parent.getEntity(es).toOptional();
+        self.next_sib = parent.first_child;
+        const child_entity = self.getEntity(es);
         if (parent.first_child.unwrap()) |first_child| {
             first_child.get(es, Node).?.prev_sib = child_entity.toOptional();
         }
@@ -259,12 +242,10 @@ pub const PostOrderIterator = struct {
 
 /// Encodes a command that requests to parent `child` and `parent`.
 ///
-/// * If the relationship would result in a cycle, `parent` is first moved up the tree to the level
-///   of `child`
-/// * If parent is `.none`, child is unparented
-/// * If parent and child are equal, no change is made
-/// * If parent no longer exists, child is destroyed
-/// * If child no longer exists, no change is made
+/// * If the relationship would result in a cycle, parent and child are equal, or child no longer
+///   exists, then no change is made.
+/// * If parent is `.none`, child is unparented.
+/// * If parent no longer exists, child is destroyed.
 pub const SetParent = struct { Entity.Optional };
 
 /// `Exec` provides helpers for processing hierarchy changes via the command buffer.

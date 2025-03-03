@@ -178,17 +178,9 @@ inline fn syncImmediate(self: *@This(), world_from_model: Mat2x3) void {
 /// Call this after executing a command.
 pub fn afterCmdImmediate(es: *Entities, batch: CmdBuf.Batch, cmd: CmdBuf.Batch.Item) void {
     switch (cmd) {
-        .ext => |ext| if (ext.as(Node.SetParent)) |set_parent| {
+        .ext => |ext| if (ext.id == typeId(Node.SetParent)) {
             if (batch.entity.get(es, Transform2D)) |transform| {
                 transform.markDirtyImmediate(es);
-            }
-
-            // We have to invalidate the parent too, since setting the parent can move both entities
-            // in the hierarchy if it would have created a cycle.
-            if (set_parent[0].unwrap()) |parent| {
-                if (parent.get(es, Transform2D)) |transform| {
-                    transform.markDirtyImmediate(es);
-                }
             }
         },
         .add => |comp| if (comp.id == typeId(Transform2D)) {

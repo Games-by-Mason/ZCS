@@ -432,16 +432,9 @@ fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Opti
             return destroyInOracle(fz, o, child);
         }
 
-        // If child is an ancestor of parent, break the loop by moving parent up to the same level
-        // of child
+        // If child is an ancestor of parent, early out
         if (try isAncestorOf(fz, o, child, unwrapped)) {
-            const parent_o = o.nodes.getPtr(unwrapped).?;
-            const parent_parent = parent_o.parent.unwrap().?;
-            try expect(o.nodes.getPtr(parent_parent).?.children.orderedRemove(unwrapped));
-            parent_o.parent = child_o.parent;
-            if (child_o.parent.unwrap()) |child_parent| {
-                try o.nodes.getPtr(child_parent).?.children.put(gpa, unwrapped, {});
-            }
+            return;
         }
     }
 
