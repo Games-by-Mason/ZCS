@@ -37,7 +37,7 @@ test "fuzz transforms cmdbuf" {
 test "rand transforms cmdbuf" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
-    const input: []u8 = try gpa.alloc(u8, 8192);
+    const input: []u8 = try gpa.alloc(u8, 2048);
     defer gpa.free(input);
     rand.bytes(input);
     try fuzzNodesCmdBuf({}, input);
@@ -46,7 +46,20 @@ test "rand transforms cmdbuf" {
 fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
     defer CompFlag.unregisterAll();
 
-    var smith: Smith = .init(input);
+    // Working around apparent bug in fuzzer
+    var len: usize = 0;
+    var zeroes: usize = 0;
+    for (0..input.len) |i| {
+        if (input[i] == 0) {
+            zeroes += 1;
+        } else {
+            zeroes = 0;
+        }
+        if (zeroes > 32) break;
+        len = i;
+    }
+
+    var smith: Smith = .init(input[0..len]);
 
     var es: Entities = try .init(gpa, .{
         .max_entities = max_entities,
@@ -63,6 +76,12 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
     var all: std.ArrayListUnmanaged(Entity) = .{};
     defer all.deinit(gpa);
 
+    const Mode = union(enum) {
+        build,
+        mutate: struct { steps: u8 },
+    };
+    var mode: Mode = .build;
+
     while (!smith.isEmpty()) {
         // Get a list of all the entities
         {
@@ -73,69 +92,113 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
             }
         }
 
-        // Generate random commands
-        for (0..smith.nextLessThan(u16, cmds_capacity)) |_| {
-            if (all.items.len > 0 and smith.nextLessThan(u8, 10) > 2) {
-                const parent: Entity.Optional = if (smith.nextLessThan(u8, 100) > 10) b: {
-                    break :b all.items[smith.nextLessThan(usize, all.items.len)].toOptional();
-                } else .none;
-                const child = all.items[smith.nextLessThan(usize, all.items.len)];
-                if (log) std.debug.print("{}.parent = {}\n", .{ child, parent });
-                child.cmd(&cb, SetParent, .{parent});
-            }
-            switch (smith.next(enum {
-                reserve,
-                destroy,
-                move,
-            })) {
-                .reserve => try reserve(&cb, &smith, &all),
-                .destroy => {
-                    // Sometimes destroy entities, but not too often
-                    if (all.items.len == 0 or smith.nextLessThan(u8, 100) > 10) {
-                        continue;
-                    }
-                    const e = all.items[smith.nextLessThan(usize, all.items.len)];
-                    switch (smith.next(enum { transform, node, entity })) {
-                        .transform => {
-                            if (log) std.debug.print("remove transform {}\n", .{e});
-                            e.remove(&cb, Transform);
+        switch (mode) {
+            .build => {
+                // Build a random tree with interesting topology
+                if (log) std.debug.print("build phase ({}/{})\n", .{ smith.index, smith.input.len });
+                for (0..smith.nextBetween(u8, 8, 16)) |_| {
+                    if (smith.isEmpty()) break;
+
+                    const child = Entity.reserve(&cb);
+                    if (log) std.debug.print("  reserve {}\n", .{child});
+                    child.add(&cb, Transform, .initLocal(.{
+                        .pos = .{
+                            .x = smith.nextBetween(f32, -100.0, 100.0),
+                            .y = smith.nextBetween(f32, -100.0, 100.0),
                         },
-                        .node => {
-                            if (log) std.debug.print("remove node {}\n", .{e});
-                            e.remove(&cb, Node);
+                        .orientation = .fromAngle(smith.next(f32)),
+                    }));
+                    try all.append(gpa, child);
+                    if (smith.next(u8) > 40) {
+                        const parent: Entity.Optional = all.items[smith.nextLessThan(usize, all.items.len)].toOptional();
+                        if (log) std.debug.print("  {}.parent = {}\n", .{ child, parent });
+                        child.cmd(&cb, SetParent, .{parent});
+                    }
+                }
+                mode = .{ .mutate = .{ .steps = 5 } };
+            },
+            .mutate => |mutate| {
+                if (log) std.debug.print("mutate step {} ({}/{})\n", .{ mutate.steps, smith.index, smith.input.len });
+                // Generate random commands
+                for (0..smith.nextBetween(u8, 1, 10)) |_| {
+                    switch (smith.next(enum { reserve, parent, remove, move })) {
+                        .reserve => {
+                            if (smith.next(bool)) {
+                                const child = Entity.reserve(&cb);
+                                if (log) std.debug.print("  reserve {}\n", .{child});
+                                child.add(&cb, Transform, .initLocal(.{
+                                    .pos = .{
+                                        .x = smith.nextBetween(f32, -100.0, 100.0),
+                                        .y = smith.nextBetween(f32, -100.0, 100.0),
+                                    },
+                                    .orientation = .fromAngle(smith.next(f32)),
+                                }));
+                                try all.append(gpa, child);
+                                if (smith.next(u8) > 40) {
+                                    const parent: Entity.Optional = all.items[smith.nextLessThan(usize, all.items.len)].toOptional();
+                                    if (log) std.debug.print("  {}.parent = {}\n", .{ child, parent });
+                                    child.cmd(&cb, SetParent, .{parent});
+                                }
+                            }
                         },
-                        .entity => {
-                            if (log) std.debug.print("destroy {}\n", .{e});
-                            e.destroy(&cb);
+                        .parent => {
+                            const parent: Entity.Optional = if (smith.nextLessThan(u8, 100) > 10) b: {
+                                break :b all.items[smith.nextLessThan(usize, all.items.len)].toOptional();
+                            } else .none;
+                            const child = all.items[smith.nextLessThan(usize, all.items.len)];
+                            if (log) std.debug.print("  {}.parent = {}\n", .{ child, parent });
+                            child.cmd(&cb, SetParent, .{parent});
+                        },
+                        .remove => {
+                            // Sometimes destroy entities, but not too often
+                            if (all.items.len == 0) continue;
+                            const e = all.items[smith.nextLessThan(usize, all.items.len)];
+                            switch (smith.next(enum { transform, node, entity })) {
+                                .transform => {
+                                    if (log) std.debug.print("  remove transform from {}\n", .{e});
+                                    e.remove(&cb, Transform);
+                                },
+                                .node => {
+                                    if (log) std.debug.print("  remove node from {}\n", .{e});
+                                    e.remove(&cb, Node);
+                                },
+                                .entity => {
+                                    if (log) std.debug.print("  destroy {}\n", .{e});
+                                    e.destroy(&cb);
+                                },
+                            }
+                        },
+                        .move => {
+                            if (all.items.len == 0) continue;
+                            const e = all.items[smith.nextLessThan(usize, all.items.len)];
+                            const transform = e.get(&es, Transform) orelse continue;
+                            if (smith.next(bool)) {
+                                transform.setLocalPos(&es, &cb, .{
+                                    .x = smith.nextBetween(f32, -100.0, 100.0),
+                                    .y = smith.nextBetween(f32, -100.0, 100.0),
+                                });
+                            }
+                            if (smith.next(bool)) {
+                                transform.setLocalOrientation(&es, &cb, .fromAngle(smith.next(f32)));
+                                if (log) std.debug.print("  {} local_pos = {}, local_orientation = {}\n", .{
+                                    e,
+                                    transform.getLocalPos(),
+                                    transform.getLocalOrientation(),
+                                });
+                            }
                         },
                     }
-                },
-                .move => {
-                    if (all.items.len == 0) continue;
-                    const e = all.items[smith.nextLessThan(usize, all.items.len)];
-                    if (e.get(&es, Transform)) |transform| {
-                        if (smith.next(bool)) {
-                            transform.setLocalPos(&es, &cb, .{
-                                .x = smith.nextBetween(f32, -100.0, 100.0),
-                                .y = smith.nextBetween(f32, -100.0, 100.0),
-                            });
-                        }
-                        if (smith.next(bool)) {
-                            transform.setLocalOrientation(&es, &cb, .fromAngle(smith.next(f32)));
-                            if (log) std.debug.print("{} local_pos = {}, local_orientation = {}\n", .{
-                                e,
-                                transform.getLocalPos(),
-                                transform.getLocalOrientation(),
-                            });
-                        }
-                    }
-                },
-            }
+                }
+                if (mutate.steps == 0) {
+                    mode = .build;
+                } else {
+                    mode = .{ .mutate = .{ .steps = mutate.steps - 1 } };
+                }
+            },
         }
 
         exec(&es, &cb);
         Transform.syncAllImmediate(&es);
-        cb.clear(&es);
         try checkOracle(&es);
     }
 }
@@ -168,22 +231,9 @@ pub fn exec(es: *Entities, cb: *CmdBuf) void {
     cb.clear(es);
 }
 
-fn reserve(cb: *CmdBuf, smith: *Smith, all: *std.ArrayListUnmanaged(Entity)) !void {
-    // Don't generate too many entities
-    if (all.items.len > 20) return;
-    const e = Entity.reserve(cb);
-    if (log) std.debug.print("reserve {}\n", .{e});
-    e.add(cb, Transform, .initLocal(.{
-        .pos = .{
-            .x = smith.nextBetween(f32, -100.0, 100.0),
-            .y = smith.nextBetween(f32, -100.0, 100.0),
-        },
-        .orientation = .fromAngle(smith.next(f32)),
-    }));
-    try all.append(gpa, e);
-}
-
 fn checkOracle(es: *const Entities) !void {
+    if (log) std.debug.print("check oracle\n", .{});
+
     // All dirty events should have been cleared by now
     var dirty_events = es.viewIterator(struct { dirty: *const Transform.Dirty });
     try std.testing.expectEqual(null, dirty_events.next());
@@ -208,7 +258,7 @@ fn checkOracle(es: *const Entities) !void {
                 try path.append(gpa, transform);
             }
         }
-        if (log) std.debug.print("path len: {}\n", .{path.items.len});
+        if (log) std.debug.print("  {} path len: {}\n", .{ Entity.from(es, vw.transform), path.items.len });
 
         // Iterate over the path in reverse order to get the ground truth world matrix
         var world_from_model: Mat2x3 = .identity;

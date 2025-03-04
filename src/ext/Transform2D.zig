@@ -197,9 +197,20 @@ pub const Exec = struct {
                     transform.markDirtyImmediate(es);
                 }
             },
-            .remove => |id| if (id == typeId(Node)) {
-                if (batch.entity.get(es, Transform2D)) |transform| {
-                    transform.markDirtyImmediate(es);
+            .remove => |id| {
+                if (id == typeId(Node)) {
+                    if (batch.entity.get(es, Transform2D)) |transform| {
+                        transform.markDirtyImmediate(es);
+                    }
+                } else if (id == typeId(Transform2D)) {
+                    if (batch.entity.get(es, Node)) |node| {
+                        var children = node.childIterator();
+                        while (children.next(es)) |child| {
+                            if (child.get(es, Transform2D)) |child_transform| {
+                                child_transform.markDirtyImmediate(es);
+                            }
+                        }
+                    }
                 }
             },
             else => {},
@@ -237,7 +248,7 @@ pub const Dirty = struct {
     entity: Entity,
 
     /// Recycles all dirty events, allowing their entities to be reused.
-    pub fn recycleAllImmediate(es: *Entities) void {
+    pub inline fn recycleAllImmediate(es: *Entities) void {
         es.recycleArchImmediate(.initOne(.registerImmediate(typeId(Dirty))));
     }
 };

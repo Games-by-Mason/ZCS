@@ -12,7 +12,7 @@ pub fn init(input: []const u8) @This() {
 }
 
 pub fn isEmpty(self: @This()) bool {
-    return self.empty;
+    return self.input.len == 0 or self.empty;
 }
 
 pub fn next(self: *@This(), T: type) T {
@@ -49,10 +49,12 @@ pub fn next(self: *@This(), T: type) T {
             }
         },
         .@"enum" => |@"enum"| {
-            const n = self.next(@"enum".tag_type);
-            if (!@"enum".is_exhaustive) {
-                return @enumFromInt(n);
-            }
+            // If we can, just treat the enum like a number
+            if (!@"enum".is_exhaustive) return @enumFromInt(self.next(@"enum".tag_type));
+
+            // Otherwise, we pick a random field. We may use a larger type than strictly necessary
+            // for a more even distribution.
+            const n = self.next(std.meta.Int(.unsigned, @max(@typeInfo(@"enum".tag_type).int.bits * 2, 16)));
             const m = n % @"enum".fields.len;
             inline for (@"enum".fields, 0..) |field, i| {
                 if (i == m) return @enumFromInt(field.value);
@@ -108,4 +110,9 @@ fn nextRaw(self: *@This(), T: type) T {
     var result: T = undefined;
     @memcpy(std.mem.asBytes(&result), &bytes);
     return result;
+}
+
+pub fn progress(self: @This()) f32 {
+    if (self.isEmpty()) return 1.0;
+    return @as(f32, @floatFromInt(self.index)) / @as(f32, @floatFromInt(self.input.len));
 }
