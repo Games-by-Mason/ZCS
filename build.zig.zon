@@ -1,16 +1,17 @@
 .{
-    .name = "zcs",
+    .name = .zcs,
+    .fingerprint = 0x21fb2c76fcd0125a,
     .version = "0.0.0",
     .minimum_zig_version = "0.14.0-dev.2544+94df665fe",
     .dependencies = .{
         .slot_map = .{
-            .url = "https://github.com/Games-by-Mason/SlotMap/archive/4aac9e43d5354df96d00a38b92eb46f7b9482744.tar.gz",
-            .hash = "12204a000723d559a0b9d3272c3dc3daea1660088ff89fb08628ce35156466e76c2c",
+            .url = "https://github.com/Games-by-Mason/SlotMap/archive/7eaa436c3296e3349fb47593e45ba7c96968d66d.tar.gz",
+            .hash = "slot_map-0.0.0-xUe6_JlIAAAJwxIWgXDeq9rzZwm8KZJPmXMUY_Wg3Hjm",
         },
         // Only used by extensions
         .geom = .{
-            .url = "https://github.com/Games-by-Mason/geom/archive/22daf5fedc93e93525f0bd8cff9a0327c3ac370e.tar.gz",
-            .hash = "122037b81836508dbab1585ae0bf9d86a4b7964194e718c88afdc3a0a9950f872e8d",
+            .url = "https://github.com/Games-by-Mason/geom/archive/ba538447d3c0d8e30d20fa54f26145d753a25347.tar.gz",
+            .hash = "geom-0.0.0-U1ma38MKAQB-8HrVGmGLW6j7XxqKajFcWbWUikWEfhyG",
         },
     },
     .paths = .{
