@@ -25,6 +25,7 @@ const IteratorGeneration = if (std.debug.runtime_safety) u64 else u0;
 
 const max_align = zcs.TypeInfo.max_align;
 
+/// For internal use. A slot in the slot map.
 pub const Slot = struct {
     arch: CompFlag.Set,
     committed: bool,
