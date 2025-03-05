@@ -31,7 +31,7 @@ const max_entities = 100000;
 const comp_bytes = 100000;
 
 test "fuzz transforms cmdbuf" {
-    try std.testing.fuzz({}, fuzzNodesCmdBuf, .{ .corpus = &.{} });
+    try std.testing.fuzz({}, fuzzTransformsCmdBuf, .{ .corpus = &.{} });
 }
 
 test "rand transforms cmdbuf" {
@@ -40,10 +40,10 @@ test "rand transforms cmdbuf" {
     const input: []u8 = try gpa.alloc(u8, 262144);
     defer gpa.free(input);
     rand.bytes(input);
-    try fuzzNodesCmdBuf({}, input);
+    try fuzzTransformsCmdBuf({}, input);
 }
 
-fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
+fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
     defer CompFlag.unregisterAll();
 
     var smith: Smith = .init(input);
