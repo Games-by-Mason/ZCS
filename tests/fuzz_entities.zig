@@ -34,7 +34,7 @@ test "fuzz cmdbuf saturated" {
 test "rand cmdbuf" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
-    const input: []u8 = try gpa.alloc(u8, 8192);
+    const input: []u8 = try gpa.alloc(u8, 32768);
     defer gpa.free(input);
     rand.bytes(input);
     try fuzzCmdBuf({}, input);
@@ -43,7 +43,7 @@ test "rand cmdbuf" {
 test "rand cmdbuf saturated" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
-    const input: []u8 = try gpa.alloc(u8, 8192);
+    const input: []u8 = try gpa.alloc(u8, 16384);
     defer gpa.free(input);
     rand.bytes(input);
     try fuzzCmdBufSaturated({}, input);

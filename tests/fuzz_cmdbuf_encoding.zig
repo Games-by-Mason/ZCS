@@ -37,7 +37,7 @@ test "fuzz cmdbuf encoding" {
 test "rand cmdbuf encoding" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
-    const input: []u8 = try gpa.alloc(u8, 8192);
+    const input: []u8 = try gpa.alloc(u8, 131072);
     defer gpa.free(input);
     rand.bytes(input);
     try fuzzCmdBufEncoding({}, input);

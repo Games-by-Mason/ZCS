@@ -89,7 +89,7 @@ test "fuzz node cycles" {
 test "rand nodes immediate" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
-    const input: []u8 = try gpa.alloc(u8, 8192);
+    const input: []u8 = try gpa.alloc(u8, 32768);
     defer gpa.free(input);
     rand.bytes(input);
     try fuzzNodes({}, input);
@@ -98,7 +98,7 @@ test "rand nodes immediate" {
 test "rand node cycles" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
-    const input: []u8 = try gpa.alloc(u8, 8192);
+    const input: []u8 = try gpa.alloc(u8, 524288);
     defer gpa.free(input);
     rand.bytes(input);
     try fuzzNodeCycles({}, input);
@@ -115,7 +115,7 @@ test "fuzz node cycles cmdbuf" {
 test "rand nodes cmdbuf" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
-    const input: []u8 = try gpa.alloc(u8, 8192);
+    const input: []u8 = try gpa.alloc(u8, 65536);
     defer gpa.free(input);
     rand.bytes(input);
     try fuzzNodesCmdBuf({}, input);
@@ -124,7 +124,7 @@ test "rand nodes cmdbuf" {
 test "rand node cycles cmdbuf" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
-    const input: []u8 = try gpa.alloc(u8, 8192);
+    const input: []u8 = try gpa.alloc(u8, 16777216);
     defer gpa.free(input);
     rand.bytes(input);
     try fuzzNodeCyclesCmdBuf({}, input);

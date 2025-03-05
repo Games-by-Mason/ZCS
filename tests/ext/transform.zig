@@ -37,7 +37,7 @@ test "fuzz transforms cmdbuf" {
 test "rand transforms cmdbuf" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
-    const input: []u8 = try gpa.alloc(u8, 2048);
+    const input: []u8 = try gpa.alloc(u8, 262144);
     defer gpa.free(input);
     rand.bytes(input);
     try fuzzNodesCmdBuf({}, input);
@@ -46,20 +46,7 @@ test "rand transforms cmdbuf" {
 fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
     defer CompFlag.unregisterAll();
 
-    // Working around apparent bug in fuzzer
-    var len: usize = 0;
-    var zeroes: usize = 0;
-    for (0..input.len) |i| {
-        if (input[i] == 0) {
-            zeroes += 1;
-        } else {
-            zeroes = 0;
-        }
-        if (zeroes > 32) break;
-        len = i;
-    }
-
-    var smith: Smith = .init(input[0..len]);
+    var smith: Smith = .init(input);
 
     var es: Entities = try .init(gpa, .{
         .max_entities = max_entities,
