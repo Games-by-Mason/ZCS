@@ -121,23 +121,17 @@ pub fn dirtySubtreeIterator(es: *const Entities) DirtySubtreeIterator {
 /// An iterator over the roots of the dirty subtrees.
 pub const DirtySubtreeIterator = struct {
     const EventView = struct { dirty: *const Dirty };
-
     events: Entities.ViewIterator(EventView),
 
-    total: usize = 0,
-    updated: usize = 0,
-
     /// Returns the next transform.
-    pub fn next(self: *@This(), es: *const Entities) ?DirtySubtree {
+    pub fn next(self: *@This(), es: *const Entities) ?Subtree {
         while (self.events.next()) |event| {
             if (event.dirty.entity.view(es, struct {
                 transform: *Transform2D,
                 node: ?*const Node,
             })) |vw| {
-                self.total += 1;
-
                 // If we've already processed this transform, skip it
-                if (vw.transform.cache == .clean) continue;
+                if (vw.transform.cache != .dirty) continue;
 
                 // Get the event entity's node
                 const event_node = vw.node orelse {
@@ -189,13 +183,12 @@ pub const DirtySubtreeIterator = struct {
             }
         }
 
-        assert(self.total == self.updated);
         return null;
     }
 };
 
-/// A dirty transform subtree.
-pub const DirtySubtree = struct {
+/// A transform subtree, see `DirtySubtreeIterator`.
+pub const Subtree = struct {
     transform: *Transform2D,
     node: ?*const Node,
 
@@ -207,7 +200,7 @@ pub const DirtySubtree = struct {
         };
     }
 
-    /// A post order iterator over the dirty subtree. Skips subtrees of this subtree whose roots do
+    /// A post order iterator over the subtree. Skips subtrees of this subtree whose roots do
     /// not have transforms.
     pub const Iterator = struct {
         parent: ?*Transform2D,
@@ -247,8 +240,24 @@ pub fn syncAllImmediate(es: *Entities) void {
         // all subtrees are independent!
         var transforms = subtree.preOrderIterator(es);
         while (transforms.next(es)) |transform| {
-            if (transform.cache != .clean) subtrees.updated += 1;
             transform.syncImmediate(es);
+        }
+    }
+
+    // Check assertions and clean up
+    finishSyncAllImmediate(es);
+}
+
+/// If implementing a custom sync, call this after it completes to clean up dirty events and check
+/// that all dirty entities were synced.
+pub fn finishSyncAllImmediate(es: *Entities) void {
+    // Assert that we covered all the dirty transforms
+    if (std.debug.runtime_safety) {
+        var it = es.viewIterator(DirtySubtreeIterator.EventView);
+        while (it.next()) |vw| {
+            if (vw.dirty.entity.get(es, Transform2D)) |transform| {
+                assert(transform.cache == .clean);
+            }
         }
     }
 
@@ -257,7 +266,7 @@ pub fn syncAllImmediate(es: *Entities) void {
 }
 
 /// Immediately synchronize this entity using the given `world_from_model` matrix.
-inline fn syncImmediate(self: *@This(), es: *const Entities) void {
+pub fn syncImmediate(self: *@This(), es: *const Entities) void {
     const world_from_model = self.getParentWorldFromModel(es);
     const translation: Mat2x3 = .translation(self.cached_local_pos);
     const rotation: Mat2x3 = .rotation(self.cached_local_orientation);

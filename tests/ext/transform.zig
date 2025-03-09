@@ -30,20 +30,38 @@ const cmds_capacity = 100;
 const max_entities = 100000;
 const comp_bytes = 100000;
 
-test "fuzz transforms cmdbuf" {
-    try std.testing.fuzz({}, fuzzTransformsCmdBuf, .{ .corpus = &.{} });
+test "fuzz transforms cmdbuf single thread" {
+    try std.testing.fuzz(SyncMode.single_threaded, fuzzTransformsCmdBuf, .{ .corpus = &.{} });
 }
 
-test "rand transforms cmdbuf" {
+test "rand transforms cmdbuf single thread" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
     const input: []u8 = try gpa.alloc(u8, 262144);
     defer gpa.free(input);
     rand.bytes(input);
-    try fuzzTransformsCmdBuf({}, input);
+    try fuzzTransformsCmdBuf(SyncMode.single_threaded, input);
 }
 
-fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
+test "fuzz transforms cmdbuf deferred" {
+    try std.testing.fuzz(SyncMode.deferred, fuzzTransformsCmdBuf, .{ .corpus = &.{} });
+}
+
+test "rand transforms cmdbuf deferred" {
+    var xoshiro_256: std.Random.Xoshiro256 = .init(0);
+    const rand = xoshiro_256.random();
+    const input: []u8 = try gpa.alloc(u8, 262144);
+    defer gpa.free(input);
+    rand.bytes(input);
+    try fuzzTransformsCmdBuf(SyncMode.deferred, input);
+}
+
+const SyncMode = enum {
+    single_threaded,
+    deferred,
+};
+
+fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
     defer CompFlag.unregisterAll();
 
     var smith: Smith = .init(input);
@@ -185,7 +203,40 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
         }
 
         exec(&es, &cb);
-        Transform.syncAllImmediate(&es);
+        switch (sync_mode) {
+            // Test the single threaded sync
+            .single_threaded => Transform.syncAllImmediate(&es),
+            // Test deferring the sync for later, this exercises many of the code paths that would
+            // be executed by a threaded sync, but deterministically. We reverse the order for
+            // to make sure we aren't relying on them being executed in order.
+            .deferred => {
+                // Accumulate the dirty subtrees
+                var deferred: std.ArrayListUnmanaged(Transform.Subtree) = .{};
+                defer deferred.deinit(gpa);
+
+                var subtrees = Transform.dirtySubtreeIterator(&es);
+                while (subtrees.next(&es)) |subtree| {
+                    try deferred.append(gpa, subtree);
+                }
+
+                // Recycle all dirty events
+                Transform.Dirty.recycleAllImmediate(&es);
+
+                // Sync the dirty subtrees
+                for (0..deferred.items.len) |i| {
+                    const subtree = deferred.items[deferred.items.len - 1 - i];
+                    // Synchronize the subtree. This work could be moved to a separate thread if desired, since
+                    // all subtrees are independent!
+                    var transforms = subtree.preOrderIterator(&es);
+                    while (transforms.next(&es)) |transform| {
+                        transform.syncImmediate(&es);
+                    }
+                }
+
+                // Clean up and check assertions
+                Transform.finishSyncAllImmediate(&es);
+            },
+        }
         try checkOracle(&es);
     }
 }
