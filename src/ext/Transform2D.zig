@@ -109,7 +109,9 @@ pub fn getForward(self: @This()) Vec2 {
     return self.cached_world_from_model.timesDir(.y_pos);
 }
 
-/// Returns an iterator over the roots of the dirty subtrees.
+/// Returns an iterator over the roots of the dirty subtrees. This will flip the root cache of each
+/// subtree from `.dirty` to `.pending` to prevent the results from overlapping, this means that you
+/// can use this method to synchronize subtrees on separate threads if desired.
 pub fn dirtySubtreeIterator(es: *const Entities) DirtySubtreeIterator {
     return .{
         .events = es.viewIterator(DirtySubtreeIterator.EventView),
@@ -233,9 +235,16 @@ pub const DirtySubtree = struct {
 
 /// Immediately synchronize the world space position and orientation of all dirty entities and their
 /// children. Recycles all dirty events.
+///
+/// This will do the sync on a single thread. If you have a large number of moving entities,
+/// consider calling `dirtySubtreeIterator` yourself and processing a batch of dirty subtrees on
+/// each core. This implementation may be used as reference.
 pub fn syncAllImmediate(es: *Entities) void {
+    // Iterate over the subtrees
     var subtrees = dirtySubtreeIterator(es);
     while (subtrees.next(es)) |subtree| {
+        // Synchronize the subtree. This work could be moved to a separate thread if desired, since
+        // all subtrees are independent!
         var transforms = subtree.preOrderIterator(es);
         while (transforms.next(es)) |transform| {
             if (transform.cache != .clean) subtrees.updated += 1;
