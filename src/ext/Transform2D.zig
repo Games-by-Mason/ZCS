@@ -90,91 +90,147 @@ pub inline fn getLocalOrientation(self: @This()) Rotor2 {
     return self.cached_local_orientation;
 }
 
+/// Returns the world from model matrix.
 pub inline fn getWorldFromModel(self: @This()) Mat2x3 {
     return self.cached_world_from_model;
 }
 
+/// Returns the parent's world form model matrix.
+pub inline fn getParentWorldFromModel(self: *const @This(), es: *const Entities) Mat2x3 {
+    const entity: Entity = .from(es, self);
+    const node = entity.get(es, Node) orelse return .identity;
+    const parent = node.parent.unwrap() orelse return .identity;
+    const parent_transform = parent.get(es, Transform2D) orelse return .identity;
+    return parent_transform.getWorldFromModel();
+}
+
+/// Returns the forward direction of this transform.
 pub fn getForward(self: @This()) Vec2 {
     return self.cached_world_from_model.timesDir(.y_pos);
 }
 
+/// Returns an iterator over the roots of the dirty subtrees.
+pub fn dirtySubtreeIterator(es: *const Entities) DirtySubtreeIterator {
+    return .{
+        .events = es.viewIterator(DirtySubtreeIterator.EventView),
+    };
+}
+
+/// An iterator over the roots of the dirty subtrees.
+pub const DirtySubtreeIterator = struct {
+    const EventView = struct { dirty: *const Dirty };
+
+    events: Entities.ViewIterator(EventView),
+
+    total: usize = 0,
+    updated: usize = 0,
+
+    /// Returns the next transform.
+    pub fn next(self: *@This(), es: *const Entities) ?DirtySubtree {
+        while (self.events.next()) |event| {
+            if (event.dirty.entity.view(es, struct {
+                transform: *Transform2D,
+                node: ?*const Node,
+            })) |vw| {
+                self.total += 1;
+
+                // If we've already processed this transform, skip it
+                if (!vw.transform.dirty) continue;
+
+                // Get the event's node, or return as its own subtree if it has no node
+                const event_node = vw.node orelse return .{
+                    .transform = vw.transform,
+                    .node = null,
+                };
+
+                // Move to the topmost dirty node in this transform subtree so that we don't
+                // process the same transforms multiple times
+                var subtree = .{
+                    .node = event_node,
+                    .transform = vw.transform,
+                };
+                var ancestors = event_node.ancestorIterator();
+                while (ancestors.next(es)) |curr| {
+                    // Get the transform, or early out if there is none since we don't propagate
+                    // through non transform nodes
+                    const transform = curr.get(es, Transform2D) orelse break;
+                    if (transform.dirty) subtree = .{
+                        .transform = transform,
+                        .node = curr,
+                    };
+                }
+
+                // Return the subtree
+                return .{
+                    .transform = subtree.transform,
+                    .node = subtree.node,
+                };
+            }
+        }
+
+        assert(self.total == self.updated);
+        return null;
+    }
+};
+
+/// A dirty transform subtree.
+pub const DirtySubtree = struct {
+    transform: *Transform2D,
+    node: ?*const Node,
+
+    /// Returns a post order iterator over the subtree. This will visit parents before children.
+    pub fn preOrderIterator(self: @This(), es: *const Entities) Iterator {
+        return .{
+            .parent = self.transform,
+            .children = if (self.node) |node| node.preOrderIterator(es) else .empty,
+        };
+    }
+
+    /// A post order iterator over the dirty subtree. Skips subtrees of this subtree whose roots do
+    /// not have transforms.
+    pub const Iterator = struct {
+        parent: ?*Transform2D,
+        children: Node.PreOrderIterator,
+
+        /// Returns the next transform.
+        pub fn next(self: *@This(), es: *const Entities) ?*Transform2D {
+            if (self.parent) |parent| {
+                self.parent = null;
+                return parent;
+            }
+
+            while (self.children.next(es)) |node| {
+                if (node.get(es, Transform2D)) |transform| {
+                    return transform;
+                } else {
+                    self.children.skipSubtree(es, node);
+                }
+            }
+
+            return null;
+        }
+    };
+};
+
 /// Immediately synchronize the world space position and orientation of all dirty entities and their
 /// children. Recycles all dirty events.
 pub fn syncAllImmediate(es: *Entities) void {
-    var it = es.viewIterator(struct { dirty: *const Dirty });
-    var total: usize = 0;
-    var updated: usize = 0;
-    while (it.next()) |event| {
-        if (event.dirty.entity.view(es, struct {
-            transform: *Transform2D,
-            node: ?*const Node,
-        })) |vw| {
-            total += 1;
-
-            // If we're already processed this node, skip it
-            if (!vw.transform.dirty) continue;
-
-            if (vw.node) |unwrapped| {
-                // Move to the topmost dirty node in this transform tree that we don't reprocess
-                // nodes multiple times
-                const top = b: {
-                    var ancestors = unwrapped.ancestorIterator();
-                    var top: struct { node: *const Node, transform: *Transform2D } = .{
-                        .node = unwrapped,
-                        .transform = vw.transform,
-                    };
-                    while (ancestors.next(es)) |curr| {
-                        const transform = curr.get(es, Transform2D) orelse break;
-                        if (transform.dirty) top = .{
-                            .transform = transform,
-                            .node = curr,
-                        };
-                    }
-                    break :b top;
-                };
-
-                // Update the transform and all its children
-                top.transform.syncImmediate(b: {
-                    if (top.node.parent.unwrap()) |parent| {
-                        if (parent.get(es, Transform2D)) |transform| {
-                            break :b transform.getWorldFromModel();
-                        }
-                    }
-                    break :b .identity;
-                });
-                updated += 1;
-
-                var children = top.node.preOrderIterator(es);
-                while (children.next(es)) |child| {
-                    if (child.get(es, Transform2D)) |child_transform| {
-                        const parent = child.getParent(es).?;
-                        const parent_wfm: Mat2x3 = if (parent.get(es, Transform2D)) |t|
-                            t.cached_world_from_model
-                        else
-                            .identity;
-                        if (child_transform.dirty) updated += 1;
-                        child_transform.syncImmediate(parent_wfm);
-                    } else {
-                        // The current node doesn't have a transform, so the fact that it's dirty
-                        // doesn't affect its children
-                        children.skipSubtree(es, child);
-                    }
-                }
-            } else {
-                // Transforms with no nodes, and therefore no parents, are updated directly
-                vw.transform.syncImmediate(.identity);
-                updated += 1;
-            }
+    var subtrees = dirtySubtreeIterator(es);
+    while (subtrees.next(es)) |subtree| {
+        var transforms = subtree.preOrderIterator(es);
+        while (transforms.next(es)) |transform| {
+            if (transform.dirty) subtrees.updated += 1;
+            transform.syncImmediate(es);
         }
     }
-    assert(total == updated);
 
     // Recycle all dirty events
     Dirty.recycleAllImmediate(es);
 }
 
 /// Immediately synchronize this entity using the given `world_from_model` matrix.
-inline fn syncImmediate(self: *@This(), world_from_model: Mat2x3) void {
+inline fn syncImmediate(self: *@This(), es: *const Entities) void {
+    const world_from_model = self.getParentWorldFromModel(es);
     const translation: Mat2x3 = .translation(self.cached_local_pos);
     const rotation: Mat2x3 = .rotation(self.cached_local_orientation);
     self.cached_world_from_model = rotation.applied(translation).applied(world_from_model);

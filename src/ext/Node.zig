@@ -173,15 +173,21 @@ const AncestorIterator = struct {
 /// children.
 pub fn preOrderIterator(self: *const @This(), es: *const Entities) PreOrderIterator {
     return .{
-        .start = self.getEntity(es),
+        .start = self.getEntity(es).toOptional(),
         .curr = self.first_child,
     };
 }
 
 /// A pre-order iterator over `(start, ...]`.
 pub const PreOrderIterator = struct {
-    start: Entity,
+    start: Entity.Optional,
     curr: Entity.Optional,
+
+    /// An empty pre-order iterator.
+    pub const empty: @This() = .{
+        .start = .none,
+        .curr = .none,
+    };
 
     /// Returns the next child, or `null` if there are none.
     pub fn next(self: *@This(), es: *const Entities) ?*Node {
@@ -192,7 +198,7 @@ pub const PreOrderIterator = struct {
         } else {
             var has_next_sib = pre;
             while (has_next_sib.next_sib.unwrap() == null) {
-                if (has_next_sib.parent.unwrap().? == self.start) {
+                if (has_next_sib.parent.unwrap().? == self.start.unwrap().?) {
                     self.curr = .none;
                     return pre;
                 }
@@ -205,13 +211,17 @@ pub const PreOrderIterator = struct {
 
     /// Fast forward the iterator to just after the given subtree.
     ///
-    /// Asserts that the subtree is contained by this iterator.
+    /// Asserts that `subtree` is a subtree of this iterator.
     pub fn skipSubtree(self: *@This(), es: *const Entities, subtree: *const Node) void {
-        assert(self.start.get(es, Node).?.isAncestorOf(es, subtree));
+        // Assert that subtree is contained by this iterator. If it isn't, we'd end up with an
+        // infinite loop.
+        if (self.start.unwrap()) |start| {
+            assert(start.get(es, Node).?.isAncestorOf(es, subtree));
+        }
 
         var has_next_sib = subtree;
         while (has_next_sib.next_sib.unwrap() == null) {
-            if (has_next_sib.parent.unwrap().? == self.start) {
+            if (has_next_sib.parent.unwrap().? == self.start.unwrap().?) {
                 self.curr = .none;
                 return;
             }
