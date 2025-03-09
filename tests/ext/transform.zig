@@ -233,8 +233,8 @@ fn checkOracle(es: *const Entities) !void {
         transform: *const Transform,
     });
     while (iter.next()) |vw| {
-        // The entity should not be dirty anymore
-        try std.testing.expect(!vw.transform.dirty);
+        // The cache should be clean
+        try std.testing.expect(vw.transform.cache == .clean);
 
         // Get the path
         try path.append(gpa, vw.transform);

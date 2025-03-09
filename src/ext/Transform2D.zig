@@ -29,7 +29,7 @@ const Transform2D = @This();
 cached_local_pos: Vec2,
 cached_local_orientation: Rotor2,
 cached_world_from_model: Mat2x3,
-dirty: bool,
+cache: enum { clean, dirty, pending },
 
 pub const InitLocalOptions = struct {
     pos: Vec2 = .zero,
@@ -42,7 +42,7 @@ pub fn initLocal(options: InitLocalOptions) @This() {
         .cached_local_pos = options.pos,
         .cached_local_orientation = options.orientation,
         .cached_world_from_model = undefined,
-        .dirty = true,
+        .cache = .dirty,
     };
 }
 
@@ -135,12 +135,18 @@ pub const DirtySubtreeIterator = struct {
                 self.total += 1;
 
                 // If we've already processed this transform, skip it
-                if (!vw.transform.dirty) continue;
+                if (vw.transform.cache == .clean) continue;
 
-                // Get the event's node, or return as its own subtree if it has no node
-                const event_node = vw.node orelse return .{
-                    .transform = vw.transform,
-                    .node = null,
+                // Get the event entity's node
+                const event_node = vw.node orelse {
+                    // The event's entity has no node, mark it as pending and return it as its own
+                    // subtree
+                    assert(vw.transform.cache != .pending); // Impossible with no node
+                    vw.transform.cache = .pending;
+                    return .{
+                        .transform = vw.transform,
+                        .node = null,
+                    };
                 };
 
                 // Move to the topmost dirty node in this transform subtree so that we don't
@@ -154,13 +160,26 @@ pub const DirtySubtreeIterator = struct {
                     // Get the transform, or early out if there is none since we don't propagate
                     // through non transform nodes
                     const transform = curr.get(es, Transform2D) orelse break;
-                    if (transform.dirty) subtree = .{
-                        .transform = transform,
-                        .node = curr,
-                    };
+
+                    // Check the cache state
+                    switch (transform.cache) {
+                        // If the transform is dirty, set it as the new root
+                        .dirty => subtree = .{
+                            .transform = transform,
+                            .node = curr,
+                        },
+                        // If it's clean ignore it
+                        .clean => {},
+                        // If it's pending, this subtree has already been queued up for processing
+                        // so we should skip it. This is relevant when queuing up of subtrees is
+                        // separated from processing them, e.g. when multithreading.
+                        .pending => continue,
+                    }
                 }
 
-                // Return the subtree
+                // Mark the subtree root as pending and return it
+                assert(subtree.transform.cache == .dirty);
+                subtree.transform.cache = .pending;
                 return .{
                     .transform = subtree.transform,
                     .node = subtree.node,
@@ -219,7 +238,7 @@ pub fn syncAllImmediate(es: *Entities) void {
     while (subtrees.next(es)) |subtree| {
         var transforms = subtree.preOrderIterator(es);
         while (transforms.next(es)) |transform| {
-            if (transform.dirty) subtrees.updated += 1;
+            if (transform.cache != .clean) subtrees.updated += 1;
             transform.syncImmediate(es);
         }
     }
@@ -234,7 +253,7 @@ inline fn syncImmediate(self: *@This(), es: *const Entities) void {
     const translation: Mat2x3 = .translation(self.cached_local_pos);
     const rotation: Mat2x3 = .rotation(self.cached_local_orientation);
     self.cached_world_from_model = rotation.applied(translation).applied(world_from_model);
-    self.dirty = false;
+    self.cache = .clean;
 }
 
 /// `Exec` provides helpers for processing hierarchy changes via the command buffer.
@@ -253,7 +272,7 @@ pub const Exec = struct {
             },
             .add => |comp| if (comp.id == typeId(Transform2D)) {
                 if (batch.entity.get(es, Transform2D)) |transform| {
-                    transform.dirty = false;
+                    transform.cache = .clean;
                     transform.markDirtyImmediate(es);
                 }
             },
@@ -284,22 +303,24 @@ pub const Exec = struct {
 ///
 //// Must be called manually if modifying the transform fields directly.
 pub fn markDirty(self: *@This(), es: *const Entities, cb: *CmdBuf) void {
-    if (!self.dirty) {
-        self.dirty = true;
-        const e: Entity = .reserve(cb);
-        e.add(cb, Dirty, .{ .entity = .from(es, self) });
-    }
+    assert(self.cache != .pending);
+    if (self.cache == .dirty) return;
+
+    self.cache = .dirty;
+    const e: Entity = .reserve(cb);
+    e.add(cb, Dirty, .{ .entity = .from(es, self) });
 }
 
 /// Similar to `markDirty`, but immediately emits the event instead of adding it to a command
 /// buffer.
 pub fn markDirtyImmediate(self: *@This(), es: *Entities) void {
-    if (!self.dirty) {
-        self.dirty = true;
-        const e: Entity = .reserveImmediate(es);
-        const dirty: Dirty = .{ .entity = .from(es, self) };
-        assert(e.changeArchImmediate(es, .{ .add = &.{.init(Dirty, &dirty)} }));
-    }
+    assert(self.cache != .pending);
+    if (self.cache == .dirty) return;
+
+    self.cache = .dirty;
+    const e: Entity = .reserveImmediate(es);
+    const dirty: Dirty = .{ .entity = .from(es, self) };
+    assert(e.changeArchImmediate(es, .{ .add = &.{.init(Dirty, &dirty)} }));
 }
 
 /// The dirty event is emitted for transforms that have been moved or re-parented.
