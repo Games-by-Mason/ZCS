@@ -187,8 +187,8 @@ pub const PreOrderIterator = struct {
     pub fn next(self: *@This(), es: *const Entities) ?*Node {
         const pre_entity = self.curr.unwrap() orelse return null;
         const pre = pre_entity.get(es, Node).?;
-        if (pre.first_child.unwrap()) |first_child| {
-            self.curr = first_child.toOptional();
+        if (pre.first_child != Entity.Optional.none) {
+            self.curr = pre.first_child;
         } else {
             var has_next_sib = pre;
             while (has_next_sib.next_sib.unwrap() == null) {
@@ -201,6 +201,23 @@ pub const PreOrderIterator = struct {
             self.curr = has_next_sib.next_sib.unwrap().?.toOptional();
         }
         return pre;
+    }
+
+    /// Fast forward the iterator to just after the given subtree.
+    ///
+    /// Asserts that the subtree is contained by this iterator.
+    pub fn skipSubtree(self: *@This(), es: *const Entities, subtree: *const Node) void {
+        assert(self.start.get(es, Node).?.isAncestorOf(es, subtree));
+
+        var has_next_sib = subtree;
+        while (has_next_sib.next_sib.unwrap() == null) {
+            if (has_next_sib.parent.unwrap().? == self.start) {
+                self.curr = .none;
+                return;
+            }
+            has_next_sib = has_next_sib.getParent(es).?;
+        }
+        self.curr = has_next_sib.next_sib.unwrap().?.toOptional();
     }
 };
 

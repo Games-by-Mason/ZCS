@@ -115,8 +115,8 @@ pub fn syncAllImmediate(es: *Entities) void {
             if (!vw.transform.dirty) continue;
 
             if (vw.node) |unwrapped| {
-                // Move to the topmost dirty node in this tree of the hierarchy so that we don't
-                // reprocess nodes multiple times
+                // Move to the topmost dirty node in this transform tree that we don't reprocess
+                // nodes multiple times
                 const top = b: {
                     var ancestors = unwrapped.ancestorIterator();
                     var top: struct { node: *const Node, transform: *Transform2D } = .{
@@ -147,17 +147,21 @@ pub fn syncAllImmediate(es: *Entities) void {
                 var children = top.node.preOrderIterator(es);
                 while (children.next(es)) |child| {
                     if (child.get(es, Transform2D)) |child_transform| {
-                        if (child_transform.dirty) updated += 1;
                         const parent = child.getParent(es).?;
                         const parent_wfm: Mat2x3 = if (parent.get(es, Transform2D)) |t|
                             t.cached_world_from_model
                         else
                             .identity;
+                        if (child_transform.dirty) updated += 1;
                         child_transform.syncImmediate(parent_wfm);
+                    } else {
+                        // The current node doesn't have a transform, so the fact that it's dirty
+                        // doesn't affect its children
+                        children.skipSubtree(es, child);
                     }
                 }
             } else {
-                // Transforms with no parents are updated directly
+                // Transforms with no nodes, and therefore no parents, are updated directly
                 vw.transform.syncImmediate(.identity);
                 updated += 1;
             }
