@@ -26,13 +26,28 @@ const Mat2x3 = zcs.ext.geom.Mat2x3;
 
 const Transform2D = @This();
 
+/// For internal use. The cached local position.
 cached_local_pos: Vec2,
+/// For internal use. The cached local orientation.
 cached_local_orientation: Rotor2,
+/// For internal use. The cached world from model matrix.
 cached_world_from_model: Mat2x3,
-cache: enum { clean, dirty, pending },
+/// For internal use. The cache status.
+cache: enum {
+    /// This transform's cache is clean.
+    clean,
+    /// This transform's cache is dirty.
+    dirty,
+    /// This transform's cache is dirty, and additionally it was marked as the root of a dirty
+    /// subtree.
+    dirty_root,
+},
 
+/// Options for `initLocal`.
 pub const InitLocalOptions = struct {
+    /// The initial position in local space.
     pos: Vec2 = .zero,
+    /// The initial orientation in local space.
     orientation: Rotor2 = .identity,
 };
 
@@ -110,8 +125,8 @@ pub fn getForward(self: @This()) Vec2 {
 }
 
 /// Returns an iterator over the roots of the dirty subtrees. This will flip the root cache of each
-/// subtree from `.dirty` to `.pending` to prevent the results from overlapping, this means that you
-/// can use this method to synchronize subtrees on separate threads if desired.
+/// subtree from `.dirty` to `.dirty_subtreee` to prevent the results from overlapping, this means
+/// that you can use this method to synchronize subtrees on separate threads if desired.
 pub fn dirtySubtreeIterator(es: *const Entities) DirtySubtreeIterator {
     return .{
         .events = es.viewIterator(DirtySubtreeIterator.EventView),
@@ -133,53 +148,56 @@ pub const DirtySubtreeIterator = struct {
                 // If we've already processed this transform, skip it
                 if (vw.transform.cache != .dirty) continue;
 
-                // Get the event entity's node
-                const event_node = vw.node orelse {
-                    // The event's entity has no node, mark it as pending and return it as its own
-                    // subtree
-                    assert(vw.transform.cache != .pending); // Impossible with no node
-                    vw.transform.cache = .pending;
-                    return .{
+                const root: Subtree = b: {
+                    // Get the event entity's node
+                    const event_node = vw.node orelse {
+                        // The event's entity has no node, break as its own subtree
+                        break :b .{
+                            .transform = vw.transform,
+                            .node = null,
+                        };
+                    };
+
+                    // Move to the topmost dirty node in this transform subtree so that we don't
+                    // process the same transforms multiple times
+                    var subtree = .{
+                        .node = event_node,
                         .transform = vw.transform,
-                        .node = null,
+                    };
+                    var ancestors = event_node.ancestorIterator();
+                    while (ancestors.next(es)) |curr| {
+                        // Get the transform, or early out if there is none since we don't propagate
+                        // through non transform nodes
+                        const transform = curr.get(es, Transform2D) orelse break;
+
+                        // Check the cache state
+                        switch (transform.cache) {
+                            // If the transform is dirty, set it as the new root
+                            .dirty => subtree = .{
+                                .transform = transform,
+                                .node = curr,
+                            },
+                            // If it's clean ignore it
+                            .clean => {},
+                            // If it's already marked as a root, this subtree has already been
+                            // queued up for processing so we should skip it. This is relevant when
+                            // queuing up of subtrees is separated from processing them, e.g. when
+                            // multithreading.
+                            .dirty_root => continue,
+                        }
+                    }
+
+                    // Break with the subtree
+                    break :b .{
+                        .transform = subtree.transform,
+                        .node = subtree.node,
                     };
                 };
 
-                // Move to the topmost dirty node in this transform subtree so that we don't
-                // process the same transforms multiple times
-                var subtree = .{
-                    .node = event_node,
-                    .transform = vw.transform,
-                };
-                var ancestors = event_node.ancestorIterator();
-                while (ancestors.next(es)) |curr| {
-                    // Get the transform, or early out if there is none since we don't propagate
-                    // through non transform nodes
-                    const transform = curr.get(es, Transform2D) orelse break;
-
-                    // Check the cache state
-                    switch (transform.cache) {
-                        // If the transform is dirty, set it as the new root
-                        .dirty => subtree = .{
-                            .transform = transform,
-                            .node = curr,
-                        },
-                        // If it's clean ignore it
-                        .clean => {},
-                        // If it's pending, this subtree has already been queued up for processing
-                        // so we should skip it. This is relevant when queuing up of subtrees is
-                        // separated from processing them, e.g. when multithreading.
-                        .pending => continue,
-                    }
-                }
-
-                // Mark the subtree root as pending and return it
-                assert(subtree.transform.cache == .dirty);
-                subtree.transform.cache = .pending;
-                return .{
-                    .transform = subtree.transform,
-                    .node = subtree.node,
-                };
+                // Mark the subtree as a dirty root and return it
+                assert(root.transform.cache == .dirty);
+                root.transform.cache = .dirty_root;
+                return root;
             }
         }
 
@@ -227,17 +245,12 @@ pub const Subtree = struct {
 };
 
 /// Immediately synchronize the world space position and orientation of all dirty entities and their
-/// children. Recycles all dirty events.
-///
-/// This will do the sync on a single thread. If you have a large number of moving entities,
-/// consider calling `dirtySubtreeIterator` yourself and processing a batch of dirty subtrees on
-/// each core. This implementation may be used as reference.
+/// children. Recycles all dirty events. For multithreaded sync, see `syncAllThreadPool`.
 pub fn syncAllImmediate(es: *Entities) void {
     // Iterate over the subtrees
     var subtrees = dirtySubtreeIterator(es);
     while (subtrees.next(es)) |subtree| {
-        // Synchronize the subtree. This work could be moved to a separate thread if desired, since
-        // all subtrees are independent!
+        // Synchronize the subtree
         var transforms = subtree.preOrderIterator(es);
         while (transforms.next(es)) |transform| {
             transform.syncImmediate(es);
@@ -248,16 +261,59 @@ pub fn syncAllImmediate(es: *Entities) void {
     finishSyncAllImmediate(es);
 }
 
+/// Options for `syncAllThreadPool`.
+pub const SyncAllThreadPoolOptions = struct {
+    /// The max number of subtrees per chunk.
+    chunk_size: usize,
+};
+
+/// Spawns tasks to sync the dirty transforms in parallel on the given thread pool. Call
+/// `finishSyncAllImmediate` after waiting on the wait group.
+///
+/// May be used as a reference for implementing your own multithreaded sync if you're
+/// not using the standard library thread pool.
+pub fn syncAllThreadPool(
+    es: *Entities,
+    tp: *std.Thread.Pool,
+    wg: *std.Thread.WaitGroup,
+    comptime options: SyncAllThreadPoolOptions,
+) void {
+    // Divide the dirty subtrees into chunks, and spawn a task for each chunk
+    var chunk: std.BoundedArray(Subtree, options.chunk_size) = .{};
+    var subtrees = dirtySubtreeIterator(es);
+    var done = false;
+    while (!done) {
+        // Fill the chunk
+        for (0..options.chunk_size) |_| {
+            chunk.appendAssumeCapacity(subtrees.next(es) orelse {
+                done = true;
+                break;
+            });
+        }
+
+        // Spawn a task to sync a copy of the chunk, then clear the chunk for the next iteration
+        tp.spawnWg(wg, syncChunkImmediate, .{ es, chunk });
+        chunk.clear();
+    }
+}
+
+/// Immediately sync a chunk, used by `syncAllThreadPool`.
+fn syncChunkImmediate(es: *Entities, subtrees: anytype) void {
+    for (subtrees.constSlice()) |subtree| {
+        var transforms = subtree.preOrderIterator(es);
+        while (transforms.next(es)) |transform| {
+            transform.syncImmediate(es);
+        }
+    }
+}
+
 /// If implementing a custom sync, call this after it completes to clean up dirty events and check
 /// that all dirty entities were synced.
 pub fn finishSyncAllImmediate(es: *Entities) void {
-    // Assert that we covered all the dirty transforms
-    if (std.debug.runtime_safety) {
-        var it = es.viewIterator(DirtySubtreeIterator.EventView);
-        while (it.next()) |vw| {
-            if (vw.dirty.entity.get(es, Transform2D)) |transform| {
-                assert(transform.cache == .clean);
-            }
+    var it = es.viewIterator(DirtySubtreeIterator.EventView);
+    while (it.next()) |vw| {
+        if (vw.dirty.entity.get(es, Transform2D)) |transform| {
+            transform.cache = .clean;
         }
     }
 
@@ -271,7 +327,6 @@ pub fn syncImmediate(self: *@This(), es: *const Entities) void {
     const translation: Mat2x3 = .translation(self.cached_local_pos);
     const rotation: Mat2x3 = .rotation(self.cached_local_orientation);
     self.cached_world_from_model = rotation.applied(translation).applied(world_from_model);
-    self.cache = .clean;
 }
 
 /// `Exec` provides helpers for processing hierarchy changes via the command buffer.
@@ -321,7 +376,7 @@ pub const Exec = struct {
 ///
 //// Must be called manually if modifying the transform fields directly.
 pub fn markDirty(self: *@This(), es: *const Entities, cb: *CmdBuf) void {
-    assert(self.cache != .pending);
+    assert(self.cache != .dirty_root);
     if (self.cache == .dirty) return;
 
     self.cache = .dirty;
@@ -332,7 +387,7 @@ pub fn markDirty(self: *@This(), es: *const Entities, cb: *CmdBuf) void {
 /// Similar to `markDirty`, but immediately emits the event instead of adding it to a command
 /// buffer.
 pub fn markDirtyImmediate(self: *@This(), es: *Entities) void {
-    assert(self.cache != .pending);
+    assert(self.cache != .dirty_root);
     if (self.cache == .dirty) return;
 
     self.cache = .dirty;

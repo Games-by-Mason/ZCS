@@ -30,11 +30,11 @@ const comp_bytes = 100000;
 const cmds_capacity = 4096;
 const change_cap = 16;
 
-test "fuzz cmdbuf encoding" {
+test "fuzz encoding" {
     try std.testing.fuzz({}, fuzzCmdBufEncoding, .{ .corpus = &.{} });
 }
 
-test "rand cmdbuf encoding" {
+test "rand encoding" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
     const input: []u8 = try gpa.alloc(u8, 131072);

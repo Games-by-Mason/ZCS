@@ -26,7 +26,7 @@ const log = false;
 
 const cmds_capacity = 1000;
 
-test "node immediate" {
+test "immediate" {
     defer CompFlag.unregisterAll();
 
     var es = try Entities.init(gpa, .{ .max_entities = 128, .comp_bytes = 256 });
@@ -79,15 +79,15 @@ test "node immediate" {
     try expect(!empty.get(&es, Node).?.isAncestorOf(&es, empty.get(&es, Node).?));
 }
 
-test "fuzz nodes immediate" {
+test "fuzz immediate" {
     try std.testing.fuzz({}, fuzzNodes, .{ .corpus = &.{} });
 }
 
-test "fuzz node cycles" {
+test "fuzz cycles" {
     try std.testing.fuzz({}, fuzzNodeCycles, .{ .corpus = &.{} });
 }
 
-test "rand nodes immediate" {
+test "rand immediate" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
     const input: []u8 = try gpa.alloc(u8, 32768);
@@ -96,7 +96,7 @@ test "rand nodes immediate" {
     try fuzzNodes({}, input);
 }
 
-test "rand node cycles" {
+test "rand cycles" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
     const input: []u8 = try gpa.alloc(u8, 524288);
@@ -105,15 +105,15 @@ test "rand node cycles" {
     try fuzzNodeCycles({}, input);
 }
 
-test "fuzz nodes cmdbuf" {
+test "fuzz cb" {
     try std.testing.fuzz({}, fuzzNodesCmdBuf, .{ .corpus = &.{} });
 }
 
-test "fuzz node cycles cmdbuf" {
+test "fuzz cycles cb" {
     try std.testing.fuzz({}, fuzzNodeCyclesCmdBuf, .{ .corpus = &.{} });
 }
 
-test "rand nodes cmdbuf" {
+test "rand cb" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
     const input: []u8 = try gpa.alloc(u8, 65536);
@@ -122,7 +122,7 @@ test "rand nodes cmdbuf" {
     try fuzzNodesCmdBuf({}, input);
 }
 
-test "rand node cycles cmdbuf" {
+test "rand cycles cb" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
     const input: []u8 = try gpa.alloc(u8, 16777216);

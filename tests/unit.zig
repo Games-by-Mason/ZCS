@@ -31,7 +31,7 @@ const Components = struct {
     tag: ?Tag = null,
 };
 
-test "command buffer test execImmediate" {
+test "cb execImmediate" {
     defer CompFlag.unregisterAll();
 
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
@@ -130,7 +130,7 @@ fn isInAnyBytes(cb: CmdBuf, data: anytype) bool {
 }
 
 // Verify that components are interned appropriately
-test "command buffer interning" {
+test "cb interning" {
     defer CompFlag.unregisterAll();
     // Assumed by this test (affects cb submission order.) If this fails, just adjust the types to
     // make it true and the rest of the test should pass.
@@ -389,7 +389,7 @@ test "command buffer interning" {
     try expectEqual(null, iter.next());
 }
 
-test "command buffer overflow" {
+test "cb overflow" {
     defer CompFlag.unregisterAll();
     // Not very exhaustive, but checks that command buffers return the overflow error on failure to
     // append, and on submits that fail.
@@ -590,7 +590,7 @@ test "command buffer overflow" {
 }
 
 // Verify that command buffers don't overflow before their estimated capacity
-test "command buffer worst case capacity" {
+test "cb capacity" {
     defer CompFlag.unregisterAll();
 
     const cb_capacity = 600;

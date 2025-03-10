@@ -28,13 +28,13 @@ const log = false;
 
 const cmds_capacity = 100;
 const max_entities = 100000;
-const comp_bytes = 100000;
+const comp_bytes = 200000;
 
-test "fuzz transforms cmdbuf single thread" {
+test "fuzz cb single thread" {
     try std.testing.fuzz(SyncMode.single_threaded, fuzzTransformsCmdBuf, .{ .corpus = &.{} });
 }
 
-test "rand transforms cmdbuf single thread" {
+test "rand cb single thread" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
     const input: []u8 = try gpa.alloc(u8, 262144);
@@ -43,11 +43,11 @@ test "rand transforms cmdbuf single thread" {
     try fuzzTransformsCmdBuf(SyncMode.single_threaded, input);
 }
 
-test "fuzz transforms cmdbuf deferred" {
+test "fuzz cb deferred" {
     try std.testing.fuzz(SyncMode.deferred, fuzzTransformsCmdBuf, .{ .corpus = &.{} });
 }
 
-test "rand transforms cmdbuf deferred" {
+test "rand cb deferred" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
     const input: []u8 = try gpa.alloc(u8, 262144);
@@ -56,13 +56,33 @@ test "rand transforms cmdbuf deferred" {
     try fuzzTransformsCmdBuf(SyncMode.deferred, input);
 }
 
+test "fuzz cb threaded" {
+    try std.testing.fuzz(SyncMode.threaded, fuzzTransformsCmdBuf, .{ .corpus = &.{} });
+}
+
+test "rand cb threaded" {
+    var xoshiro_256: std.Random.Xoshiro256 = .init(0);
+    const rand = xoshiro_256.random();
+    const input: []u8 = try gpa.alloc(u8, 262144);
+    defer gpa.free(input);
+    rand.bytes(input);
+    try fuzzTransformsCmdBuf(SyncMode.threaded, input);
+}
+
 const SyncMode = enum {
     single_threaded,
     deferred,
+    threaded,
 };
 
 fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
     defer CompFlag.unregisterAll();
+
+    var tp: std.Thread.Pool = undefined;
+    if (sync_mode == .threaded) try std.Thread.Pool.init(&tp, .{
+        .allocator = std.heap.smp_allocator,
+    });
+    defer if (sync_mode == .threaded) tp.deinit();
 
     var smith: Smith = .init(input);
 
@@ -219,9 +239,6 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
                     try deferred.append(gpa, subtree);
                 }
 
-                // Recycle all dirty events
-                Transform.Dirty.recycleAllImmediate(&es);
-
                 // Sync the dirty subtrees
                 for (0..deferred.items.len) |i| {
                     const subtree = deferred.items[deferred.items.len - 1 - i];
@@ -234,6 +251,12 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
                 }
 
                 // Clean up and check assertions
+                Transform.finishSyncAllImmediate(&es);
+            },
+            .threaded => {
+                var wg: std.Thread.WaitGroup = .{};
+                Transform.syncAllThreadPool(&es, &tp, &wg, .{ .chunk_size = 2 });
+                tp.waitAndWork(&wg);
                 Transform.finishSyncAllImmediate(&es);
             },
         }
@@ -285,7 +308,7 @@ fn checkOracle(es: *const Entities) !void {
     });
     while (iter.next()) |vw| {
         // The cache should be clean
-        try std.testing.expect(vw.transform.cache == .clean);
+        try std.testing.expectEqual(.clean, vw.transform.cache);
 
         // Get the path
         try path.append(gpa, vw.transform);

@@ -23,15 +23,15 @@ const expectEqual = std.testing.expectEqual;
 const cmds_capacity = 1000;
 const change_cap = 16;
 
-test "fuzz cmdbuf" {
+test "fuzz cb" {
     try std.testing.fuzz({}, fuzzCmdBuf, .{ .corpus = &.{} });
 }
 
-test "fuzz cmdbuf saturated" {
+test "fuzz cb saturated" {
     try std.testing.fuzz({}, fuzzCmdBufSaturated, .{ .corpus = &.{} });
 }
 
-test "rand cmdbuf" {
+test "rand cb" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
     const input: []u8 = try gpa.alloc(u8, 32768);
@@ -40,7 +40,7 @@ test "rand cmdbuf" {
     try fuzzCmdBuf({}, input);
 }
 
-test "rand cmdbuf saturated" {
+test "rand cb saturated" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
     const input: []u8 = try gpa.alloc(u8, 16384);
