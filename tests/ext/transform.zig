@@ -132,6 +132,7 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
                             .y = smith.nextBetween(f32, -100.0, 100.0),
                         },
                         .orientation = .fromAngle(smith.next(f32)),
+                        .relative = smith.next(u8) > 25 or true,
                     }));
                     try all.append(gpa, child);
                     if (smith.next(u8) > 40) {
@@ -157,6 +158,7 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
                                         .y = smith.nextBetween(f32, -100.0, 100.0),
                                     },
                                     .orientation = .fromAngle(smith.next(f32)),
+                                    .relative = smith.next(u8) > 25,
                                 }));
                                 try all.append(gpa, child);
                                 if (smith.next(u8) > 40) {
@@ -166,7 +168,7 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
                                 }
                             }
                         },
-                        .parent => {
+                        .parent => if (all.items.len > 0) {
                             const parent: Entity.Optional = if (smith.nextLessThan(u8, 100) > 10) b: {
                                 break :b all.items[smith.nextLessThan(usize, all.items.len)].toOptional();
                             } else .none;
@@ -246,7 +248,7 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
                     // all subtrees are independent!
                     var transforms = subtree.preOrderIterator(&es);
                     while (transforms.next(&es)) |transform| {
-                        transform.syncImmediate(&es);
+                        transform.syncImmediate(transform.getRelativeWorldFromModel(&es));
                     }
                 }
 
@@ -312,11 +314,14 @@ fn checkOracle(es: *const Entities) !void {
 
         // Get the path
         try path.append(gpa, vw.transform);
-        if (vw.node) |node| {
-            var ancestors = node.ancestorIterator();
-            while (ancestors.next(es)) |ancestor| {
-                const transform = ancestor.get(es, Transform) orelse break;
-                try path.append(gpa, transform);
+        if (vw.transform.relative) {
+            if (vw.node) |node| {
+                var ancestors = node.ancestorIterator();
+                while (ancestors.next(es)) |ancestor| {
+                    const transform = ancestor.get(es, Transform) orelse break;
+                    try path.append(gpa, transform);
+                    if (!transform.relative) break;
+                }
             }
         }
         if (log) std.debug.print("  {} path len: {}\n", .{ Entity.from(es, vw.transform), path.items.len });

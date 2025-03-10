@@ -32,6 +32,8 @@ cached_local_pos: Vec2,
 cached_local_orientation: Rotor2,
 /// For internal use. The cached world from model matrix.
 cached_world_from_model: Mat2x3,
+/// Whether or not this transform's space is relative to its parent.
+relative: bool,
 /// For internal use. The cache status.
 cache: enum {
     /// This transform's cache is clean.
@@ -49,6 +51,8 @@ pub const InitLocalOptions = struct {
     pos: Vec2 = .zero,
     /// The initial orientation in local space.
     orientation: Rotor2 = .identity,
+    /// Whether or not this transform's space is relative to its parent.
+    relative: bool = true,
 };
 
 /// Initialize a transform with the given local position and orientation.
@@ -57,6 +61,7 @@ pub fn initLocal(options: InitLocalOptions) @This() {
         .cached_local_pos = options.pos,
         .cached_local_orientation = options.orientation,
         .cached_world_from_model = undefined,
+        .relative = options.relative,
         .cache = .dirty,
     };
 }
@@ -110,8 +115,9 @@ pub inline fn getWorldFromModel(self: @This()) Mat2x3 {
     return self.cached_world_from_model;
 }
 
-/// Returns the parent's world form model matrix.
-pub inline fn getParentWorldFromModel(self: *const @This(), es: *const Entities) Mat2x3 {
+/// Returns the parent's world form model matrix, or identity if not relative.
+pub inline fn getRelativeWorldFromModel(self: *const @This(), es: *const Entities) Mat2x3 {
+    if (!self.relative) return .identity;
     const entity: Entity = .from(es, self);
     const node = entity.get(es, Node) orelse return .identity;
     const parent = node.parent.unwrap() orelse return .identity;
@@ -140,7 +146,7 @@ pub const DirtySubtreeIterator = struct {
 
     /// Returns the next transform.
     pub fn next(self: *@This(), es: *const Entities) ?Subtree {
-        while (self.events.next()) |event| {
+        ev: while (self.events.next()) |event| {
             if (event.dirty.entity.view(es, struct {
                 transform: *Transform2D,
                 node: ?*const Node,
@@ -148,51 +154,44 @@ pub const DirtySubtreeIterator = struct {
                 // If we've already processed this transform, skip it
                 if (vw.transform.cache != .dirty) continue;
 
-                const root: Subtree = b: {
-                    // Get the event entity's node
-                    const event_node = vw.node orelse {
-                        // The event's entity has no node, break as its own subtree
-                        break :b .{
-                            .transform = vw.transform,
-                            .node = null,
-                        };
-                    };
+                // Create a subtree at this node
+                var root: Subtree = .{
+                    .node = vw.node,
+                    .transform = vw.transform,
+                };
 
-                    // Move to the topmost dirty node in this transform subtree so that we don't
-                    // process the same transforms multiple times
-                    var subtree = .{
-                        .node = event_node,
-                        .transform = vw.transform,
-                    };
-                    var ancestors = event_node.ancestorIterator();
-                    while (ancestors.next(es)) |curr| {
-                        // Get the transform, or early out if there is none since we don't propagate
-                        // through non transform nodes
-                        const transform = curr.get(es, Transform2D) orelse break;
+                // Move to the topmost dirty node in this transform subtree so that we don't process
+                // the same transforms multiple times
+                if (root.node) |event_node| {
+                    if (vw.transform.relative) {
+                        var ancestors = event_node.ancestorIterator();
+                        while (ancestors.next(es)) |curr| {
+                            // Get the transform, or early out if there is none since we don't propagate
+                            // through non transform nodes
+                            const transform = curr.get(es, Transform2D) orelse break;
 
-                        // Check the cache state
-                        switch (transform.cache) {
-                            // If the transform is dirty, set it as the new root
-                            .dirty => subtree = .{
-                                .transform = transform,
-                                .node = curr,
-                            },
-                            // If it's clean ignore it
-                            .clean => {},
-                            // If it's already marked as a root, this subtree has already been
-                            // queued up for processing so we should skip it. This is relevant when
-                            // queuing up of subtrees is separated from processing them, e.g. when
-                            // multithreading.
-                            .dirty_root => continue,
+                            // Check the cache state
+                            switch (transform.cache) {
+                                // If the transform is dirty, set it as the new root
+                                .dirty => root = .{
+                                    .transform = transform,
+                                    .node = curr,
+                                },
+                                // If it's clean ignore it
+                                .clean => {},
+                                // If it's already marked as a root, this subtree has already been
+                                // queued up for processing so we should skip it. This is relevant
+                                // when queuing up of subtrees is separated from processing them,
+                                // e.g. when multithreading.
+                                .dirty_root => continue :ev,
+                            }
+
+                            // If this transform isn't relative to its parent, stop searching
+                            // parents
+                            if (!transform.relative) break;
                         }
                     }
-
-                    // Break with the subtree
-                    break :b .{
-                        .transform = subtree.transform,
-                        .node = subtree.node,
-                    };
-                };
+                }
 
                 // Mark the subtree as a dirty root and return it
                 assert(root.transform.cache == .dirty);
@@ -205,7 +204,7 @@ pub const DirtySubtreeIterator = struct {
     }
 };
 
-/// A transform subtree, see `DirtySubtreeIterator`.
+/// A transform subtree, only follows relative transforms. See `DirtySubtreeIterator`.
 pub const Subtree = struct {
     transform: *Transform2D,
     node: ?*const Node,
@@ -232,11 +231,15 @@ pub const Subtree = struct {
             }
 
             while (self.children.next(es)) |node| {
+                // If the next child has a transform and that transform is relative to its parent,
+                // return it.
                 if (node.get(es, Transform2D)) |transform| {
-                    return transform;
-                } else {
-                    self.children.skipSubtree(es, node);
+                    if (transform.relative) {
+                        return transform;
+                    }
                 }
+                // Otherwise, skip this subtree.
+                self.children.skipSubtree(es, node);
             }
 
             return null;
@@ -253,7 +256,7 @@ pub fn syncAllImmediate(es: *Entities) void {
         // Synchronize the subtree
         var transforms = subtree.preOrderIterator(es);
         while (transforms.next(es)) |transform| {
-            transform.syncImmediate(es);
+            transform.syncImmediate(transform.getRelativeWorldFromModel(es));
         }
     }
 
@@ -302,7 +305,7 @@ fn syncChunkImmediate(es: *Entities, subtrees: anytype) void {
     for (subtrees.constSlice()) |subtree| {
         var transforms = subtree.preOrderIterator(es);
         while (transforms.next(es)) |transform| {
-            transform.syncImmediate(es);
+            transform.syncImmediate(transform.getRelativeWorldFromModel(es));
         }
     }
 }
@@ -322,11 +325,10 @@ pub fn finishSyncAllImmediate(es: *Entities) void {
 }
 
 /// Immediately synchronize this entity using the given `world_from_model` matrix.
-pub fn syncImmediate(self: *@This(), es: *const Entities) void {
-    const world_from_model = self.getParentWorldFromModel(es);
+pub fn syncImmediate(self: *@This(), parent_world_from_model: Mat2x3) void {
     const translation: Mat2x3 = .translation(self.cached_local_pos);
     const rotation: Mat2x3 = .rotation(self.cached_local_orientation);
-    self.cached_world_from_model = rotation.applied(translation).applied(world_from_model);
+    self.cached_world_from_model = rotation.applied(translation).applied(parent_world_from_model);
 }
 
 /// `Exec` provides helpers for processing hierarchy changes via the command buffer.
