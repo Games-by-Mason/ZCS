@@ -8,7 +8,7 @@ index: usize = 0,
 empty: bool = false,
 
 pub fn init(input: []const u8) @This() {
-    // Workaround for apparent fuzzer bug
+    // See https://github.com/Games-by-Mason/ZCS/issues/20
     const max_consecutive_zeroes = 64;
     var consecutive_zeros: usize = 0;
     var len: usize = input.len;
