@@ -29,7 +29,7 @@ pub const ExpectedEntity = struct {
 
 /// Tests random command buffers against an oracle.
 pub const max_entities = 100000;
-pub const comp_bytes = 100000;
+pub const comp_bytes = 1000000;
 
 es: Entities,
 smith: Smith,

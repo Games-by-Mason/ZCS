@@ -377,8 +377,9 @@ pub const Exec = struct {
                     }
                     self.init_node = false;
                 }
-                if (batch.entity.get(es, Node)) |node| {
-                    if (set_parent[0].unwrap()) |parent| {
+                if (set_parent[0].unwrap()) |parent| {
+                    if (batch.entity.get(es, Node)) |node| {
+                        // We have a node, set the parent
                         if (try parent.viewOrAddImmediateOrErr(
                             es,
                             struct { node: *Node },
@@ -388,9 +389,15 @@ pub const Exec = struct {
                         } else {
                             node.destroyImmediate(es);
                         }
-                    } else {
-                        try node.setParentImmediateOrErr(es, null);
+                    } else if (!parent.exists(es)) {
+                        // If we were set a parent that doesn't exist, we need to be destroyed even
+                        // if we had our node subsequently removed.
+                        _ = batch.entity.destroyImmediate(es);
                     }
+                } else if (batch.entity.get(es, Node)) |node| {
+                    // If we have a node and are being asked to clear the parent, clear it. If we
+                    // have no node it's implicitly clear anyway.
+                    try node.setParentImmediateOrErr(es, null);
                 }
             },
             .destroy, .add, .remove => {},

@@ -24,7 +24,7 @@ const expectEqualEntity = @import("../root.zig").expectEqualEntity;
 
 const log = false;
 
-const cmds_capacity = 1000;
+const cmds_capacity = 10000;
 
 test "immediate" {
     defer CompFlag.unregisterAll();
@@ -116,7 +116,7 @@ test "fuzz cycles cb" {
 test "rand cb" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
-    const input: []u8 = try gpa.alloc(u8, 65536);
+    const input: []u8 = try gpa.alloc(u8, 131072);
     defer gpa.free(input);
     rand.bytes(input);
     try fuzzNodesCmdBuf({}, input);
@@ -298,7 +298,33 @@ fn fuzzNodeCyclesCmdBuf(_: void, input: []const u8) !void {
 }
 
 fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
+    if (log) std.debug.print("check oracle\n", .{});
+
     // Check the total entity count
+    if (o.entities.count() != fz.es.count() + fz.es.reserved()) {
+        std.debug.print("oracle count: {}\n", .{o.entities.count()});
+        std.debug.print("entities: count={} + reserved={} = {}\n", .{
+            fz.es.count(),
+            fz.es.reserved(),
+            fz.es.count() + fz.es.reserved(),
+        });
+
+        // Check for entities the oracle is missing
+        var iter = fz.es.iterator(.{});
+        while (iter.next()) |e| {
+            if (!o.entities.contains(e)) {
+                std.debug.print("oracle missing {}\n", .{e});
+            }
+        }
+
+        // Check for entities the real data is missing
+        var keys = o.entities.keyIterator();
+        while (keys.next()) |e| {
+            if (!e.exists(&fz.es)) {
+                std.debug.print("entities missing {}\n", .{e});
+            }
+        }
+    }
     try expectEqual(o.entities.count(), fz.es.count() + fz.es.reserved());
 
     // Check each entity
@@ -548,7 +574,7 @@ fn removeCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
 
     // Get a random entity
     const entity = fz.randomEntity().unwrap() orelse return;
-    if (log) std.debug.print("destroy {}\n", .{entity});
+    if (log) std.debug.print("remove {}\n", .{entity});
 
     // Remove from the real entity
     entity.remove(cb, Node);
@@ -592,9 +618,6 @@ fn removeInOracle(fz: *Fuzzer, o: *Oracle, e: Entity) !void {
             if (n.parent.unwrap()) |parent| {
                 try expect(o.entities.getPtr(parent).?.node.?.children.orderedRemove(e));
             }
-        }
-        if (e.key.index == 0x2a and @intFromEnum(e.key.generation) == 0) {
-            std.debug.print("remove from 0x10:0x0\n", .{});
         }
         if (oe.node) |*n| n.deinit();
         oe.node = null;
