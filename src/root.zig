@@ -9,12 +9,17 @@ const Allocator = std.mem.Allocator;
 
 pub const Entities = @import("Entities.zig");
 pub const Entity = @import("entity.zig").Entity;
-pub const Comp = @import("Comp.zig");
+pub const Any = @import("Any.zig");
+pub const CompFlag = @import("comp_flag.zig").CompFlag;
 pub const CmdBuf = @import("CmdBuf.zig");
+pub const TypeInfo = @import("type_id.zig").TypeInfo;
+pub const TypeId = @import("type_id.zig").TypeId;
+pub const view = @import("view.zig");
+pub const ext = @import("ext.zig");
 
 /// Returns the component ID for the given type.
-pub const compId = @typeInfo(Comp.Id).pointer.child.init;
+pub const typeId = TypeInfo.init;
 
 test {
-    _ = @import("entity.zig");
+    std.testing.refAllDecls(@This());
 }

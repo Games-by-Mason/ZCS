@@ -8,11 +8,27 @@ index: usize = 0,
 empty: bool = false,
 
 pub fn init(input: []const u8) @This() {
-    return .{ .input = input };
+    // See https://github.com/Games-by-Mason/ZCS/issues/20
+    const max_consecutive_zeroes = 64;
+    var consecutive_zeros: usize = 0;
+    var len: usize = input.len;
+    for (input, 0..) |n, i| {
+        if (n == 0) {
+            consecutive_zeros += 1;
+        } else {
+            consecutive_zeros = 0;
+        }
+
+        if (consecutive_zeros > max_consecutive_zeroes) {
+            len = i - max_consecutive_zeroes;
+            break;
+        }
+    }
+    return .{ .input = input[0..len] };
 }
 
 pub fn isEmpty(self: @This()) bool {
-    return self.empty;
+    return self.input.len == 0 or self.empty;
 }
 
 pub fn next(self: *@This(), T: type) T {
@@ -49,10 +65,12 @@ pub fn next(self: *@This(), T: type) T {
             }
         },
         .@"enum" => |@"enum"| {
-            const n = self.next(@"enum".tag_type);
-            if (!@"enum".is_exhaustive) {
-                return @enumFromInt(n);
-            }
+            // If we can, just treat the enum like a number
+            if (!@"enum".is_exhaustive) return @enumFromInt(self.next(@"enum".tag_type));
+
+            // Otherwise, we pick a random field. We may use a larger type than strictly necessary
+            // for a more even distribution.
+            const n = self.next(std.meta.Int(.unsigned, @max(@typeInfo(@"enum".tag_type).int.bits * 2, 16)));
             const m = n % @"enum".fields.len;
             inline for (@"enum".fields, 0..) |field, i| {
                 if (i == m) return @enumFromInt(field.value);
@@ -79,10 +97,19 @@ pub fn nextLessThan(self: *@This(), T: type, less_than: T) T {
 }
 
 pub fn nextBetween(self: *@This(), T: type, min: T, less_than: T) T {
-    assert(std.math.maxInt(T) >= less_than);
-    assert(less_than >= min);
-    const n: T = self.next(T);
-    return min + (n % (less_than - min));
+    switch (@typeInfo(T)) {
+        .float, .comptime_float => {
+            const n: T = self.next(T);
+            return min + @mod(n, less_than - min);
+        },
+        .int, .comptime_int => {
+            assert(std.math.maxInt(T) >= less_than);
+            assert(less_than >= min);
+            const n: T = self.next(T);
+            return min + (n % (less_than - min));
+        },
+        else => comptime unreachable,
+    }
 }
 
 fn nextRaw(self: *@This(), T: type) T {
@@ -99,4 +126,9 @@ fn nextRaw(self: *@This(), T: type) T {
     var result: T = undefined;
     @memcpy(std.mem.asBytes(&result), &bytes);
     return result;
+}
+
+pub fn progress(self: @This()) f32 {
+    if (self.isEmpty()) return 1.0;
+    return @as(f32, @floatFromInt(self.index)) / @as(f32, @floatFromInt(self.input.len));
 }

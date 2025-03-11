@@ -11,25 +11,28 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 const zcs = @import("root.zig");
-const types = @import("types.zig");
-const CompFlag = types.CompFlag;
-const compId = zcs.compId;
-const Comp = zcs.Comp;
+const typeId = zcs.typeId;
+const Any = zcs.Any;
+const CompFlag = zcs.CompFlag;
 const slot_map = @import("slot_map");
 const SlotMap = slot_map.SlotMap;
 const Entity = zcs.Entity;
+const view = zcs.view;
 
 const Entities = @This();
 
 const IteratorGeneration = if (std.debug.runtime_safety) u64 else u0;
 
-const Slot = struct {
+const max_align = zcs.TypeInfo.max_align;
+
+/// For internal use. A slot in the slot map.
+pub const Slot = struct {
     arch: CompFlag.Set,
     committed: bool,
 };
 
 slots: SlotMap(Slot, .{}),
-comps: *[CompFlag.max][]align(Comp.max_align) u8,
+comps: *[CompFlag.max][]align(max_align) u8,
 live: std.DynamicBitSetUnmanaged,
 iterator_generation: IteratorGeneration = 0,
 reserved_entities: usize = 0,
@@ -47,13 +50,13 @@ pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
     var slots = try SlotMap(Slot, .{}).init(gpa, capacity.max_entities);
     errdefer slots.deinit(gpa);
 
-    const comps = try gpa.create([CompFlag.max][]align(Comp.max_align) u8);
+    const comps = try gpa.create([CompFlag.max][]align(max_align) u8);
     errdefer gpa.destroy(comps);
 
     comptime var comps_init = 0;
     errdefer for (0..comps_init) |i| gpa.free(comps[i]);
     inline for (comps) |*comp| {
-        comp.* = try gpa.alignedAlloc(u8, Comp.max_align, capacity.comp_bytes);
+        comp.* = try gpa.alignedAlloc(u8, max_align, capacity.comp_bytes);
         comps_init += 1;
     }
 
@@ -78,10 +81,22 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
     self.* = undefined;
 }
 
-/// Invalidates all entities, leaving all `Entity`s dangling and all generations reset. This cannot
-/// be detected by `Entity.exists`.
-pub fn reset(self: *@This()) void {
-    self.slots.reset();
+/// Recycles all entities with the given archetype.
+pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
+    for (0..self.slots.next_index) |index| {
+        if (self.live.isSet(index) and self.slots.values[index].arch.eql(arch)) {
+            const entity: Entity = .{ .key = .{
+                .index = @intCast(index),
+                .generation = self.slots.generations[index],
+            } };
+            assert(entity.recycleImmediate(self));
+        }
+    }
+}
+
+/// Recycles all entities.
+pub fn recycleImmediate(self: *@This()) void {
+    self.slots.recycleAll();
     self.reserved_entities = 0;
 }
 
@@ -93,25 +108,6 @@ pub fn count(self: @This()) usize {
 /// Returns the number of reserved but not committed entities that currently exist.
 pub fn reserved(self: @This()) usize {
     return self.reserved_entities;
-}
-
-/// If `T` is a pointer to a component, returns the component type. Otherwise returns null.
-fn ComponentFromPointer(T: type) ?type {
-    const pointer = switch (@typeInfo(T)) {
-        .pointer => |pointer| pointer,
-        .optional => |optional| switch (@typeInfo(optional.child)) {
-            .pointer => |pointer| pointer,
-            else => return null,
-        },
-        else => return null,
-    };
-
-    if (pointer.size != .one) return null;
-    if (pointer.alignment != @alignOf(pointer.child)) return null;
-    if (pointer.sentinel() != null) return null;
-    if (@typeInfo(pointer.child) == .optional) return null;
-
-    return pointer.child;
 }
 
 /// Returns an iterator over all entities that have at least the components in `required_comps` in
@@ -140,6 +136,8 @@ pub const Iterator = struct {
         if (self.generation != self.es.iterator_generation) {
             @panic("called next after iterator was invalidated");
         }
+        // Keep in mind that in view iterator, we're using max index to indicate that the iterator
+        // is invalid.
         while (self.index < self.es.slots.next_index) {
             const index = self.index;
             self.index += 1;
@@ -158,35 +156,30 @@ pub const Iterator = struct {
     }
 };
 
-/// Similar to `iterator`, but returns a view with pointers to the requested components.
-///
-/// `View` must be a struct whose fields are all either type `Entity` or are pointers to registered
-/// component types. Pointers can be set to optional to make a component type optional.
-pub fn viewIterator(self: *@This(), View: type) ViewIterator(View) {
-    var base: View = undefined;
+/// Similar to `iterator`, but returns a `view` with pointers to the requested components.
+pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
+    var base: view.Comps(View) = undefined;
     var required_comps: CompFlag.Set = .{};
-    inline for (@typeInfo(View).@"struct".fields) |field| {
-        if (field.type == Entity) {
-            @field(base, field.name).key.index = 0;
-        } else {
-            const T = ComponentFromPointer(field.type) orelse {
-                @compileError("view field is not Entity or pointer to a component: " ++ @typeName(field.type));
-            };
-
-            const flag = types.register(compId(T));
-            if (@typeInfo(field.type) != .optional) {
+    const valid = inline for (@typeInfo(view.Comps(View)).@"struct".fields) |field| {
+        const T = view.UnwrapField(field.type);
+        if (@typeInfo(field.type) != .optional) {
+            if (typeId(T).comp_flag) |flag| {
                 required_comps.insert(flag);
-            }
-            @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(flag)]);
+            } else break false;
         }
-    }
+
+        if (typeId(T).comp_flag) |flag| {
+            // Don't need `.ptr` once this is merged: https://github.com/ziglang/zig/pull/22706
+            @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(flag)].ptr);
+        }
+    } else true;
 
     return .{
         .es = self,
         .entity_iterator = .{
             .es = self,
             .required_comps = required_comps,
-            .index = 0,
+            .index = if (valid) 0 else std.math.maxInt(@FieldType(Iterator, "index")),
             .generation = self.iterator_generation,
         },
         .base = base,
@@ -198,53 +191,58 @@ pub fn ViewIterator(View: type) type {
     return struct {
         es: *const Entities,
         entity_iterator: Iterator,
-        base: View,
+        base: view.Comps(View),
 
         /// Advances the iterator, returning the next view.
         pub fn next(self: *@This()) ?View {
             while (self.entity_iterator.next()) |entity| {
-                var view: View = self.base;
+                var result: View = undefined;
                 inline for (@typeInfo(View).@"struct".fields) |field| {
                     if (field.type == Entity) {
-                        @field(view, field.name) = entity;
+                        @field(result, field.name) = entity;
                     } else {
                         // Get the component type
-                        const T = ComponentFromPointer(field.type) orelse {
-                            comptime unreachable; // Checked during iterator init
-                        };
+                        const T = view.UnwrapField(field.type);
 
                         // Get the slot
                         const slot = self.es.slots.values[entity.key.index];
                         assert(slot.committed);
 
-                        // Check if the field is required. If it is then we must have the component
-                        // since the normal iterator gave us the entity. If it's optional, check for
-                        // ourselves if we have it. We can unwrap the flag because the iterator
-                        // initialization code registers the types it's given.
-                        if (@typeInfo(field.type) != .optional or
-                            slot.arch.contains(compId(T).flag.?))
-                        {
+                        // Check if we have the component or not
+                        const has_comp = if (@typeInfo(field.type) == .optional) b: {
+                            // If the component type isn't registered, we definitely don't have it
+                            const flag = typeId(T).comp_flag orelse break :b false;
+
+                            // If it has a flag, check if we have it
+                            break :b slot.arch.contains(flag);
+                        } else b: {
+                            // If the component isn't optional, we can assume we have it
+                            break :b true;
+                        };
+
+                        // Set the field's comp pointer
+                        if (has_comp) {
                             // We have the component, pass it to the caller
-                            const base = @intFromPtr(@field(view, field.name));
-                            const offset = entity.key.index * @sizeOf(T);
-                            @field(view, field.name) = @ptrFromInt(base + offset);
+                            const comp: *T = if (@sizeOf(T) == 0) b: {
+                                // See `Entity.fromComp`.
+                                break :b @ptrFromInt(@as(u64, @bitCast(entity)));
+                            } else b: {
+                                const base = @intFromPtr(@field(self.base, field.name));
+                                const offset = entity.key.index * @sizeOf(T);
+                                break :b @ptrFromInt(base + offset);
+                            };
+                            @field(result, field.name) = comp;
                         } else {
                             // This component is optional and we don't have it, set our result to
                             // null
-                            @field(view, field.name) = null;
+                            @field(result, field.name) = null;
                         }
                     }
                 }
-                return view;
+                return result;
             }
 
             return null;
-        }
-
-        /// Destroys the current entity without invalidating this iterator. May invalidate other
-        /// iterators.
-        pub fn destroyCurrentImmediately(self: *@This(), es: *Entities) void {
-            self.entity_iterator.destroyCurrentImmediately(es);
         }
     };
 }

@@ -22,12 +22,12 @@ ZCS features persistent keys for entities, so they're never dangling even after 
 
 ```zig
 assert(fireball.exists(es));
-assert(fireball.getComponent(es, Sprite) != null);
+assert(fireball.get(es, Sprite) != null);
 
 fireball.destroyImmediately(es);
 
 assert(!fireball.exists(es));
-assert(fireball.getComponent(es, Sprite) == null);
+assert(fireball.get(es, Sprite) == null);
 ```
 
 ## Archetype Based Iteration
@@ -56,21 +56,21 @@ By doing destructive operations through command buffers, you can efficiently que
 ```zig
 
 // Allocate a command buffer
-var cmds = try CmdBuf.init(gpa, &es, 1000);
-defer cmds.deinit(gpa, &es);
+var cb = try CmdBuf.init(gpa, &es, 1000);
+defer cb.deinit(gpa, &es);
 
 // Get the next reserved entity. By reserving entities up front, the command buffer allows you to
 // create entities on background threads safely.
-const e = Entity.popReserved(&cmds);
+const e = Entity.reserve(&cb);
 
 // Schedule an archetype change for the reserved entity, this will assign it storage when the
 // command buffer executes.
-e.addCompCmd(&cmds, RigidBody, .{ .mass = 20 });
-e.addCompCmd(&cmds, Sprite, .{ .index = .cat });
+e.add(&cb, RigidBody, .{ .mass = 20 });
+e.add(&cb, Sprite, .{ .index = .cat });
 
 // Execute the command buffer, and then clear it for reuse. This would be done from the main thread.
-cmds.execute(&es);
-cmds.clear(&es);
+cb.execute(&es);
+cb.clear(&es);
 ```
 
 ## Command Buffer Iteration
@@ -85,12 +85,12 @@ This use case is often served via callbacks, but callbacks have some major downs
 Instead, since all work is typically done via command buffers, this use case is served much more simply via command buffer iterators:
 
 ```zig
-fn updateTransforms(es: *const Entities, cmds: *const CmdBuf) {
-    for (cmds.destroy.items) |entity| {
+fn updateTransforms(es: *const Entities, cb: *const CmdBuf) {
+    for (cb.destroy.items) |entity| {
         // Process each entity scheduled for destruction
     }
 
-    var iter = cmds.arch_changes.iterator(es);
+    var iter = cb.arch_changes.iterator(es);
     while (iter.next()) |change| {
         // Process each archetype change
     }
@@ -108,6 +108,60 @@ As such, while ZCS will use generic methods where it's convenient, types at API 
 var es: Entities = try .init(gpa, .{ .max_entities = 10000, .comp_bytes = 8192 });
 defer es.deinit(gpa);
 ```
+
+## Extensions
+
+Two extensions are supplied. These only rely on the public interface of ZCS an can be ignored if you don't need them, but are demonstrations of the flexibility of the API.
+
+### Node
+
+`Node` allows for linking objects to other objects in parent child relationships:
+```zig
+thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
+
+// ...
+
+var children = ship.get(Node).?.childrenIterator();
+while (children.next()) |child| {
+    // Do something with the child object
+}
+
+var parent = thruster.get(Node).?.parent;
+// Do something with the parent
+```
+
+There is no maximum child count, and adding children does *not* require allocating an array. This is possible because node has links to:
+* parent
+* first_child
+* prev_sib
+* next_sib
+
+This is an implementation detail, you do not need to keep these values in sync. You just need to either call this helper to execute your command buffer with awareness of `Node`:
+```zig
+Node.Exec.immediate(&fz.es, cb);
+```
+
+Or to look at the documentation of this method to see how to integrate it with your own command buffer executor.
+
+### Transform2D
+
+`Transform2D` represents the position and orientation of an entity in 2D space. If an entity also has a `Node`, its local space is relative to that of its parent if any.
+
+```zig
+vw.transform.move(es, cb, vw.rb.vel.scaled(delta_s));
+vw.transform.rotate(es, cb, .fromAngle(vw.rb.rotation_vel * delta_s));
+```
+
+World positions are always from the last sync. To synchronize all world positions, you can call sync all:
+```zig
+Transform.syncAllImmediate(&es);
+```
+
+Sync all will only visit dirty entities and their children. This is possible by using ZCS as an event system. Entities that have not been moved since the last sync don't affect the performance of the sync.
+
+Similarly to `Node`, `Transform2D` integrates with the command buffer to automatically handle parents changing, etc.
+
+`Transform2D` depends on [geom](https://github.com/games-by-Mason/geom) for math.
 
 # Examples & Documentation
 
