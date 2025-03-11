@@ -40,9 +40,8 @@ cache: enum {
     clean,
     /// This transform's cache is dirty.
     dirty,
-    /// This transform's cache is dirty, and additionally it was marked as the root of a dirty
-    /// subtree.
-    dirty_root,
+    /// This transform's cache is dirty, and has been visited by the dirty subtree iterator.
+    dirty_visited,
 },
 
 /// Options for `initLocal`.
@@ -146,19 +145,24 @@ pub const DirtySubtreeIterator = struct {
 
     /// Returns the next transform.
     pub fn next(self: *@This(), es: *const Entities) ?Subtree {
+        // Iterate over the dirty events
         ev: while (self.events.next()) |event| {
             if (event.dirty.entity.view(es, struct {
                 transform: *Transform2D,
                 node: ?*const Node,
             })) |vw| {
-                // If we've already processed this transform, skip it
-                if (vw.transform.cache != .dirty) continue;
+                // If we've already visited this transform skip it. The list of dirty events is not
+                // supposed to have duplicates, but since we always traverse up to the root of the
+                // dirty subtree we may have already encountered this transform.
+                if (vw.transform.cache == .dirty_visited) continue :ev;
 
-                // Create a subtree at this node
+                // Create a subtree at this node and mark it as visited
                 var root: Subtree = .{
                     .node = vw.node,
                     .transform = vw.transform,
                 };
+                assert(vw.transform.cache == .dirty);
+                vw.transform.cache = .dirty_visited;
 
                 // Move to the topmost dirty node in this transform subtree so that we don't process
                 // the same transforms multiple times
@@ -166,24 +170,24 @@ pub const DirtySubtreeIterator = struct {
                     if (vw.transform.relative) {
                         var ancestors = event_node.ancestorIterator();
                         while (ancestors.next(es)) |curr| {
-                            // Get the transform, or early out if there is none since we don't propagate
-                            // through non transform nodes
+                            // Get the transform, or early out if there is none since we don't
+                            // propagate through non transform nodes
                             const transform = curr.get(es, Transform2D) orelse break;
 
                             // Check the cache state
                             switch (transform.cache) {
                                 // If the transform is dirty, set it as the new root
-                                .dirty => root = .{
-                                    .transform = transform,
-                                    .node = curr,
+                                .dirty => {
+                                    root = .{
+                                        .transform = transform,
+                                        .node = curr,
+                                    };
+                                    root.transform.cache = .dirty_visited;
                                 },
                                 // If it's clean ignore it
                                 .clean => {},
-                                // If it's already marked as a root, this subtree has already been
-                                // queued up for processing so we should skip it. This is relevant
-                                // when queuing up of subtrees is separated from processing them,
-                                // e.g. when multithreading.
-                                .dirty_root => continue :ev,
+                                // We've already visited this subtree, move onto the next event
+                                .dirty_visited => continue :ev,
                             }
 
                             // If this transform isn't relative to its parent, stop searching
@@ -193,9 +197,7 @@ pub const DirtySubtreeIterator = struct {
                     }
                 }
 
-                // Mark the subtree as a dirty root and return it
-                assert(root.transform.cache == .dirty);
-                root.transform.cache = .dirty_root;
+                // Return the root of the dirty subtree
                 return root;
             }
         }
@@ -378,7 +380,7 @@ pub const Exec = struct {
 ///
 //// Must be called manually if modifying the transform fields directly.
 pub fn markDirty(self: *@This(), es: *const Entities, cb: *CmdBuf) void {
-    assert(self.cache != .dirty_root);
+    assert(self.cache != .dirty_visited);
     if (self.cache == .dirty) return;
 
     self.cache = .dirty;
@@ -389,7 +391,7 @@ pub fn markDirty(self: *@This(), es: *const Entities, cb: *CmdBuf) void {
 /// Similar to `markDirty`, but immediately emits the event instead of adding it to a command
 /// buffer.
 pub fn markDirtyImmediate(self: *@This(), es: *Entities) void {
-    assert(self.cache != .dirty_root);
+    assert(self.cache != .dirty_visited);
     if (self.cache == .dirty) return;
 
     self.cache = .dirty;

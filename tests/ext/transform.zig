@@ -28,7 +28,7 @@ const log = false;
 
 const cmds_capacity = 100;
 const max_entities = 100000;
-const comp_bytes = 200000;
+const comp_bytes = 1000000;
 
 test "fuzz cb single thread" {
     try std.testing.fuzz(SyncMode.single_threaded, fuzzTransformsCmdBuf, .{ .corpus = &.{} });
@@ -79,9 +79,7 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
     defer CompFlag.unregisterAll();
 
     var tp: std.Thread.Pool = undefined;
-    if (sync_mode == .threaded) try std.Thread.Pool.init(&tp, .{
-        .allocator = std.heap.smp_allocator,
-    });
+    if (sync_mode == .threaded) try std.Thread.Pool.init(&tp, .{ .allocator = gpa });
     defer if (sync_mode == .threaded) tp.deinit();
 
     var smith: Smith = .init(input);
@@ -232,6 +230,10 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
             // be executed by a threaded sync, but deterministically. We reverse the order for
             // to make sure we aren't relying on them being executed in order.
             .deferred => {
+                // Track visited nodes to make sure we aren't revisiting anything
+                var visited: std.AutoArrayHashMapUnmanaged(Entity, void) = .empty;
+                defer visited.deinit(gpa);
+
                 // Accumulate the dirty subtrees
                 var deferred: std.ArrayListUnmanaged(Transform.Subtree) = .{};
                 defer deferred.deinit(gpa);
@@ -244,10 +246,16 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
                 // Sync the dirty subtrees
                 for (0..deferred.items.len) |i| {
                     const subtree = deferred.items[deferred.items.len - 1 - i];
-                    // Synchronize the subtree. This work could be moved to a separate thread if desired, since
-                    // all subtrees are independent!
+                    // Synchronize the subtree. This work could be moved to a separate thread if
+                    // desired, since all subtrees are independent!
                     var transforms = subtree.preOrderIterator(&es);
+                    var first = true;
                     while (transforms.next(&es)) |transform| {
+                        if (first) {
+                            first = false;
+                            try expect(transform.cache == .dirty_visited);
+                        }
+                        try visited.putNoClobber(gpa, Entity.from(&es, transform), {});
                         transform.syncImmediate(transform.getRelativeWorldFromModel(&es));
                     }
                 }

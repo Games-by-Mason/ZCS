@@ -8,7 +8,23 @@ index: usize = 0,
 empty: bool = false,
 
 pub fn init(input: []const u8) @This() {
-    return .{ .input = input };
+    // Workaround for apparent fuzzer bug
+    const max_consecutive_zeroes = 64;
+    var consecutive_zeros: usize = 0;
+    var len: usize = input.len;
+    for (input, 0..) |n, i| {
+        if (n == 0) {
+            consecutive_zeros += 1;
+        } else {
+            consecutive_zeros = 0;
+        }
+
+        if (consecutive_zeros > max_consecutive_zeroes) {
+            len = i - max_consecutive_zeroes;
+            break;
+        }
+    }
+    return .{ .input = input[0..len] };
 }
 
 pub fn isEmpty(self: @This()) bool {
