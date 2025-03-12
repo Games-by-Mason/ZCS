@@ -292,12 +292,12 @@ pub const Exec = struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `immediate`, but returns `error.ZcsCompOverflow` or `error.ZcsEntityOverflow` on
-    /// error instead of panicking. On error the commands are left partially evaluated.
+    /// Similar to `immediate`, but returns an error on failure instead of panicking. On error the
+    /// commands are left partially evaluated.
     pub fn immediateOrErr(
         es: *Entities,
         cb: CmdBuf,
-    ) error{ ZcsCompOverflow, ZcsEntityOverflow }!void {
+    ) error{ ZcsCompOverflow, ZcsEntityOverflow, ZcsArchetypeOverflow }!void {
         var batches = cb.iterator();
         while (batches.next()) |batch| {
             var node_exec: @This() = .{};
@@ -360,15 +360,14 @@ pub const Exec = struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `afterCmdImmediate`, but returns `error.ZcsCompOverflow` or
-    /// `error.ZcsEntityOverflow` on failure instead of panicking.
+    /// Similar to `afterCmdImmediate`, but returns an error on failure instead of panicking.
     pub inline fn afterCmdImmediateOrErr(
         self: *@This(),
         es: *Entities,
         batch: CmdBuf.Batch,
         arch_change: CmdBuf.Batch.ArchChange,
         cmd: CmdBuf.Batch.Item,
-    ) error{ ZcsCompOverflow, ZcsEntityOverflow }!void {
+    ) error{ ZcsCompOverflow, ZcsEntityOverflow, ZcsArchetypeOverflow }!void {
         switch (cmd) {
             .ext => |ev| if (ev.as(SetParent)) |set_parent| {
                 if (self.init_node and !arch_change.from.contains(typeId(Node).comp_flag.?)) {

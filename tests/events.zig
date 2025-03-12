@@ -36,7 +36,11 @@ const Event = struct {
 test "events" {
     defer CompFlag.unregisterAll();
 
-    var es = try Entities.init(gpa, .{ .max_entities = 20, .comp_bytes = 8192 });
+    var es = try Entities.init(gpa, .{
+        .max_entities = 20,
+        .comp_bytes = 8192,
+        .max_archetypes = 4,
+    });
     defer es.deinit(gpa);
 
     var cb: CmdBuf = try .init(gpa, &es, .{

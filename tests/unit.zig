@@ -37,7 +37,11 @@ test "cb execImmediate" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es = try Entities.init(gpa, .{ .max_entities = 100, .comp_bytes = 100 });
+    var es = try Entities.init(gpa, .{
+        .max_entities = 100,
+        .comp_bytes = 100,
+        .max_archetypes = 8,
+    });
     defer es.deinit(gpa);
 
     // Check some entity equality stuff not tested elsewhere, OrErr more extensively in slot map
@@ -140,7 +144,11 @@ test "cb interning" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es = try Entities.init(gpa, .{ .max_entities = 100, .comp_bytes = 4096 });
+    var es = try Entities.init(gpa, .{
+        .max_entities = 100,
+        .comp_bytes = 4096,
+        .max_archetypes = 8,
+    });
     defer es.deinit(gpa);
 
     var cb = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .avg_cmd_bytes = @sizeOf(RigidBody) });
@@ -397,7 +405,11 @@ test "cb overflow" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es = try Entities.init(gpa, .{ .max_entities = 100, .comp_bytes = 100 });
+    var es = try Entities.init(gpa, .{
+        .max_entities = 100,
+        .comp_bytes = 100,
+        .max_archetypes = 8,
+    });
     defer es.deinit(gpa);
 
     // Tag overflow
@@ -598,6 +610,7 @@ test "cb capacity" {
     var es = try Entities.init(gpa, .{
         .max_entities = cb_capacity * 10,
         .comp_bytes = cb_capacity * 10,
+        .max_archetypes = 8,
     });
     defer es.deinit(gpa);
 
@@ -746,7 +759,7 @@ test "cb capacity" {
         for (0..cb_capacity) |i| {
             const e: Entity = .{ .key = .{
                 .index = @intCast(i),
-                .generation = @enumFromInt(0),
+                .generation = @enumFromInt(1),
             } };
             try e.destroyOrErr(&cb);
         }
@@ -757,7 +770,7 @@ test "cb capacity" {
         for (0..cb_capacity) |i| {
             const e: Entity = .{ .key = .{
                 .index = @intCast(i),
-                .generation = @enumFromInt(0),
+                .generation = @enumFromInt(1),
             } };
             try e.destroyOrErr(&cb);
         }
@@ -791,7 +804,11 @@ test "format entity" {
 
 test "change arch immediate" {
     defer CompFlag.unregisterAll();
-    var es = try Entities.init(gpa, .{ .max_entities = 100, .comp_bytes = 100 });
+    var es = try Entities.init(gpa, .{
+        .max_entities = 100,
+        .comp_bytes = 100,
+        .max_archetypes = 8,
+    });
     defer es.deinit(gpa);
 
     {
@@ -850,7 +867,11 @@ test "change arch immediate" {
 
 test "getAll" {
     defer CompFlag.unregisterAll();
-    var es = try Entities.init(gpa, .{ .max_entities = 100, .comp_bytes = 100 });
+    var es = try Entities.init(gpa, .{
+        .max_entities = 100,
+        .comp_bytes = 100,
+        .max_archetypes = 8,
+    });
     defer es.deinit(gpa);
     const e = Entity.reserveImmediate(&es);
     // Should register two types
@@ -888,7 +909,11 @@ test "getAll" {
 
 test "entity overflow" {
     defer CompFlag.unregisterAll();
-    var es = try Entities.init(gpa, .{ .max_entities = 3, .comp_bytes = 4 });
+    var es = try Entities.init(gpa, .{
+        .max_entities = 3,
+        .comp_bytes = 4,
+        .max_archetypes = 8,
+    });
     defer es.deinit(gpa);
 
     const e0 = Entity.reserveImmediate(&es);
@@ -902,4 +927,78 @@ test "entity overflow" {
     try expectError(error.ZcsCompOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u128, &0),
     } }));
+}
+
+test "archetype overflow" {
+    defer CompFlag.unregisterAll();
+    var es = try Entities.init(gpa, .{
+        .max_entities = 3,
+        .comp_bytes = 4,
+        .max_archetypes = 3,
+    });
+    defer es.deinit(gpa);
+
+    const e0 = Entity.reserveImmediate(&es);
+    try expectEqual(0, es.archetype_lists.count());
+
+    // Create three archetypes
+    try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+        .init(u1, &0),
+    } }));
+    try expectEqual(1, es.archetype_lists.count());
+
+    try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+        .init(u2, &0),
+    } }));
+    try expectEqual(2, es.archetype_lists.count());
+
+    // Test that trying to create additional archetypes causes it to overflow
+    try expectError(error.ZcsArchetypeOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+        .init(u3, &0),
+    } }));
+    try expectError(error.ZcsArchetypeOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+        .init(u3, &0),
+    } }));
+    try expectError(error.ZcsArchetypeOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+        .init(u4, &0),
+    } }));
+    try expectEqual(2, es.archetype_lists.count());
+
+    // Trying to create an archetype that already exists should be fine
+    try expect(try e0.changeArchImmediateOrErr(&es, .{
+        .remove = .initMany(&.{typeId(u2).comp_flag.?}),
+    }));
+    try expectEqual(2, es.archetype_lists.count());
+    try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+        .init(u2, &0),
+    } }));
+    try expectEqual(2, es.archetype_lists.count());
+}
+
+// This is a regression test. We do something a little tricky with zero sized types--we "allocate"
+// them at the entity ID to make it possible to retrieve the entity again later
+// (see `Entity.fromAny`). We had a bug in our first pass at this where a valid entity ID could have
+// both an index and generation of zero, which would result in this pointer being null despite not
+// being optional.
+//
+// This has since been fixed 0 is used as the invalid generation now, so all valid entity IDs are
+// nonzero. This test just verifies the previously failing code path works since it wasn't exercised
+// anywhere else.
+test "zero sized Entity.from" {
+    defer CompFlag.unregisterAll();
+    var es = try Entities.init(gpa, .{
+        .max_entities = 3,
+        .comp_bytes = 4,
+        .max_archetypes = 3,
+    });
+    defer es.deinit(gpa);
+
+    const e0 = Entity.reserveImmediate(&es);
+    try expectEqual(0, es.archetype_lists.count());
+
+    try expect(e0.changeArchImmediate(&es, .{ .add = &.{
+        .init(u0, &0),
+    } }));
+
+    try expectEqual(e0, Entity.from(&es, e0.get(&es, u0).?));
 }
