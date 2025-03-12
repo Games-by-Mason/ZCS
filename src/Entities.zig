@@ -31,8 +31,12 @@ pub const Slot = struct {
     committed: bool,
 };
 
+pub const ArchetypeList = struct {};
+
 slots: SlotMap(Slot, .{}),
 comps: *[CompFlag.max][]align(max_align) u8,
+max_archetypes: u16,
+archetype_lists: std.AutoArrayHashMapUnmanaged(CompFlag.Set, ArchetypeList),
 live: std.DynamicBitSetUnmanaged,
 iterator_generation: IteratorGeneration = 0,
 reserved_entities: usize = 0,
@@ -43,6 +47,8 @@ pub const Capacity = struct {
     max_entities: u32,
     /// The number of bytes per component type array.
     comp_bytes: usize,
+    /// The max number of archetypes.
+    max_archetypes: u16,
 };
 
 /// Initializes the entity storage with the given capacity.
@@ -60,11 +66,19 @@ pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
         comps_init += 1;
     }
 
-    const live = try std.DynamicBitSetUnmanaged.initEmpty(gpa, capacity.max_entities);
+    var live = try std.DynamicBitSetUnmanaged.initEmpty(gpa, capacity.max_entities);
     errdefer live.deinit(gpa);
+
+    // Reserve the archetype lists. We reserve one extra to work around a slightly the slightly
+    // awkward get or put API.
+    var archetype_lists: std.AutoArrayHashMapUnmanaged(CompFlag.Set, ArchetypeList) = .{};
+    errdefer archetype_lists.deinit(gpa);
+    try archetype_lists.ensureTotalCapacity(gpa, @as(u32, capacity.max_archetypes) + 1);
 
     return .{
         .slots = slots,
+        .max_archetypes = capacity.max_archetypes,
+        .archetype_lists = archetype_lists,
         .comps = comps,
         .live = live,
     };
@@ -72,6 +86,7 @@ pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
 
 /// Destroys the entity storage.
 pub fn deinit(self: *@This(), gpa: Allocator) void {
+    self.archetype_lists.deinit(gpa);
     self.live.deinit(gpa);
     for (self.comps) |comp| {
         gpa.free(comp);

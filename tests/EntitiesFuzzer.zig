@@ -44,6 +44,7 @@ pub fn init(input: []const u8) !@This() {
     var es: Entities = try .init(gpa, .{
         .max_entities = max_entities,
         .comp_bytes = comp_bytes,
+        .max_archetypes = 32,
     });
     errdefer es.deinit(gpa);
 

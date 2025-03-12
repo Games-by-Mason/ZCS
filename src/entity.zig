@@ -92,8 +92,7 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `reserve`, but returns `error.ZcsReservedEntityUnderflow` if there are no
-    /// more reserved entities instead of panicking.
+    /// Similar to `reserve`, but returns an error on failure instead of panicking.
     pub fn reserveOrErr(cb: *CmdBuf) error{ZcsReservedEntityUnderflow}!Entity {
         return cb.reserved.pop() orelse error.ZcsReservedEntityUnderflow;
     }
@@ -229,7 +228,7 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `add`, but returns `error.ZcsCmdBufOverflow` on error instead of panicking.
+    /// Similar to `add`, but returns an error on failure instead of panicking.
     pub inline fn addOrErr(
         self: @This(),
         cb: *CmdBuf,
@@ -280,8 +279,7 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `cmd`, but returns `error.ZcsCmdBufOverflow` on failure instead of
-    /// panicking.
+    /// Similar to `cmd`, but returns an error on failure instead of panicking.
     pub inline fn cmdOrErr(
         self: @This(),
         cb: *CmdBuf,
@@ -335,8 +333,8 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `remove`, but doesn't require compile time types and returns
-    /// `error.ZcsCmdBufOverflow` instead of panicking on failure.
+    /// Similar to `remove`, but doesn't require compile time types and returns an error on failure
+    /// instead of panicking on failure.
     pub fn removeId(
         self: @This(),
         cb: *CmdBuf,
@@ -386,13 +384,12 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `changeArchImmediate`, but returns `error.ZcsCompOverflow` on failure instead
-    /// of panicking.
+    /// Similar to `changeArchImmediate`, but returns an error on failure instead of panicking.
     pub fn changeArchImmediateOrErr(
         self: @This(),
         es: *Entities,
         changes: ChangeArchImmediateOptions,
-    ) error{ZcsCompOverflow}!bool {
+    ) error{ ZcsCompOverflow, ZcsArchetypeOverflow }!bool {
         // Early out if the entity does not exist, also checks some assertions
         if (!self.exists(es)) return false;
 
@@ -437,11 +434,28 @@ pub const Entity = packed struct {
         self: @This(),
         es: *Entities,
         options: ChangeArchUninitImmediateOptions,
-    ) error{ZcsCompOverflow}!bool {
+    ) error{ ZcsCompOverflow, ZcsArchetypeOverflow }!bool {
         invalidateIterators(es);
 
-        // Get the slot
+        // Get the slot and figure out the new arch
         const slot = es.slots.get(self.key) orelse return false;
+        var new_arch = slot.arch;
+        new_arch = new_arch.unionWith(options.add);
+        new_arch = new_arch.differenceWith(options.remove);
+
+        // Get the archetype list
+        const archetype_list = b: {
+            const gop = es.archetype_lists.getOrPutAssumeCapacity(new_arch);
+            if (!gop.found_existing) {
+                if (es.archetype_lists.count() >= es.max_archetypes) {
+                    assert(es.archetype_lists.swapRemove(new_arch));
+                    return error.ZcsArchetypeOverflow;
+                }
+                gop.value_ptr.* = .{};
+            }
+            break :b gop.value_ptr;
+        };
+        _ = archetype_list;
 
         // Check if we have enough space
         var added = options.add.differenceWith(options.remove).iterator();
@@ -455,14 +469,12 @@ pub const Entity = packed struct {
             @memset(comp_buffer[comp_offset .. comp_offset + id.size], undefined);
         }
 
-        // Commit the slot and change the archetype
+        // Commit the entity if needed and update the archetype
         if (!slot.committed) {
             es.reserved_entities -= 1;
             slot.committed = true;
         }
-        slot.arch = slot.arch.unionWith(options.add);
-        slot.arch = slot.arch.differenceWith(options.remove);
-
+        slot.arch = new_arch;
         return true;
     }
 
@@ -502,14 +514,14 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `viewOrAddImmediate` but returns, but returns `error.ZcsCompOverflow`
-    /// on failure instead of panicking.
+    /// Similar to `viewOrAddImmediate` but returns, but returns an error on failure instead of
+    /// panicking.
     pub fn viewOrAddImmediateOrErr(
         self: @This(),
         es: *Entities,
         View: type,
         comps: anytype,
-    ) error{ZcsCompOverflow}!?View {
+    ) error{ ZcsCompOverflow, ZcsArchetypeOverflow }!?View {
         // Create the view, possibly leaving some components uninitialized
         const result = (try self.viewOrAddUninitImmediateOrErr(es, View)) orelse return null;
 
@@ -543,13 +555,12 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `viewOrAddImmediate`, but returns `error.ZcsCompOverflow` on failure instead
-    /// of panicking.
+    /// Similar to `viewOrAddImmediate`, but returns an error on failure instead of panicking.
     pub fn viewOrAddUninitImmediateOrErr(
         self: @This(),
         es: *Entities,
         View: type,
-    ) error{ZcsCompOverflow}!?VoaUninitResult(View) {
+    ) error{ ZcsCompOverflow, ZcsArchetypeOverflow }!?VoaUninitResult(View) {
         // Figure out which components are missing
         const slot = es.slots.get(self.key) orelse return null;
         var view_arch: CompFlag.Set = .{};
@@ -622,7 +633,7 @@ inline fn isComptimeKnown(value: anytype) bool {
     return @typeInfo(@TypeOf(.{value})).@"struct".fields[0].is_comptime;
 }
 
-test "isComptimeKnown" {
+test isComptimeKnown {
     try std.testing.expect(isComptimeKnown(123));
     const foo = 456;
     try std.testing.expect(isComptimeKnown(foo));

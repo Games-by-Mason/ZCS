@@ -131,9 +131,12 @@ pub fn execImmediate(self: *@This(), es: *Entities) void {
         @panic(@errorName(err));
 }
 
-/// Similar to `execImmediate`, but returns `error.ZcsEntityOverflow` on failure instead of
-/// panicking. On error, the command buffer will be partially executed.
-pub fn execImmediateOrErr(self: *@This(), es: *Entities) error{ZcsCompOverflow}!void {
+/// Similar to `execImmediate`, but returns an error on failure instead of panicking. On error, the
+/// command buffer will be partially executed.
+pub fn execImmediateOrErr(
+    self: *@This(),
+    es: *Entities,
+) error{ ZcsCompOverflow, ZcsArchetypeOverflow }!void {
     var iter = self.iterator();
     while (iter.next()) |batch| {
         _ = try batch.execImmediateOrErr(es, batch.getArchChangeImmediate(es));
@@ -251,13 +254,12 @@ pub const Batch = struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `execImmediate`, but returns `error.ZcsCompOverflow` on overflow instead of
-    /// panicking.
+    /// Similar to `execImmediate`, but returns an error on overflow instead of panicking.
     pub fn execImmediateOrErr(
         self: @This(),
         es: *Entities,
         arch_change: ArchChange,
-    ) error{ZcsCompOverflow}!bool {
+    ) error{ ZcsCompOverflow, ZcsArchetypeOverflow }!bool {
         // If the entity is scheduled for destruction, destroy it and early out.
         if (arch_change.destroy) {
             return self.entity.destroyImmediate(es);
