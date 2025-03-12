@@ -454,6 +454,10 @@ pub const Entity = packed struct {
         const archetype_list = b: {
             const gop = es.archetype_lists.getOrPutAssumeCapacity(new_arch);
             if (!gop.found_existing) {
+                // This is a bit awkward, but works around there not being a get or put variation
+                // that fails when allocation is needed. In practice this code path will only be
+                // executed when we're about to fail in a likely fatal way, so the mild amount of
+                // extra work isn't worth creating a whole new gop variant over.
                 if (es.archetype_lists.count() >= es.max_archetypes) {
                     assert(es.archetype_lists.swapRemove(new_arch));
                     return error.ZcsArchetypeOverflow;
