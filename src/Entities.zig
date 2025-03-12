@@ -27,16 +27,23 @@ const max_align = zcs.TypeInfo.max_align;
 
 /// For internal use. A slot in the slot map.
 pub const Slot = struct {
-    arch: CompFlag.Set,
-    committed: bool,
+    arch_list: ?*ArchList,
+
+    /// Returns the archetype for this slot, or the empty archetype if it hasn't been reserved.
+    pub fn getArch(self: @This()) CompFlag.Set {
+        const arch_list = self.arch_list orelse return .{};
+        return arch_list.arch;
+    }
 };
 
-pub const ArchetypeList = struct {};
+pub const ArchList = struct {
+    arch: CompFlag.Set,
+};
 
 slots: SlotMap(Slot, .{}),
 comps: *[CompFlag.max][]align(max_align) u8,
 max_archetypes: u16,
-archetype_lists: std.AutoArrayHashMapUnmanaged(CompFlag.Set, ArchetypeList),
+arch_lists: std.AutoArrayHashMapUnmanaged(CompFlag.Set, ArchList),
 live: std.DynamicBitSetUnmanaged,
 iterator_generation: IteratorGeneration = 0,
 reserved_entities: usize = 0,
@@ -71,14 +78,15 @@ pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
 
     // Reserve the archetype lists. We reserve one extra to work around a slightly the slightly
     // awkward get or put API.
-    var archetype_lists: std.AutoArrayHashMapUnmanaged(CompFlag.Set, ArchetypeList) = .{};
-    errdefer archetype_lists.deinit(gpa);
-    try archetype_lists.ensureTotalCapacity(gpa, @as(u32, capacity.max_archetypes) + 1);
+    var arch_lists: std.AutoArrayHashMapUnmanaged(CompFlag.Set, ArchList) = .{};
+    errdefer arch_lists.deinit(gpa);
+    try arch_lists.ensureTotalCapacity(gpa, @as(u32, capacity.max_archetypes) + 1);
+    arch_lists.lockPointers();
 
     return .{
         .slots = slots,
         .max_archetypes = capacity.max_archetypes,
-        .archetype_lists = archetype_lists,
+        .arch_lists = arch_lists,
         .comps = comps,
         .live = live,
     };
@@ -86,7 +94,8 @@ pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
 
 /// Destroys the entity storage.
 pub fn deinit(self: *@This(), gpa: Allocator) void {
-    self.archetype_lists.deinit(gpa);
+    self.arch_lists.unlockPointers();
+    self.arch_lists.deinit(gpa);
     self.live.deinit(gpa);
     for (self.comps) |comp| {
         gpa.free(comp);
@@ -99,7 +108,7 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
 /// Recycles all entities with the given archetype.
 pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
     for (0..self.slots.next_index) |index| {
-        if (self.live.isSet(index) and self.slots.values[index].arch.eql(arch)) {
+        if (self.live.isSet(index) and self.slots.values[index].getArch().eql(arch)) {
             const entity: Entity = .{ .key = .{
                 .index = @intCast(index),
                 .generation = self.slots.generations[index],
@@ -158,7 +167,7 @@ pub const Iterator = struct {
             self.index += 1;
             if (self.es.live.isSet(index)) {
                 const slot = self.es.slots.values[index];
-                if (slot.committed and self.required_comps.subsetOf(slot.arch)) {
+                if (slot.arch_list != null and self.required_comps.subsetOf(slot.getArch())) {
                     return .{ .key = .{
                         .index = index,
                         .generation = self.es.slots.generations[index],
@@ -221,7 +230,7 @@ pub fn ViewIterator(View: type) type {
 
                         // Get the slot
                         const slot = self.es.slots.values[entity.key.index];
-                        assert(slot.committed);
+                        assert(slot.arch_list != null);
 
                         // Check if we have the component or not
                         const has_comp = if (@typeInfo(field.type) == .optional) b: {
@@ -229,7 +238,7 @@ pub fn ViewIterator(View: type) type {
                             const flag = typeId(T).comp_flag orelse break :b false;
 
                             // If it has a flag, check if we have it
-                            break :b slot.arch.contains(flag);
+                            break :b slot.arch_list.?.arch.contains(flag);
                         } else b: {
                             // If the component isn't optional, we can assume we have it
                             break :b true;

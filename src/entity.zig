@@ -117,8 +117,7 @@ pub const Entity = packed struct {
     /// panicking.
     pub fn reserveImmediateOrErr(es: *Entities) error{ZcsEntityOverflow}!Entity {
         const key = es.slots.put(.{
-            .arch = .{},
-            .committed = false,
+            .arch_list = null,
         }) catch |err| switch (err) {
             error.Overflow => return error.ZcsEntityOverflow,
         };
@@ -151,7 +150,7 @@ pub const Entity = packed struct {
     pub fn destroyImmediate(self: @This(), es: *Entities) bool {
         invalidateIterators(es);
         if (es.slots.get(self.key)) |slot| {
-            if (!slot.committed) es.reserved_entities -= 1;
+            if (slot.arch_list == null) es.reserved_entities -= 1;
             es.live.unset(self.key.index);
             es.slots.remove(self.key);
             return true;
@@ -166,7 +165,7 @@ pub const Entity = packed struct {
     pub fn recycleImmediate(self: @This(), es: *Entities) bool {
         invalidateIterators(es);
         if (es.slots.get(self.key)) |slot| {
-            if (!slot.committed) es.reserved_entities -= 1;
+            if (slot.arch_list == null) es.reserved_entities -= 1;
             es.live.unset(self.key.index);
             es.slots.recycle(self.key);
             return true;
@@ -183,7 +182,7 @@ pub const Entity = packed struct {
     /// Returns true if the entity exists and has been committed, otherwise returns false.
     pub fn committed(self: @This(), es: *const Entities) bool {
         const slot = es.slots.get(self.key) orelse return false;
-        return slot.committed;
+        return slot.arch_list != null;
     }
 
     /// Returns true if the entity has the given component type, false otherwise or if the entity
@@ -446,27 +445,28 @@ pub const Entity = packed struct {
 
         // Get the slot and figure out the new arch
         const slot = es.slots.get(self.key) orelse return false;
-        var new_arch = slot.arch;
+        var new_arch = slot.getArch();
         new_arch = new_arch.unionWith(options.add);
         new_arch = new_arch.differenceWith(options.remove);
 
         // Get the archetype list
-        const archetype_list = b: {
-            const gop = es.archetype_lists.getOrPutAssumeCapacity(new_arch);
+        const arch_list = b: {
+            const gop = es.arch_lists.getOrPutAssumeCapacity(new_arch);
             if (!gop.found_existing) {
                 // This is a bit awkward, but works around there not being a get or put variation
                 // that fails when allocation is needed. In practice this code path will only be
                 // executed when we're about to fail in a likely fatal way, so the mild amount of
                 // extra work isn't worth creating a whole new gop variant over.
-                if (es.archetype_lists.count() >= es.max_archetypes) {
-                    assert(es.archetype_lists.swapRemove(new_arch));
+                if (es.arch_lists.count() >= es.max_archetypes) {
+                    es.arch_lists.unlockPointers();
+                    assert(es.arch_lists.swapRemove(new_arch));
+                    es.arch_lists.lockPointers();
                     return error.ZcsArchetypeOverflow;
                 }
-                gop.value_ptr.* = .{};
+                gop.value_ptr.* = .{ .arch = new_arch };
             }
             break :b gop.value_ptr;
         };
-        _ = archetype_list;
 
         // Check if we have enough space
         var added = options.add.differenceWith(options.remove).iterator();
@@ -481,11 +481,8 @@ pub const Entity = packed struct {
         }
 
         // Commit the entity if needed and update the archetype
-        if (!slot.committed) {
-            es.reserved_entities -= 1;
-            slot.committed = true;
-        }
-        slot.arch = new_arch;
+        if (slot.arch_list == null) es.reserved_entities -= 1;
+        slot.arch_list = arch_list;
         return true;
     }
 
@@ -507,7 +504,7 @@ pub const Entity = packed struct {
                 view_arch.insert(flag);
             }
         }
-        if (!slot.arch.supersetOf(view_arch)) return null;
+        if (!slot.getArch().supersetOf(view_arch)) return null;
 
         // Fill in the view and return it
         return self.viewAssumeArch(es, View);
@@ -582,8 +579,8 @@ pub const Entity = packed struct {
                 view_arch.insert(flag);
             }
         }
-        const uninitialized = view_arch.differenceWith(slot.arch);
-        if (!slot.arch.supersetOf(view_arch)) {
+        const uninitialized = view_arch.differenceWith(slot.getArch());
+        if (!slot.getArch().supersetOf(view_arch)) {
             assert(try self.changeArchUninitImmediateOrErr(es, .{ .add = uninitialized }));
         }
 
@@ -628,8 +625,7 @@ pub const Entity = packed struct {
     /// empty archetype will be returned.
     pub fn getArch(self: @This(), es: *const Entities) CompFlag.Set {
         const slot = es.slots.get(self.key) orelse return .{};
-        if (!slot.committed) assert(slot.arch.eql(.{}));
-        return slot.arch;
+        return slot.getArch();
     }
 
     /// Explicitly invalidates iterators to catch bugs in debug builds.

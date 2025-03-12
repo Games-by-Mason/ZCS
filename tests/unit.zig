@@ -939,18 +939,18 @@ test "archetype overflow" {
     defer es.deinit(gpa);
 
     const e0 = Entity.reserveImmediate(&es);
-    try expectEqual(0, es.archetype_lists.count());
+    try expectEqual(0, es.arch_lists.count());
 
     // Create three archetypes
     try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u1, &0),
     } }));
-    try expectEqual(1, es.archetype_lists.count());
+    try expectEqual(1, es.arch_lists.count());
 
     try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u2, &0),
     } }));
-    try expectEqual(2, es.archetype_lists.count());
+    try expectEqual(2, es.arch_lists.count());
 
     // Test that trying to create additional archetypes causes it to overflow
     try expectError(error.ZcsArchetypeOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
@@ -962,17 +962,17 @@ test "archetype overflow" {
     try expectError(error.ZcsArchetypeOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u4, &0),
     } }));
-    try expectEqual(2, es.archetype_lists.count());
+    try expectEqual(2, es.arch_lists.count());
 
     // Trying to create an archetype that already exists should be fine
     try expect(try e0.changeArchImmediateOrErr(&es, .{
         .remove = .initMany(&.{typeId(u2).comp_flag.?}),
     }));
-    try expectEqual(2, es.archetype_lists.count());
+    try expectEqual(2, es.arch_lists.count());
     try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u2, &0),
     } }));
-    try expectEqual(2, es.archetype_lists.count());
+    try expectEqual(2, es.arch_lists.count());
 }
 
 // This is a regression test. We do something a little tricky with zero sized types--we "allocate"
@@ -994,7 +994,7 @@ test "zero sized Entity.from" {
     defer es.deinit(gpa);
 
     const e0 = Entity.reserveImmediate(&es);
-    try expectEqual(0, es.archetype_lists.count());
+    try expectEqual(0, es.arch_lists.count());
 
     try expect(e0.changeArchImmediate(&es, .{ .add = &.{
         .init(u0, &0),
