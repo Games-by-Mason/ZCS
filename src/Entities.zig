@@ -1,7 +1,7 @@
 //! Storage for entities.
 //!
 //! See `SlotMap` for how handle safety works. Note that you may want to check
-//! `saturated_generations` every now and then and warn if it's nonzero.
+//! `saturated_slots` every now and then and warn if it's nonzero.
 //!
 //! See `README.md` for more information.
 
@@ -239,7 +239,10 @@ pub fn ViewIterator(View: type) type {
                         if (has_comp) {
                             // We have the component, pass it to the caller
                             const comp: *T = if (@sizeOf(T) == 0) b: {
-                                // See `Entity.fromComp`.
+                                // See `Entity.fromAny`.
+                                const Key = @FieldType(Entity, "key");
+                                const Generation = @FieldType(Key, "generation");
+                                comptime assert(@intFromEnum(Generation.invalid) == 0);
                                 break :b @ptrFromInt(@as(u64, @bitCast(entity)));
                             } else b: {
                                 const base = @intFromPtr(@field(self.base, field.name));

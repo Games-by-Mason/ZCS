@@ -25,6 +25,8 @@ const Smith = @import("Smith.zig");
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 
+const assert = std.debug.assert;
+
 const max_entities = 100000;
 const comp_bytes = 100000;
 const cmds_capacity = 4096;
@@ -81,10 +83,16 @@ const OracleBatch = struct {
 
 /// Pick a random entity from a small set.
 fn randomEntity(smith: *Smith) Entity {
-    return .{ .key = .{
-        .index = smith.next(u8) % 10,
-        .generation = @enumFromInt(smith.next(u8) % 3),
-    } };
+    const Key = @FieldType(Entity, "key");
+    const Generation = @FieldType(Key, "generation");
+    comptime assert(@intFromEnum(Generation.invalid) == 0);
+    return .{
+        .key = .{
+            .index = smith.next(u8) % 10,
+            // We add one to avoid the invalid generation which is zero, asserted above
+            .generation = @enumFromInt(@as(u32, smith.next(u8) % 3) + 1),
+        },
+    };
 }
 
 /// Randomize the given entity from a small set of entities, occasionally leaving it unchanged.

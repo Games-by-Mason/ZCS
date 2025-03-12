@@ -62,6 +62,13 @@ pub const Entity = packed struct {
             // address. To work around this, zero sized types are "allocated" at the address of the
             // entity ID they're attached to. Without this strategy, we'd have to make zero bit
             // types take up a byte to make the math work.
+            //
+            // We also comptime assert that the invalid generation is zero, this guarantees that the
+            // entity ID can never be comprised of all zeroes, which would be illegal since we are
+            // storing it as a non optional pointer.
+            const Key = @FieldType(Entity, "key");
+            const Generation = @FieldType(Key, "generation");
+            comptime assert(@intFromEnum(Generation.invalid) == 0);
             return @bitCast(@intFromPtr(comp.ptr));
         }
 

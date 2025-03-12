@@ -759,7 +759,7 @@ test "cb capacity" {
         for (0..cb_capacity) |i| {
             const e: Entity = .{ .key = .{
                 .index = @intCast(i),
-                .generation = @enumFromInt(0),
+                .generation = @enumFromInt(1),
             } };
             try e.destroyOrErr(&cb);
         }
@@ -770,7 +770,7 @@ test "cb capacity" {
         for (0..cb_capacity) |i| {
             const e: Entity = .{ .key = .{
                 .index = @intCast(i),
-                .generation = @enumFromInt(0),
+                .generation = @enumFromInt(1),
             } };
             try e.destroyOrErr(&cb);
         }
@@ -973,4 +973,32 @@ test "archetype overflow" {
         .init(u2, &0),
     } }));
     try expectEqual(2, es.archetype_lists.count());
+}
+
+// This is a regression test. We do something a little tricky with zero sized types--we "allocate"
+// them at the entity ID to make it possible to retrieve the entity again later
+// (see `Entity.fromAny`). We had a bug in our first pass at this where a valid entity ID could have
+// both an index and generation of zero, which would result in this pointer being null despite not
+// being optional.
+//
+// This has since been fixed 0 is used as the invalid generation now, so all valid entity IDs are
+// nonzero. This test just verifies the previously failing code path works since it wasn't exercised
+// anywhere else.
+test "zero sized Entity.from" {
+    defer CompFlag.unregisterAll();
+    var es = try Entities.init(gpa, .{
+        .max_entities = 3,
+        .comp_bytes = 4,
+        .max_archetypes = 3,
+    });
+    defer es.deinit(gpa);
+
+    const e0 = Entity.reserveImmediate(&es);
+    try expectEqual(0, es.archetype_lists.count());
+
+    try expect(e0.changeArchImmediate(&es, .{ .add = &.{
+        .init(u0, &0),
+    } }));
+
+    try expectEqual(e0, Entity.from(&es, e0.get(&es, u0).?));
 }

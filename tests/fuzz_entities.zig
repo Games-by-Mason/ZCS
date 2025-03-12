@@ -77,7 +77,7 @@ fn run(input: []const u8, saturated: bool) !void {
         const Key = @FieldType(Entities, "slots").Key;
         const Generation = @FieldType(Key, "generation");
         const invalid = @intFromEnum(Generation.invalid);
-        fz.es.slots.generations[e.key.index] = @enumFromInt(invalid - 1);
+        fz.es.slots.generations[e.key.index] = @enumFromInt(invalid -% 1);
         const e2 = Entity.reserveImmediate(&fz.es);
         try expect(e2.destroyImmediate(&fz.es));
         try expect(!e.exists(&fz.es));
@@ -85,7 +85,7 @@ fn run(input: []const u8, saturated: bool) !void {
         try expect(!e.committed(&fz.es));
         try expect(!e2.committed(&fz.es));
     }
-    try expectEqual(saturated_count, fz.es.slots.saturated_generations);
+    try expectEqual(saturated_count, fz.es.slots.saturated);
 
     while (!fz.smith.isEmpty()) {
         // Modify the entities via a command buffer
@@ -116,7 +116,7 @@ fn run(input: []const u8, saturated: bool) !void {
         try checkOracle(&fz, &cb);
     }
 
-    try expect(fz.es.slots.saturated_generations >= saturated_count);
+    try expect(fz.es.slots.saturated >= saturated_count);
     for (0..saturated_count) |i| {
         try expectEqual(.invalid, fz.es.slots.generations[i + cb.reserved.capacity]);
     }
