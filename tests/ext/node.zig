@@ -33,6 +33,7 @@ test "immediate" {
         .max_entities = 128,
         .comp_bytes = 256,
         .max_archetypes = 8,
+        .max_chunks = 8,
     });
     defer es.deinit(gpa);
 

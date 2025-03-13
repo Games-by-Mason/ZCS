@@ -112,6 +112,7 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
         .max_entities = max_entities,
         .comp_bytes = comp_bytes,
         .max_archetypes = 8,
+        .max_chunks = 8,
     });
     defer es.deinit(gpa);
 

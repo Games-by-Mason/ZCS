@@ -40,6 +40,7 @@ test "events" {
         .max_entities = 20,
         .comp_bytes = 8192,
         .max_archetypes = 4,
+        .max_chunks = 4,
     });
     defer es.deinit(gpa);
 

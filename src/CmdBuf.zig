@@ -136,7 +136,7 @@ pub fn execImmediate(self: *@This(), es: *Entities) void {
 pub fn execImmediateOrErr(
     self: *@This(),
     es: *Entities,
-) error{ ZcsCompOverflow, ZcsArchetypeOverflow }!void {
+) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!void {
     var iter = self.iterator();
     while (iter.next()) |batch| {
         _ = try batch.execImmediateOrErr(es, batch.getArchChangeImmediate(es));
@@ -259,7 +259,7 @@ pub const Batch = struct {
         self: @This(),
         es: *Entities,
         arch_change: ArchChange,
-    ) error{ ZcsCompOverflow, ZcsArchetypeOverflow }!bool {
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!bool {
         // If the entity is scheduled for destruction, destroy it and early out.
         if (arch_change.destroy) {
             return self.entity.destroyImmediate(es);

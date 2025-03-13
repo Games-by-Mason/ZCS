@@ -1,7 +1,7 @@
 //! Storage for entities.
 //!
 //! See `SlotMap` for how handle safety works. Note that you may want to check
-//! `saturated_slots` every now and then and warn if it's nonzero.
+//! `saturated` every now and then and warn if it's nonzero.
 //!
 //! See `README.md` for more information.
 
@@ -14,9 +14,13 @@ const zcs = @import("root.zig");
 const typeId = zcs.typeId;
 const Any = zcs.Any;
 const CompFlag = zcs.CompFlag;
-const slot_map = @import("slot_map");
-const SlotMap = slot_map.SlotMap;
 const Entity = zcs.Entity;
+const Slot = zcs.storage.Slot;
+const ChunkList = zcs.storage.ChunkList;
+const ChunkPool = zcs.storage.ChunkPool;
+const Chunk = zcs.storage.Chunk;
+const HandleTable = zcs.storage.HandleTable;
+const Arches = zcs.storage.Arches;
 const view = zcs.view;
 
 const Entities = @This();
@@ -25,28 +29,14 @@ const IteratorGeneration = if (std.debug.runtime_safety) u64 else u0;
 
 const max_align = zcs.TypeInfo.max_align;
 
-/// For internal use. A slot in the slot map.
-pub const Slot = struct {
-    arch_list: ?*ArchList,
-
-    /// Returns the archetype for this slot, or the empty archetype if it hasn't been reserved.
-    pub fn getArch(self: @This()) CompFlag.Set {
-        const arch_list = self.arch_list orelse return .{};
-        return arch_list.arch;
-    }
-};
-
-pub const ArchList = struct {
-    arch: CompFlag.Set,
-};
-
-slots: SlotMap(Slot, .{}),
+handles: HandleTable,
 comps: *[CompFlag.max][]align(max_align) u8,
 max_archetypes: u16,
-arch_lists: std.AutoArrayHashMapUnmanaged(CompFlag.Set, ArchList),
+arches: Arches,
 live: std.DynamicBitSetUnmanaged,
 iterator_generation: IteratorGeneration = 0,
 reserved_entities: usize = 0,
+chunk_pool: ChunkPool,
 
 /// The capacity for `Entities`.
 pub const Capacity = struct {
@@ -56,12 +46,14 @@ pub const Capacity = struct {
     comp_bytes: usize,
     /// The max number of archetypes.
     max_archetypes: u16,
+    /// The number of chunks to allocate.
+    max_chunks: u32,
 };
 
 /// Initializes the entity storage with the given capacity.
 pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
-    var slots = try SlotMap(Slot, .{}).init(gpa, capacity.max_entities);
-    errdefer slots.deinit(gpa);
+    var handles: HandleTable = try .init(gpa, capacity.max_entities);
+    errdefer handles.deinit(gpa);
 
     const comps = try gpa.create([CompFlag.max][]align(max_align) u8);
     errdefer gpa.destroy(comps);
@@ -73,45 +65,45 @@ pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
         comps_init += 1;
     }
 
+    var chunk_pool: ChunkPool = try .init(gpa, capacity.max_chunks);
+    errdefer chunk_pool.deinit(gpa);
+
     var live = try std.DynamicBitSetUnmanaged.initEmpty(gpa, capacity.max_entities);
     errdefer live.deinit(gpa);
 
-    // Reserve the archetype lists. We reserve one extra to work around a slightly the slightly
-    // awkward get or put API.
-    var arch_lists: std.AutoArrayHashMapUnmanaged(CompFlag.Set, ArchList) = .{};
-    errdefer arch_lists.deinit(gpa);
-    try arch_lists.ensureTotalCapacity(gpa, @as(u32, capacity.max_archetypes) + 1);
-    arch_lists.lockPointers();
+    var arches: Arches = try .init(gpa, capacity.max_archetypes);
+    errdefer arches.deinit(gpa);
 
     return .{
-        .slots = slots,
+        .handles = handles,
         .max_archetypes = capacity.max_archetypes,
-        .arch_lists = arch_lists,
+        .arches = arches,
         .comps = comps,
+        .chunk_pool = chunk_pool,
         .live = live,
     };
 }
 
 /// Destroys the entity storage.
 pub fn deinit(self: *@This(), gpa: Allocator) void {
-    self.arch_lists.unlockPointers();
-    self.arch_lists.deinit(gpa);
+    self.arches.deinit(gpa);
+    self.chunk_pool.deinit(gpa);
     self.live.deinit(gpa);
     for (self.comps) |comp| {
         gpa.free(comp);
     }
     gpa.destroy(self.comps);
-    self.slots.deinit(gpa);
+    self.handles.deinit(gpa);
     self.* = undefined;
 }
 
 /// Recycles all entities with the given archetype.
 pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
-    for (0..self.slots.next_index) |index| {
-        if (self.live.isSet(index) and self.slots.values[index].getArch().eql(arch)) {
+    for (0..self.handles.next_index) |index| {
+        if (self.live.isSet(index) and self.handles.values[index].getArch().eql(arch)) {
             const entity: Entity = .{ .key = .{
                 .index = @intCast(index),
-                .generation = self.slots.generations[index],
+                .generation = self.handles.generations[index],
             } };
             assert(entity.recycleImmediate(self));
         }
@@ -120,13 +112,13 @@ pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
 
 /// Recycles all entities.
 pub fn recycleImmediate(self: *@This()) void {
-    self.slots.recycleAll();
+    self.handles.recycleAll();
     self.reserved_entities = 0;
 }
 
 /// Returns the current number of entities.
 pub fn count(self: @This()) usize {
-    return self.slots.count() - self.reserved_entities;
+    return self.handles.count() - self.reserved_entities;
 }
 
 /// Returns the number of reserved but not committed entities that currently exist.
@@ -162,15 +154,15 @@ pub const Iterator = struct {
         }
         // Keep in mind that in view iterator, we're using max index to indicate that the iterator
         // is invalid.
-        while (self.index < self.es.slots.next_index) {
+        while (self.index < self.es.handles.next_index) {
             const index = self.index;
             self.index += 1;
             if (self.es.live.isSet(index)) {
-                const slot = self.es.slots.values[index];
+                const slot = self.es.handles.values[index];
                 if (slot.arch_list != null and self.required_comps.subsetOf(slot.getArch())) {
                     return .{ .key = .{
                         .index = index,
-                        .generation = self.es.slots.generations[index],
+                        .generation = self.es.handles.generations[index],
                     } };
                 }
             }
@@ -229,7 +221,7 @@ pub fn ViewIterator(View: type) type {
                         const T = view.UnwrapField(field.type);
 
                         // Get the slot
-                        const slot = self.es.slots.values[entity.key.index];
+                        const slot = self.es.handles.values[entity.key.index];
                         assert(slot.arch_list != null);
 
                         // Check if we have the component or not

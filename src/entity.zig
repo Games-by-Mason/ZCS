@@ -14,6 +14,9 @@ const Any = zcs.Any;
 const CompFlag = zcs.CompFlag;
 const CmdBuf = zcs.CmdBuf;
 const TypeId = zcs.TypeId;
+const HandleTable = zcs.storage.HandleTable;
+const Slot = zcs.storage.Slot;
+const Chunk = zcs.storage.Chunk;
 
 /// An entity.
 ///
@@ -29,7 +32,7 @@ pub const Entity = packed struct {
     pub const Optional = packed struct {
         pub const none: @This() = .{ .key = .none };
 
-        key: SlotMap(Entities.Slot, .{}).Key.Optional,
+        key: HandleTable.Key.Optional,
 
         /// Unwraps the optional entity into `Entity`, or returns `null` if it is `.none`.
         pub fn unwrap(self: @This()) ?Entity {
@@ -48,7 +51,7 @@ pub const Entity = packed struct {
         }
     };
 
-    key: SlotMap(Entities.Slot, .{}).Key,
+    key: HandleTable.Key,
 
     /// Given a pointer to a component, returns the corresponding entity.
     pub fn from(es: *const Entities, comp: anytype) @This() {
@@ -83,7 +86,7 @@ pub const Entity = packed struct {
         const index = (loc - start) / comp.id.size;
         return .{ .key = .{
             .index = @intCast(index),
-            .generation = es.slots.generations[index],
+            .generation = es.handles.generations[index],
         } };
     }
 
@@ -116,7 +119,7 @@ pub const Entity = packed struct {
     /// Similar to `reserveImmediate`, but returns `error.ZcsEntityOverflow` on failure instead of
     /// panicking.
     pub fn reserveImmediateOrErr(es: *Entities) error{ZcsEntityOverflow}!Entity {
-        const key = es.slots.put(.{
+        const key = es.handles.put(.{
             .arch_list = null,
         }) catch |err| switch (err) {
             error.Overflow => return error.ZcsEntityOverflow,
@@ -149,10 +152,10 @@ pub const Entity = packed struct {
     /// Invalidates iterators.
     pub fn destroyImmediate(self: @This(), es: *Entities) bool {
         invalidateIterators(es);
-        if (es.slots.get(self.key)) |slot| {
+        if (es.handles.get(self.key)) |slot| {
             if (slot.arch_list == null) es.reserved_entities -= 1;
             es.live.unset(self.key.index);
-            es.slots.remove(self.key);
+            es.handles.remove(self.key);
             return true;
         } else {
             return false;
@@ -164,10 +167,10 @@ pub const Entity = packed struct {
     /// Invalidates iterators.
     pub fn recycleImmediate(self: @This(), es: *Entities) bool {
         invalidateIterators(es);
-        if (es.slots.get(self.key)) |slot| {
+        if (es.handles.get(self.key)) |slot| {
             if (slot.arch_list == null) es.reserved_entities -= 1;
             es.live.unset(self.key.index);
-            es.slots.recycle(self.key);
+            es.handles.recycle(self.key);
             return true;
         } else {
             return false;
@@ -176,12 +179,12 @@ pub const Entity = packed struct {
 
     /// Returns true if the entity has not been destroyed.
     pub fn exists(self: @This(), es: *const Entities) bool {
-        return es.slots.containsKey(self.key);
+        return es.handles.containsKey(self.key);
     }
 
     /// Returns true if the entity exists and has been committed, otherwise returns false.
     pub fn committed(self: @This(), es: *const Entities) bool {
-        const slot = es.slots.get(self.key) orelse return false;
+        const slot = es.handles.get(self.key) orelse return false;
         return slot.arch_list != null;
     }
 
@@ -395,7 +398,7 @@ pub const Entity = packed struct {
         self: @This(),
         es: *Entities,
         changes: ChangeArchImmediateOptions,
-    ) error{ ZcsCompOverflow, ZcsArchetypeOverflow }!bool {
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!bool {
         // Early out if the entity does not exist, also checks some assertions
         if (!self.exists(es)) return false;
 
@@ -440,33 +443,17 @@ pub const Entity = packed struct {
         self: @This(),
         es: *Entities,
         options: ChangeArchUninitImmediateOptions,
-    ) error{ ZcsCompOverflow, ZcsArchetypeOverflow }!bool {
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!bool {
         invalidateIterators(es);
 
         // Get the slot and figure out the new arch
-        const slot = es.slots.get(self.key) orelse return false;
+        const slot = es.handles.get(self.key) orelse return false;
         var new_arch = slot.getArch();
         new_arch = new_arch.unionWith(options.add);
         new_arch = new_arch.differenceWith(options.remove);
 
         // Get the archetype list
-        const arch_list = b: {
-            const gop = es.arch_lists.getOrPutAssumeCapacity(new_arch);
-            if (!gop.found_existing) {
-                // This is a bit awkward, but works around there not being a get or put variation
-                // that fails when allocation is needed. In practice this code path will only be
-                // executed when we're about to fail in a likely fatal way, so the mild amount of
-                // extra work isn't worth creating a whole new gop variant over.
-                if (es.arch_lists.count() >= es.max_archetypes) {
-                    es.arch_lists.unlockPointers();
-                    assert(es.arch_lists.swapRemove(new_arch));
-                    es.arch_lists.lockPointers();
-                    return error.ZcsArchetypeOverflow;
-                }
-                gop.value_ptr.* = .{ .arch = new_arch };
-            }
-            break :b gop.value_ptr;
-        };
+        const arch_list = try es.arches.getOrPut(&es.chunk_pool, new_arch);
 
         // Check if we have enough space
         var added = options.add.differenceWith(options.remove).iterator();
@@ -483,6 +470,7 @@ pub const Entity = packed struct {
         // Commit the entity if needed and update the archetype
         if (slot.arch_list == null) es.reserved_entities -= 1;
         slot.arch_list = arch_list;
+        try arch_list.add(&es.chunk_pool, self);
         return true;
     }
 
@@ -495,7 +483,7 @@ pub const Entity = packed struct {
     /// required components.
     pub fn view(self: @This(), es: *const Entities, View: type) ?View {
         // Check if entity has the required components
-        const slot = es.slots.get(self.key) orelse return null;
+        const slot = es.handles.get(self.key) orelse return null;
         var view_arch: CompFlag.Set = .{};
         inline for (@typeInfo(View).@"struct".fields) |field| {
             if (field.type != Entity and @typeInfo(field.type) != .optional) {
@@ -529,7 +517,7 @@ pub const Entity = packed struct {
         es: *Entities,
         View: type,
         comps: anytype,
-    ) error{ ZcsCompOverflow, ZcsArchetypeOverflow }!?View {
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!?View {
         // Create the view, possibly leaving some components uninitialized
         const result = (try self.viewOrAddUninitImmediateOrErr(es, View)) orelse return null;
 
@@ -568,9 +556,9 @@ pub const Entity = packed struct {
         self: @This(),
         es: *Entities,
         View: type,
-    ) error{ ZcsCompOverflow, ZcsArchetypeOverflow }!?VoaUninitResult(View) {
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!?VoaUninitResult(View) {
         // Figure out which components are missing
-        const slot = es.slots.get(self.key) orelse return null;
+        const slot = es.handles.get(self.key) orelse return null;
         var view_arch: CompFlag.Set = .{};
         inline for (@typeInfo(View).@"struct".fields) |field| {
             if (field.type != Entity and @typeInfo(field.type) != .optional) {
@@ -624,7 +612,7 @@ pub const Entity = packed struct {
     /// Returns the archetype of the entity. If it has been destroyed or is not yet committed, the
     /// empty archetype will be returned.
     pub fn getArch(self: @This(), es: *const Entities) CompFlag.Set {
-        const slot = es.slots.get(self.key) orelse return .{};
+        const slot = es.handles.get(self.key) orelse return .{};
         return slot.getArch();
     }
 

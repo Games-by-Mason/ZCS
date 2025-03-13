@@ -297,7 +297,7 @@ pub const Exec = struct {
     pub fn immediateOrErr(
         es: *Entities,
         cb: CmdBuf,
-    ) error{ ZcsCompOverflow, ZcsEntityOverflow, ZcsArchetypeOverflow }!void {
+    ) error{ ZcsCompOverflow, ZcsEntityOverflow, ZcsArchOverflow, ZcsChunkOverflow }!void {
         var batches = cb.iterator();
         while (batches.next()) |batch| {
             var node_exec: @This() = .{};
@@ -367,7 +367,7 @@ pub const Exec = struct {
         batch: CmdBuf.Batch,
         arch_change: CmdBuf.Batch.ArchChange,
         cmd: CmdBuf.Batch.Item,
-    ) error{ ZcsCompOverflow, ZcsEntityOverflow, ZcsArchetypeOverflow }!void {
+    ) error{ ZcsCompOverflow, ZcsEntityOverflow, ZcsArchOverflow, ZcsChunkOverflow }!void {
         switch (cmd) {
             .ext => |ev| if (ev.as(SetParent)) |set_parent| {
                 if (self.init_node and !arch_change.from.contains(typeId(Node).comp_flag.?)) {

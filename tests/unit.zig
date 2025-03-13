@@ -41,6 +41,7 @@ test "cb execImmediate" {
         .max_entities = 100,
         .comp_bytes = 100,
         .max_archetypes = 8,
+        .max_chunks = 8,
     });
     defer es.deinit(gpa);
 
@@ -148,6 +149,7 @@ test "cb interning" {
         .max_entities = 100,
         .comp_bytes = 4096,
         .max_archetypes = 8,
+        .max_chunks = 8,
     });
     defer es.deinit(gpa);
 
@@ -409,6 +411,7 @@ test "cb overflow" {
         .max_entities = 100,
         .comp_bytes = 100,
         .max_archetypes = 8,
+        .max_chunks = 8,
     });
     defer es.deinit(gpa);
 
@@ -611,6 +614,7 @@ test "cb capacity" {
         .max_entities = cb_capacity * 10,
         .comp_bytes = cb_capacity * 10,
         .max_archetypes = 8,
+        .max_chunks = 8,
     });
     defer es.deinit(gpa);
 
@@ -808,6 +812,7 @@ test "change arch immediate" {
         .max_entities = 100,
         .comp_bytes = 100,
         .max_archetypes = 8,
+        .max_chunks = 8,
     });
     defer es.deinit(gpa);
 
@@ -871,6 +876,7 @@ test "getAll" {
         .max_entities = 100,
         .comp_bytes = 100,
         .max_archetypes = 8,
+        .max_chunks = 8,
     });
     defer es.deinit(gpa);
     const e = Entity.reserveImmediate(&es);
@@ -913,6 +919,7 @@ test "entity overflow" {
         .max_entities = 3,
         .comp_bytes = 4,
         .max_archetypes = 8,
+        .max_chunks = 8,
     });
     defer es.deinit(gpa);
 
@@ -935,44 +942,45 @@ test "archetype overflow" {
         .max_entities = 3,
         .comp_bytes = 4,
         .max_archetypes = 3,
+        .max_chunks = 3,
     });
     defer es.deinit(gpa);
 
     const e0 = Entity.reserveImmediate(&es);
-    try expectEqual(0, es.arch_lists.count());
+    try expectEqual(0, es.arches.map.count());
 
     // Create three archetypes
     try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u1, &0),
     } }));
-    try expectEqual(1, es.arch_lists.count());
+    try expectEqual(1, es.arches.map.count());
 
     try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u2, &0),
     } }));
-    try expectEqual(2, es.arch_lists.count());
+    try expectEqual(2, es.arches.map.count());
 
     // Test that trying to create additional archetypes causes it to overflow
-    try expectError(error.ZcsArchetypeOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+    try expectError(error.ZcsArchOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u3, &0),
     } }));
-    try expectError(error.ZcsArchetypeOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+    try expectError(error.ZcsArchOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u3, &0),
     } }));
-    try expectError(error.ZcsArchetypeOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+    try expectError(error.ZcsArchOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u4, &0),
     } }));
-    try expectEqual(2, es.arch_lists.count());
+    try expectEqual(2, es.arches.map.count());
 
     // Trying to create an archetype that already exists should be fine
     try expect(try e0.changeArchImmediateOrErr(&es, .{
         .remove = .initMany(&.{typeId(u2).comp_flag.?}),
     }));
-    try expectEqual(2, es.arch_lists.count());
+    try expectEqual(2, es.arches.map.count());
     try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u2, &0),
     } }));
-    try expectEqual(2, es.arch_lists.count());
+    try expectEqual(2, es.arches.map.count());
 }
 
 // This is a regression test. We do something a little tricky with zero sized types--we "allocate"
@@ -990,11 +998,12 @@ test "zero sized Entity.from" {
         .max_entities = 3,
         .comp_bytes = 4,
         .max_archetypes = 3,
+        .max_chunks = 3,
     });
     defer es.deinit(gpa);
 
     const e0 = Entity.reserveImmediate(&es);
-    try expectEqual(0, es.arch_lists.count());
+    try expectEqual(0, es.arches.map.count());
 
     try expect(e0.changeArchImmediate(&es, .{ .add = &.{
         .init(u0, &0),

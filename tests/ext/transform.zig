@@ -88,6 +88,7 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
         .max_entities = max_entities,
         .comp_bytes = comp_bytes,
         .max_archetypes = 8,
+        .max_chunks = 1024,
     });
     defer es.deinit(gpa);
 
