@@ -12,7 +12,7 @@ const Any = zcs.Any;
 const CompFlag = zcs.CompFlag;
 const CmdBuf = zcs.CmdBuf;
 const TypeId = zcs.TypeId;
-const HandleTable = zcs.storage.HandleTable;
+const HandleTab = zcs.storage.HandleTab;
 const Chunk = zcs.storage.Chunk;
 
 /// An entity.
@@ -29,7 +29,7 @@ pub const Entity = packed struct {
     pub const Optional = packed struct {
         pub const none: @This() = .{ .key = .none };
 
-        key: HandleTable.Key.Optional,
+        key: HandleTab.Key.Optional,
 
         /// Unwraps the optional entity into `Entity`, or returns `null` if it is `.none`.
         pub fn unwrap(self: @This()) ?Entity {
@@ -48,7 +48,7 @@ pub const Entity = packed struct {
         }
     };
 
-    key: HandleTable.Key,
+    key: HandleTab.Key,
 
     /// Given a pointer to a component, returns the corresponding entity.
     pub fn from(es: *const Entities, comp: anytype) @This() {
@@ -83,7 +83,7 @@ pub const Entity = packed struct {
         const index = (loc - start) / comp.id.size;
         return .{ .key = .{
             .index = @intCast(index),
-            .generation = es.handles.generations[index],
+            .generation = es.handle_tab.generations[index],
         } };
     }
 
@@ -116,7 +116,7 @@ pub const Entity = packed struct {
     /// Similar to `reserveImmediate`, but returns `error.ZcsEntityOverflow` on failure instead of
     /// panicking.
     pub fn reserveImmediateOrErr(es: *Entities) error{ZcsEntityOverflow}!Entity {
-        const key = es.handles.put(.reserved) catch |err| switch (err) {
+        const key = es.handle_tab.put(.reserved) catch |err| switch (err) {
             error.Overflow => return error.ZcsEntityOverflow,
         };
         es.live.set(key.index);
@@ -147,10 +147,14 @@ pub const Entity = packed struct {
     /// Invalidates iterators.
     pub fn destroyImmediate(self: @This(), es: *Entities) bool {
         invalidateIterators(es);
-        if (es.handles.get(self.key)) |handle_val| {
-            if (handle_val.chunk == null) es.reserved_entities -= 1;
+        if (es.handle_tab.get(self.key)) |entity_loc| {
+            if (entity_loc.chunk) |chunk| {
+                chunk.swapRemove(&es.handle_tab, entity_loc.index_in_chunk);
+            } else {
+                es.reserved_entities -= 1;
+            }
             es.live.unset(self.key.index);
-            es.handles.remove(self.key);
+            es.handle_tab.remove(self.key);
             return true;
         } else {
             return false;
@@ -162,10 +166,14 @@ pub const Entity = packed struct {
     /// Invalidates iterators.
     pub fn recycleImmediate(self: @This(), es: *Entities) bool {
         invalidateIterators(es);
-        if (es.handles.get(self.key)) |handle_val| {
-            if (handle_val.chunk == null) es.reserved_entities -= 1;
+        if (es.handle_tab.get(self.key)) |entity_loc| {
+            if (entity_loc.chunk) |chunk| {
+                chunk.swapRemove(&es.handle_tab, entity_loc.index_in_chunk);
+            } else {
+                es.reserved_entities -= 1;
+            }
             es.live.unset(self.key.index);
-            es.handles.recycle(self.key);
+            es.handle_tab.recycle(self.key);
             return true;
         } else {
             return false;
@@ -174,13 +182,13 @@ pub const Entity = packed struct {
 
     /// Returns true if the entity has not been destroyed.
     pub fn exists(self: @This(), es: *const Entities) bool {
-        return es.handles.containsKey(self.key);
+        return es.handle_tab.containsKey(self.key);
     }
 
     /// Returns true if the entity exists and has been committed, otherwise returns false.
     pub fn committed(self: @This(), es: *const Entities) bool {
-        const handle_val = es.handles.get(self.key) orelse return false;
-        return handle_val.chunk != null;
+        const entity_loc = es.handle_tab.get(self.key) orelse return false;
+        return entity_loc.chunk != null;
     }
 
     /// Returns true if the entity has the given component type, false otherwise or if the entity
@@ -442,10 +450,17 @@ pub const Entity = packed struct {
         invalidateIterators(es);
 
         // Get the handle value and figure out the new arch
-        const handle_val = es.handles.get(self.key) orelse return false;
-        var new_arch = handle_val.getArch();
+        const entity_loc = es.handle_tab.get(self.key) orelse return false;
+        var new_arch = entity_loc.getArch();
         new_arch = new_arch.unionWith(options.add);
         new_arch = new_arch.differenceWith(options.remove);
+
+        // If the entity is committed and the arch hasn't changed, early out
+        if (entity_loc.chunk) |chunk| {
+            if (chunk.arch.eql(new_arch)) {
+                return true;
+            }
+        }
 
         // Get the archetype list
         const chunk_list = try es.chunk_lists.getOrPut(&es.chunk_pool, new_arch);
@@ -463,9 +478,13 @@ pub const Entity = packed struct {
         }
 
         // Commit the change
-        const was_committed = handle_val.chunk != null;
-        handle_val.* = try chunk_list.append(&es.chunk_pool, self, new_arch);
-        if (!was_committed) es.reserved_entities -= 1;
+        const new_loc = try chunk_list.append(&es.chunk_pool, self, new_arch);
+        if (entity_loc.chunk) |chunk| {
+            chunk.swapRemove(&es.handle_tab, entity_loc.index_in_chunk);
+        } else {
+            es.reserved_entities -= 1;
+        }
+        entity_loc.* = new_loc;
 
         return true;
     }
@@ -479,7 +498,7 @@ pub const Entity = packed struct {
     /// required components.
     pub fn view(self: @This(), es: *const Entities, View: type) ?View {
         // Check if entity has the required components
-        const handle_val = es.handles.get(self.key) orelse return null;
+        const entity_loc = es.handle_tab.get(self.key) orelse return null;
         var view_arch: CompFlag.Set = .{};
         inline for (@typeInfo(View).@"struct".fields) |field| {
             if (field.type != Entity and @typeInfo(field.type) != .optional) {
@@ -488,7 +507,7 @@ pub const Entity = packed struct {
                 view_arch.insert(flag);
             }
         }
-        if (!handle_val.getArch().supersetOf(view_arch)) return null;
+        if (!entity_loc.getArch().supersetOf(view_arch)) return null;
 
         // Fill in the view and return it
         return self.viewAssumeArch(es, View);
@@ -554,7 +573,7 @@ pub const Entity = packed struct {
         View: type,
     ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!?VoaUninitResult(View) {
         // Figure out which components are missing
-        const handle_val = es.handles.get(self.key) orelse return null;
+        const entity_loc = es.handle_tab.get(self.key) orelse return null;
         var view_arch: CompFlag.Set = .{};
         inline for (@typeInfo(View).@"struct".fields) |field| {
             if (field.type != Entity and @typeInfo(field.type) != .optional) {
@@ -563,8 +582,8 @@ pub const Entity = packed struct {
                 view_arch.insert(flag);
             }
         }
-        const uninitialized = view_arch.differenceWith(handle_val.getArch());
-        if (!handle_val.getArch().supersetOf(view_arch)) {
+        const uninitialized = view_arch.differenceWith(entity_loc.getArch());
+        if (!entity_loc.getArch().supersetOf(view_arch)) {
             assert(try self.changeArchUninitImmediateOrErr(es, .{ .add = uninitialized }));
         }
 
@@ -608,8 +627,8 @@ pub const Entity = packed struct {
     /// Returns the archetype of the entity. If it has been destroyed or is not yet committed, the
     /// empty archetype will be returned.
     pub fn getArch(self: @This(), es: *const Entities) CompFlag.Set {
-        const handle_val = es.handles.get(self.key) orelse return .{};
-        return handle_val.getArch();
+        const entity_loc = es.handle_tab.get(self.key) orelse return .{};
+        return entity_loc.getArch();
     }
 
     /// Explicitly invalidates iterators to catch bugs in debug builds.

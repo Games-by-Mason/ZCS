@@ -16,7 +16,7 @@ const Allocator = std.mem.Allocator;
 
 /// For internal use. A handle table that associates persistent entity keys with values that point
 /// to their storage.
-pub const HandleTable = SlotMap(EntityLoc, .{});
+pub const HandleTab = SlotMap(EntityLoc, .{});
 
 /// For internal use. Points to an entity's storage, the indirection allows entities to be relocated
 /// without invalidating their handles.
@@ -49,20 +49,37 @@ pub const IndexInChunk = enum(IndexInChunkTag) { _ };
 
 /// For internal use. A chunk of entities that all have the same archetype.
 pub const Chunk = struct {
-    const EntityKey = HandleTable.Key;
+    const EntityKey = HandleTab.Key;
     const EntityIndex = @FieldType(EntityKey, "index");
     const EntityIndices = std.BoundedArray(EntityIndex, 1024);
 
     arch: CompFlag.Set,
     indices: EntityIndices,
     next: ?*Chunk = null,
+
+    /// For internal use. Swap removes an entity from the chunk, updating the location of the moved
+    /// entity.
+    pub fn swapRemove(self: *@This(), ht: *HandleTab, index_in_chunk: IndexInChunk) void {
+        // Pop the last entity
+        const moved = self.indices.pop().?;
+
+        // If we're removing the last entity, we're done!
+        if (@intFromEnum(index_in_chunk) == self.indices.len) return;
+
+        // Otherwise, overwrite the removed entity the popped entity, and then update the location
+        // of the moved entity in the handle table
+        self.indices.set(@intFromEnum(index_in_chunk), moved);
+        const moved_loc = &ht.values[moved];
+        assert(moved_loc.chunk == self);
+        moved_loc.index_in_chunk = index_in_chunk;
+    }
 };
 
 /// A linked list of chunks.
 pub const ChunkList = struct {
     head: *Chunk,
 
-    /// For internal use. Adds an entity to the archetype list.
+    /// For internal use. Adds an entity to the chunk list.
     pub fn append(
         self: *@This(),
         p: *ChunkPool,

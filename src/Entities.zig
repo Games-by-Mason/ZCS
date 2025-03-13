@@ -18,7 +18,7 @@ const Entity = zcs.Entity;
 const ChunkList = zcs.storage.ChunkList;
 const ChunkPool = zcs.storage.ChunkPool;
 const Chunk = zcs.storage.Chunk;
-const HandleTable = zcs.storage.HandleTable;
+const HandleTab = zcs.storage.HandleTab;
 const ChunkLists = zcs.storage.ChunkLists;
 const view = zcs.view;
 
@@ -28,7 +28,7 @@ const IteratorGeneration = if (std.debug.runtime_safety) u64 else u0;
 
 const max_align = zcs.TypeInfo.max_align;
 
-handles: HandleTable,
+handle_tab: HandleTab,
 comps: *[CompFlag.max][]align(max_align) u8,
 max_archetypes: u16,
 chunk_lists: ChunkLists,
@@ -51,8 +51,8 @@ pub const Capacity = struct {
 
 /// Initializes the entity storage with the given capacity.
 pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
-    var handles: HandleTable = try .init(gpa, capacity.max_entities);
-    errdefer handles.deinit(gpa);
+    var handle_tab: HandleTab = try .init(gpa, capacity.max_entities);
+    errdefer handle_tab.deinit(gpa);
 
     const comps = try gpa.create([CompFlag.max][]align(max_align) u8);
     errdefer gpa.destroy(comps);
@@ -74,7 +74,7 @@ pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
     errdefer chunk_lists.deinit(gpa);
 
     return .{
-        .handles = handles,
+        .handle_tab = handle_tab,
         .max_archetypes = capacity.max_archetypes,
         .chunk_lists = chunk_lists,
         .comps = comps,
@@ -92,17 +92,17 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
         gpa.free(comp);
     }
     gpa.destroy(self.comps);
-    self.handles.deinit(gpa);
+    self.handle_tab.deinit(gpa);
     self.* = undefined;
 }
 
 /// Recycles all entities with the given archetype.
 pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
-    for (0..self.handles.next_index) |index| {
-        if (self.live.isSet(index) and self.handles.values[index].getArch().eql(arch)) {
+    for (0..self.handle_tab.next_index) |index| {
+        if (self.live.isSet(index) and self.handle_tab.values[index].getArch().eql(arch)) {
             const entity: Entity = .{ .key = .{
                 .index = @intCast(index),
-                .generation = self.handles.generations[index],
+                .generation = self.handle_tab.generations[index],
             } };
             assert(entity.recycleImmediate(self));
         }
@@ -111,13 +111,13 @@ pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
 
 /// Recycles all entities.
 pub fn recycleImmediate(self: *@This()) void {
-    self.handles.recycleAll();
+    self.handle_tab.recycleAll();
     self.reserved_entities = 0;
 }
 
 /// Returns the current number of entities.
 pub fn count(self: @This()) usize {
-    return self.handles.count() - self.reserved_entities;
+    return self.handle_tab.count() - self.reserved_entities;
 }
 
 /// Returns the number of reserved but not committed entities that currently exist.
@@ -153,17 +153,17 @@ pub const Iterator = struct {
         }
         // Keep in mind that in view iterator, we're using max index to indicate that the iterator
         // is invalid.
-        while (self.index < self.es.handles.next_index) {
+        while (self.index < self.es.handle_tab.next_index) {
             const index = self.index;
             self.index += 1;
             if (self.es.live.isSet(index)) {
-                const entity_loc = self.es.handles.values[index];
+                const entity_loc = self.es.handle_tab.values[index];
                 if (entity_loc.chunk != null and
                     self.required_comps.subsetOf(entity_loc.getArch()))
                 {
                     return .{ .key = .{
                         .index = index,
-                        .generation = self.es.handles.generations[index],
+                        .generation = self.es.handle_tab.generations[index],
                     } };
                 }
             }
@@ -222,7 +222,7 @@ pub fn ViewIterator(View: type) type {
                         const T = view.UnwrapField(field.type);
 
                         // Get the handle value
-                        const entity_loc = self.es.handles.values[entity.key.index];
+                        const entity_loc = self.es.handle_tab.values[entity.key.index];
                         assert(entity_loc.chunk != null);
 
                         // Check if we have the component or not

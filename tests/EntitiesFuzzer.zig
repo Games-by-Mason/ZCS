@@ -288,7 +288,7 @@ pub fn expectedOfArch(self: *@This(), arch: Arch) usize {
 
 pub fn reserveImmediate(self: *@This()) !Entity.Optional {
     // Skip reserve if we already have a lot of entities to avoid overflowing
-    if (self.es.count() + self.es.reserved() > self.es.handles.capacity / 2) {
+    if (self.es.count() + self.es.reserved() > self.es.handle_tab.capacity / 2) {
         return .none;
     }
 
@@ -350,7 +350,7 @@ pub fn randomEntity(self: *@This()) Entity.Optional {
 // If we're at less than half capacity, give a slight bias against destroying
 // entities so that we don't just hover near zero entities for the whole test
 pub fn shouldSkipDestroy(self: *@This()) bool {
-    return (self.es.count() < self.es.handles.capacity / 2 and (self.smith.next(bool)));
+    return (self.es.count() < self.es.handle_tab.capacity / 2 and (self.smith.next(bool)));
 }
 
 pub fn destroyInOracle(self: *@This(), entity: Entity) !void {

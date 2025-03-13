@@ -74,10 +74,10 @@ fn run(input: []const u8, saturated: bool) !void {
     for (0..saturated_count) |_| {
         const e = Entity.reserveImmediate(&fz.es);
         try expect(e.destroyImmediate(&fz.es));
-        const Key = @FieldType(Entities, "handles").Key;
+        const Key = @FieldType(Entities, "handle_tab").Key;
         const Generation = @FieldType(Key, "generation");
         const invalid = @intFromEnum(Generation.invalid);
-        fz.es.handles.generations[e.key.index] = @enumFromInt(invalid -% 1);
+        fz.es.handle_tab.generations[e.key.index] = @enumFromInt(invalid -% 1);
         const e2 = Entity.reserveImmediate(&fz.es);
         try expect(e2.destroyImmediate(&fz.es));
         try expect(!e.exists(&fz.es));
@@ -85,7 +85,7 @@ fn run(input: []const u8, saturated: bool) !void {
         try expect(!e.committed(&fz.es));
         try expect(!e2.committed(&fz.es));
     }
-    try expectEqual(saturated_count, fz.es.handles.saturated);
+    try expectEqual(saturated_count, fz.es.handle_tab.saturated);
 
     while (!fz.smith.isEmpty()) {
         // Modify the entities via a command buffer
@@ -116,9 +116,9 @@ fn run(input: []const u8, saturated: bool) !void {
         try checkOracle(&fz, &cb);
     }
 
-    try expect(fz.es.handles.saturated >= saturated_count);
+    try expect(fz.es.handle_tab.saturated >= saturated_count);
     for (0..saturated_count) |i| {
-        try expectEqual(.invalid, fz.es.handles.generations[i + cb.reserved.capacity]);
+        try expectEqual(.invalid, fz.es.handle_tab.generations[i + cb.reserved.capacity]);
     }
 }
 
@@ -165,7 +165,7 @@ fn checkOracle(fz: *Fuzzer, cb: *const CmdBuf) !void {
 
 fn reserve(fz: *Fuzzer, cb: *CmdBuf) !void {
     // Skip reserve if we already have a lot of entities to avoid overflowing
-    if (fz.es.count() + fz.es.reserved() > fz.es.handles.capacity / 2) {
+    if (fz.es.count() + fz.es.reserved() > fz.es.handle_tab.capacity / 2) {
         return;
     }
 
