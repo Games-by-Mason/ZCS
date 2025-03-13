@@ -15,7 +15,6 @@ const typeId = zcs.typeId;
 const Any = zcs.Any;
 const CompFlag = zcs.CompFlag;
 const Entity = zcs.Entity;
-const Slot = zcs.storage.Slot;
 const ChunkList = zcs.storage.ChunkList;
 const ChunkPool = zcs.storage.ChunkPool;
 const Chunk = zcs.storage.Chunk;
@@ -158,8 +157,10 @@ pub const Iterator = struct {
             const index = self.index;
             self.index += 1;
             if (self.es.live.isSet(index)) {
-                const slot = self.es.handles.values[index];
-                if (slot.arch_list != null and self.required_comps.subsetOf(slot.getArch())) {
+                const handle_val = self.es.handles.values[index];
+                if (handle_val.arch_chunks != null and
+                    self.required_comps.subsetOf(handle_val.getArch()))
+                {
                     return .{ .key = .{
                         .index = index,
                         .generation = self.es.handles.generations[index],
@@ -220,9 +221,9 @@ pub fn ViewIterator(View: type) type {
                         // Get the component type
                         const T = view.UnwrapField(field.type);
 
-                        // Get the slot
-                        const slot = self.es.handles.values[entity.key.index];
-                        assert(slot.arch_list != null);
+                        // Get the handle value
+                        const handle_val = self.es.handles.values[entity.key.index];
+                        assert(handle_val.arch_chunks != null);
 
                         // Check if we have the component or not
                         const has_comp = if (@typeInfo(field.type) == .optional) b: {
@@ -230,7 +231,7 @@ pub fn ViewIterator(View: type) type {
                             const flag = typeId(T).comp_flag orelse break :b false;
 
                             // If it has a flag, check if we have it
-                            break :b slot.arch_list.?.arch.contains(flag);
+                            break :b handle_val.arch_chunks.?.arch.contains(flag);
                         } else b: {
                             // If the component isn't optional, we can assume we have it
                             break :b true;

@@ -21,13 +21,13 @@ pub const HandleTable = SlotMap(HandleTableValue, .{});
 /// For internal use. Points to an entity's storage. The indirection allows entities to be relocated
 /// without invalidating their handles.
 const HandleTableValue = struct {
-    arch_list: ?*ArchChunks,
+    arch_chunks: ?*ArchChunks,
 
     /// For internal use. Returns the archetype for this entity, or the empty archetype if it hasn't
     /// been committed.
     pub fn getArch(self: @This()) CompFlag.Set {
-        const arch_list = self.arch_list orelse return .{};
-        return arch_list.arch;
+        const arch_chunks = self.arch_chunks orelse return .{};
+        return arch_chunks.arch;
     }
 };
 
@@ -47,7 +47,7 @@ pub const ArchChunks = struct {
     head: *Chunk,
 
     /// For internal use. Adds an entity to the archetype list.
-    pub fn add(self: *@This(), p: *ChunkPool, e: Entity) error{ZcsChunkOverflow}!void {
+    pub fn append(self: *@This(), p: *ChunkPool, e: Entity) error{ZcsChunkOverflow}!void {
         var curr = self.head;
         while (true) {
             if (curr.indices.len < @typeInfo(@TypeOf(curr.indices.buffer)).array.len) {
@@ -81,7 +81,7 @@ pub const ChunkPool = struct {
         self.* = undefined;
     }
 
-    /// For internal use. Reserves a chunk from the chunk pool.
+    /// For internal use. Reserves a chunk from the chunk pool
     pub fn reserve(self: *ChunkPool) error{ZcsChunkOverflow}!*Chunk {
         if (self.all.items.len >= self.all.capacity) {
             return error.ZcsChunkOverflow;
@@ -126,23 +126,23 @@ pub const Arches = struct {
         p: *ChunkPool,
         arch: CompFlag.Set,
     ) error{ ZcsChunkOverflow, ZcsArchOverflow }!*ArchChunks {
+        // This is a bit awkward, but works around there not being a get or put variation
+        // that fails when allocation is needed.
+        //
+        // In practice this code path will only be executed when we're about to fail in a likely
+        // fatal way, so the mild amount of extra work isn't worth creating a whole new gop
+        // variant over.
+        //
+        // Note that we reserve space for the requested capacity + 1 in `init` to make this
+        // work.
         const gop = self.map.getOrPutAssumeCapacity(arch);
+        errdefer if (!gop.found_existing) {
+            self.map.unlockPointers();
+            assert(self.map.swapRemove(arch));
+            self.map.lockPointers();
+        };
         if (!gop.found_existing) {
-            // This is a bit awkward, but works around there not being a get or put variation
-            // that fails when allocation is needed.
-            //
-            // In practice this code path will only be executed when we're about to fail in a likely
-            // fatal way, so the mild amount of extra work isn't worth creating a whole new gop
-            // variant over.
-            //
-            // Note that we reserve space for the requested capacity + 1 in `init` to make this
-            // work.
-            if (self.map.count() >= self.capacity) {
-                self.map.unlockPointers();
-                assert(self.map.swapRemove(arch));
-                self.map.lockPointers();
-                return error.ZcsArchOverflow;
-            }
+            if (self.map.count() >= self.capacity) return error.ZcsArchOverflow;
             gop.value_ptr.* = .{
                 .arch = arch,
                 .head = try p.reserve(),

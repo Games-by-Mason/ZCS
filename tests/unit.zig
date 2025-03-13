@@ -983,6 +983,59 @@ test "archetype overflow" {
     try expectEqual(2, es.arches.map.count());
 }
 
+test "chunk overflow" {
+    defer CompFlag.unregisterAll();
+    var es = try Entities.init(gpa, .{
+        .max_entities = 4096,
+        .comp_bytes = 4096,
+        .max_archetypes = 3,
+        .max_chunks = 1,
+    });
+    defer es.deinit(gpa);
+
+    const e0 = Entity.reserveImmediate(&es);
+    try expectEqual(0, es.arches.map.count());
+
+    // Create one chunk
+    try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+        .init(u1, &0),
+    } }));
+    try expectEqual(1, es.chunk_pool.all.items.len);
+
+    // Try to create a new archetype, and fail due to chunk overflow
+    for (0..2) |_| {
+        try expectError(error.ZcsChunkOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+            .init(u2, &0),
+        } }));
+        try expectEqual(1, es.chunk_pool.all.items.len);
+        try expect(!e0.has(&es, u2));
+        try expectEqual(1, es.arches.map.count());
+    }
+
+    // Create new entities in the chunk that was already allocated, this should be fine
+    for (0..1023) |_| {
+        const e = Entity.reserveImmediate(&es);
+        try expect(try e.changeArchImmediateOrErr(&es, .{ .add = &.{
+            .init(u1, &0),
+        } }));
+    }
+    try expectEqual(1, es.chunk_pool.all.items.len);
+    try expectEqual(1024, es.count());
+
+    // Go past the end of the chunk, causing it to overflow since we've used up all available chunks
+    {
+        const e = Entity.reserveImmediate(&es);
+        try expectError(error.ZcsChunkOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
+            .init(u1, &0),
+        } }));
+        try expectEqual(1024, es.count());
+    }
+    var count: usize = 0;
+    var iter = es.iterator(.{});
+    while (iter.next()) |_| count += 1;
+    try expectEqual(es.count(), count);
+}
+
 // This is a regression test. We do something a little tricky with zero sized types--we "allocate"
 // them at the entity ID to make it possible to retrieve the entity again later
 // (see `Entity.fromAny`). We had a bug in our first pass at this where a valid entity ID could have
