@@ -116,9 +116,7 @@ pub const Entity = packed struct {
     /// Similar to `reserveImmediate`, but returns `error.ZcsEntityOverflow` on failure instead of
     /// panicking.
     pub fn reserveImmediateOrErr(es: *Entities) error{ZcsEntityOverflow}!Entity {
-        const key = es.handles.put(.{
-            .arch_chunks = null,
-        }) catch |err| switch (err) {
+        const key = es.handles.put(.reserved) catch |err| switch (err) {
             error.Overflow => return error.ZcsEntityOverflow,
         };
         es.live.set(key.index);
@@ -150,7 +148,7 @@ pub const Entity = packed struct {
     pub fn destroyImmediate(self: @This(), es: *Entities) bool {
         invalidateIterators(es);
         if (es.handles.get(self.key)) |handle_val| {
-            if (handle_val.arch_chunks == null) es.reserved_entities -= 1;
+            if (handle_val.chunk == null) es.reserved_entities -= 1;
             es.live.unset(self.key.index);
             es.handles.remove(self.key);
             return true;
@@ -165,7 +163,7 @@ pub const Entity = packed struct {
     pub fn recycleImmediate(self: @This(), es: *Entities) bool {
         invalidateIterators(es);
         if (es.handles.get(self.key)) |handle_val| {
-            if (handle_val.arch_chunks == null) es.reserved_entities -= 1;
+            if (handle_val.chunk == null) es.reserved_entities -= 1;
             es.live.unset(self.key.index);
             es.handles.recycle(self.key);
             return true;
@@ -182,7 +180,7 @@ pub const Entity = packed struct {
     /// Returns true if the entity exists and has been committed, otherwise returns false.
     pub fn committed(self: @This(), es: *const Entities) bool {
         const handle_val = es.handles.get(self.key) orelse return false;
-        return handle_val.arch_chunks != null;
+        return handle_val.chunk != null;
     }
 
     /// Returns true if the entity has the given component type, false otherwise or if the entity
@@ -450,7 +448,7 @@ pub const Entity = packed struct {
         new_arch = new_arch.differenceWith(options.remove);
 
         // Get the archetype list
-        const arch_chunks = try es.arches.getOrPut(&es.chunk_pool, new_arch);
+        const chunk_list = try es.chunk_lists.getOrPut(&es.chunk_pool, new_arch);
 
         // Check if we have enough space
         var added = options.add.differenceWith(options.remove).iterator();
@@ -464,12 +462,11 @@ pub const Entity = packed struct {
             @memset(comp_buffer[comp_offset .. comp_offset + id.size], undefined);
         }
 
-        // Check if we have enough space
-        try arch_chunks.append(&es.chunk_pool, self);
+        // Commit the change
+        const was_committed = handle_val.chunk != null;
+        handle_val.* = try chunk_list.append(&es.chunk_pool, self, new_arch);
+        if (!was_committed) es.reserved_entities -= 1;
 
-        // Commit the entity if needed and update the archetype
-        if (handle_val.arch_chunks == null) es.reserved_entities -= 1;
-        handle_val.arch_chunks = arch_chunks;
         return true;
     }
 

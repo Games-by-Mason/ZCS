@@ -19,7 +19,7 @@ const ChunkList = zcs.storage.ChunkList;
 const ChunkPool = zcs.storage.ChunkPool;
 const Chunk = zcs.storage.Chunk;
 const HandleTable = zcs.storage.HandleTable;
-const Arches = zcs.storage.Arches;
+const ChunkLists = zcs.storage.ChunkLists;
 const view = zcs.view;
 
 const Entities = @This();
@@ -31,7 +31,7 @@ const max_align = zcs.TypeInfo.max_align;
 handles: HandleTable,
 comps: *[CompFlag.max][]align(max_align) u8,
 max_archetypes: u16,
-arches: Arches,
+chunk_lists: ChunkLists,
 live: std.DynamicBitSetUnmanaged,
 iterator_generation: IteratorGeneration = 0,
 reserved_entities: usize = 0,
@@ -70,13 +70,13 @@ pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
     var live = try std.DynamicBitSetUnmanaged.initEmpty(gpa, capacity.max_entities);
     errdefer live.deinit(gpa);
 
-    var arches: Arches = try .init(gpa, capacity.max_archetypes);
-    errdefer arches.deinit(gpa);
+    var chunk_lists: ChunkLists = try .init(gpa, capacity.max_archetypes);
+    errdefer chunk_lists.deinit(gpa);
 
     return .{
         .handles = handles,
         .max_archetypes = capacity.max_archetypes,
-        .arches = arches,
+        .chunk_lists = chunk_lists,
         .comps = comps,
         .chunk_pool = chunk_pool,
         .live = live,
@@ -85,7 +85,7 @@ pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
 
 /// Destroys the entity storage.
 pub fn deinit(self: *@This(), gpa: Allocator) void {
-    self.arches.deinit(gpa);
+    self.chunk_lists.deinit(gpa);
     self.chunk_pool.deinit(gpa);
     self.live.deinit(gpa);
     for (self.comps) |comp| {
@@ -157,9 +157,9 @@ pub const Iterator = struct {
             const index = self.index;
             self.index += 1;
             if (self.es.live.isSet(index)) {
-                const handle_val = self.es.handles.values[index];
-                if (handle_val.arch_chunks != null and
-                    self.required_comps.subsetOf(handle_val.getArch()))
+                const entity_loc = self.es.handles.values[index];
+                if (entity_loc.chunk != null and
+                    self.required_comps.subsetOf(entity_loc.getArch()))
                 {
                     return .{ .key = .{
                         .index = index,
@@ -222,8 +222,8 @@ pub fn ViewIterator(View: type) type {
                         const T = view.UnwrapField(field.type);
 
                         // Get the handle value
-                        const handle_val = self.es.handles.values[entity.key.index];
-                        assert(handle_val.arch_chunks != null);
+                        const entity_loc = self.es.handles.values[entity.key.index];
+                        assert(entity_loc.chunk != null);
 
                         // Check if we have the component or not
                         const has_comp = if (@typeInfo(field.type) == .optional) b: {
@@ -231,7 +231,7 @@ pub fn ViewIterator(View: type) type {
                             const flag = typeId(T).comp_flag orelse break :b false;
 
                             // If it has a flag, check if we have it
-                            break :b handle_val.arch_chunks.?.arch.contains(flag);
+                            break :b entity_loc.chunk.?.arch.contains(flag);
                         } else b: {
                             // If the component isn't optional, we can assume we have it
                             break :b true;

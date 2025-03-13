@@ -947,18 +947,18 @@ test "archetype overflow" {
     defer es.deinit(gpa);
 
     const e0 = Entity.reserveImmediate(&es);
-    try expectEqual(0, es.arches.map.count());
+    try expectEqual(0, es.chunk_lists.map.count());
 
     // Create three archetypes
     try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u1, &0),
     } }));
-    try expectEqual(1, es.arches.map.count());
+    try expectEqual(1, es.chunk_lists.map.count());
 
     try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u2, &0),
     } }));
-    try expectEqual(2, es.arches.map.count());
+    try expectEqual(2, es.chunk_lists.map.count());
 
     // Test that trying to create additional archetypes causes it to overflow
     try expectError(error.ZcsArchOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
@@ -970,17 +970,17 @@ test "archetype overflow" {
     try expectError(error.ZcsArchOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u4, &0),
     } }));
-    try expectEqual(2, es.arches.map.count());
+    try expectEqual(2, es.chunk_lists.map.count());
 
     // Trying to create an archetype that already exists should be fine
     try expect(try e0.changeArchImmediateOrErr(&es, .{
         .remove = .initMany(&.{typeId(u2).comp_flag.?}),
     }));
-    try expectEqual(2, es.arches.map.count());
+    try expectEqual(2, es.chunk_lists.map.count());
     try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u2, &0),
     } }));
-    try expectEqual(2, es.arches.map.count());
+    try expectEqual(2, es.chunk_lists.map.count());
 }
 
 test "chunk overflow" {
@@ -994,7 +994,7 @@ test "chunk overflow" {
     defer es.deinit(gpa);
 
     const e0 = Entity.reserveImmediate(&es);
-    try expectEqual(0, es.arches.map.count());
+    try expectEqual(0, es.chunk_lists.map.count());
 
     // Create one chunk
     try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
@@ -1009,7 +1009,7 @@ test "chunk overflow" {
         } }));
         try expectEqual(1, es.chunk_pool.all.items.len);
         try expect(!e0.has(&es, u2));
-        try expectEqual(1, es.arches.map.count());
+        try expectEqual(1, es.chunk_lists.map.count());
     }
 
     // Create new entities in the chunk that was already allocated, this should be fine
@@ -1056,7 +1056,7 @@ test "zero sized Entity.from" {
     defer es.deinit(gpa);
 
     const e0 = Entity.reserveImmediate(&es);
-    try expectEqual(0, es.arches.map.count());
+    try expectEqual(0, es.chunk_lists.map.count());
 
     try expect(e0.changeArchImmediate(&es, .{ .add = &.{
         .init(u0, &0),
