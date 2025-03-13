@@ -63,12 +63,12 @@ test "events" {
         var events = es.viewIterator(struct { entity: Entity, event: *const Event });
 
         const recv_0 = events.next().?;
-        try expectEqualEntity(e1, recv_0.entity);
-        try expectEqual('b', recv_0.event.payload);
+        try expectEqualEntity(e0, recv_0.entity);
+        try expectEqual('a', recv_0.event.payload);
 
         const recv_1 = events.next().?;
-        try expectEqualEntity(e0, recv_1.entity);
-        try expectEqual('a', recv_1.event.payload);
+        try expectEqualEntity(e1, recv_1.entity);
+        try expectEqual('b', recv_1.event.payload);
 
         try expectEqual(null, events.next());
     }

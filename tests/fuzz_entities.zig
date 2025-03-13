@@ -23,6 +23,8 @@ const expectEqual = std.testing.expectEqual;
 const cmds_capacity = 1000;
 const change_cap = 16;
 
+const log = false;
+
 test "fuzz cb" {
     try std.testing.fuzz({}, fuzzCmdBuf, .{ .corpus = &.{} });
 }
@@ -171,6 +173,7 @@ fn reserve(fz: *Fuzzer, cb: *CmdBuf) !void {
 
     // Reserve an entity and update the oracle
     const entity = Entity.reserve(cb);
+    if (log) std.debug.print("reserve {}\n", .{entity});
     try fz.reserved.putNoClobber(gpa, entity, {});
 }
 
@@ -179,6 +182,7 @@ fn destroy(fz: *Fuzzer, cb: *CmdBuf) !void {
 
     // Destroy a random entity
     const entity = fz.randomEntity().unwrap() orelse return;
+    if (log) std.debug.print("destroy {}\n", .{entity});
     entity.destroy(cb);
 
     // Destroy the entity in the oracle as well, displacing an existing
@@ -196,6 +200,7 @@ fn destroy(fz: *Fuzzer, cb: *CmdBuf) !void {
 fn changeArch(fz: *Fuzzer, cb: *CmdBuf) !void {
     // Get a random entity
     const entity = fz.randomEntity().unwrap() orelse return;
+    if (log) std.debug.print("changeArch {}\n", .{entity});
 
     // Get the oracle if any, committing it if needed
     if (fz.reserved.swapRemove(entity)) {
@@ -214,14 +219,17 @@ fn changeArch(fz: *Fuzzer, cb: *CmdBuf) !void {
                 .rb => {
                     const rb = try addRandomComp(fz, cb, entity, RigidBody);
                     if (expected) |e| e.rb = rb;
+                    if (log) std.debug.print("add {}\n", .{rb});
                 },
                 .model => {
                     const model = try addRandomComp(fz, cb, entity, Model);
                     if (expected) |e| e.model = model;
+                    if (log) std.debug.print("add {}\n", .{model});
                 },
                 .tag => {
                     const tag = try addRandomComp(fz, cb, entity, Tag);
                     if (expected) |e| e.tag = tag;
+                    if (log) std.debug.print("add {}\n", .{tag});
                 },
             }
         } else {
@@ -232,18 +240,22 @@ fn changeArch(fz: *Fuzzer, cb: *CmdBuf) !void {
                 commit,
             })) {
                 .rb => {
+                    if (log) std.debug.print("remove rb\n", .{});
                     entity.remove(cb, RigidBody);
                     if (expected) |e| e.rb = null;
                 },
                 .model => {
+                    if (log) std.debug.print("remove model\n", .{});
                     entity.remove(cb, Model);
                     if (expected) |e| e.model = null;
                 },
                 .tag => {
+                    if (log) std.debug.print("remove tag\n", .{});
                     entity.remove(cb, Tag);
                     if (expected) |e| e.tag = null;
                 },
                 .commit => {
+                    if (log) std.debug.print("commit\n", .{});
                     entity.commit(cb);
                 },
             }

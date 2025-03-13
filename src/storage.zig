@@ -73,6 +73,40 @@ pub const Chunk = struct {
         assert(moved_loc.chunk == self);
         moved_loc.index_in_chunk = index_in_chunk;
     }
+
+    /// Returns an iterator over this chunk's entities.
+    pub fn iterator(self: *const @This()) Iterator {
+        return .{
+            .chunk = self,
+            .index = 0,
+        };
+    }
+
+    /// An iterator over a chunk's entities.
+    pub const Iterator = struct {
+        pub const empty: @This() = .{
+            .chunk = &.{
+                .arch = .{},
+                .indices = .{},
+            },
+            .index = 0,
+        };
+
+        chunk: *const Chunk,
+        index: u16,
+
+        pub fn next(self: *@This(), handle_tab: *const HandleTab) ?Entity {
+            comptime assert(std.math.maxInt(@TypeOf(self.index)) >=
+                @typeInfo(@FieldType(EntityIndices, "buffer")).array.len);
+            if (self.index >= self.chunk.indices.len) return null;
+            const entity_index = self.chunk.indices.get(self.index);
+            self.index += 1;
+            return .{ .key = .{
+                .index = entity_index,
+                .generation = handle_tab.generations[entity_index],
+            } };
+        }
+    };
 };
 
 /// A linked list of chunks.
@@ -116,6 +150,26 @@ pub const ChunkList = struct {
             };
         }
     }
+
+    /// Returns an iterator over this chunk list's chunks.
+    pub fn iterator(self: *const ChunkList) Iterator {
+        return .{
+            .chunk = self.head,
+        };
+    }
+
+    /// An iterator over a chunk list's chunks.
+    pub const Iterator = struct {
+        pub const empty: @This() = .{ .chunk = null };
+
+        chunk: ?*const Chunk,
+
+        pub fn next(self: *@This()) ?*const Chunk {
+            const chunk = self.chunk orelse return null;
+            self.chunk = chunk.next;
+            return chunk;
+        }
+    };
 };
 
 /// For internal use. A pool of `Chunk`s.
@@ -152,25 +206,25 @@ pub const ChunkPool = struct {
 /// A map from archetypes to their chunk lists.
 pub const ChunkLists = struct {
     capacity: u32,
-    map: std.AutoArrayHashMapUnmanaged(CompFlag.Set, ChunkList),
+    arches: std.AutoArrayHashMapUnmanaged(CompFlag.Set, ChunkList),
 
     /// For internal use. Initializes the archetype map.
     pub fn init(gpa: Allocator, capacity: u16) Allocator.Error!@This() {
-        var map: std.AutoArrayHashMapUnmanaged(CompFlag.Set, ChunkList) = .{};
-        errdefer map.deinit(gpa);
+        var arches: std.AutoArrayHashMapUnmanaged(CompFlag.Set, ChunkList) = .{};
+        errdefer arches.deinit(gpa);
         // We reserve one extra to work around a slightly the slightly awkward get or put API.
-        try map.ensureTotalCapacity(gpa, @as(u32, capacity) + 1);
-        map.lockPointers();
+        try arches.ensureTotalCapacity(gpa, @as(u32, capacity) + 1);
+        arches.lockPointers();
         return .{
             .capacity = capacity,
-            .map = map,
+            .arches = arches,
         };
     }
 
     /// For internal use. Frees the map.
     pub fn deinit(self: *@This(), gpa: Allocator) void {
-        self.map.unlockPointers();
-        self.map.deinit(gpa);
+        self.arches.unlockPointers();
+        self.arches.deinit(gpa);
         self.* = undefined;
     }
 
@@ -190,16 +244,55 @@ pub const ChunkLists = struct {
         //
         // Note that we reserve space for the requested capacity + 1 in `init` to make this
         // work.
-        const gop = self.map.getOrPutAssumeCapacity(arch);
+        const gop = self.arches.getOrPutAssumeCapacity(arch);
         errdefer if (!gop.found_existing) {
-            self.map.unlockPointers();
-            assert(self.map.swapRemove(arch));
-            self.map.lockPointers();
+            self.arches.unlockPointers();
+            assert(self.arches.swapRemove(arch));
+            self.arches.lockPointers();
         };
         if (!gop.found_existing) {
-            if (self.map.count() >= self.capacity) return error.ZcsArchOverflow;
+            if (self.arches.count() >= self.capacity) return error.ZcsArchOverflow;
             gop.value_ptr.* = .{ .head = try p.reserve(arch) };
         }
         return gop.value_ptr;
     }
+
+    /// Returns an iterator over the archetype to chunk list arches.
+    pub fn iterator(self: @This()) Iterator {
+        return self.arches.iterator();
+    }
+
+    /// An iterator over the archetype to chunk list map.
+    pub const Iterator = @FieldType(@This(), "arches").Iterator;
+
+    /// Returns an iterator over the chunk lists that have the given components.
+    pub fn archIterator(self: @This(), required_comps: CompFlag.Set) ArchIterator {
+        return .{
+            .required_comps = required_comps,
+            .all = self.iterator(),
+        };
+    }
+
+    /// An iterator over chunk lists that have the given components.
+    pub const ArchIterator = struct {
+        required_comps: CompFlag.Set,
+        all: Iterator,
+
+        pub const empty: @This() = .{
+            .required_comps = .{},
+            .all = b: {
+                const map: std.AutoArrayHashMapUnmanaged(CompFlag.Set, ChunkList) = .{};
+                break :b map.iterator();
+            },
+        };
+
+        pub fn next(self: *@This()) ?*const ChunkList {
+            while (self.all.next()) |item| {
+                if (item.key_ptr.*.supersetOf(self.required_comps)) {
+                    return item.value_ptr;
+                }
+            }
+            return null;
+        }
+    };
 };

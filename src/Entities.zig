@@ -131,19 +131,30 @@ pub fn iterator(
     self: *const @This(),
     required_comps: CompFlag.Set,
 ) Iterator {
+    var arch_iter = self.chunk_lists.archIterator(required_comps);
+    var chunk_list_iter: ChunkList.Iterator = if (arch_iter.next()) |chunk_list|
+        chunk_list.iterator()
+    else
+        .empty;
+    const chunk_iter: Chunk.Iterator = if (chunk_list_iter.next()) |chunk|
+        chunk.iterator()
+    else
+        .empty;
     return .{
         .es = self,
-        .required_comps = required_comps,
-        .index = 0,
         .generation = self.iterator_generation,
+        .arch_iter = arch_iter,
+        .chunk_list_iter = chunk_list_iter,
+        .chunk_iter = chunk_iter,
     };
 }
 
 /// See `iterator`.
 pub const Iterator = struct {
     es: *const Entities,
-    required_comps: CompFlag.Set,
-    index: u32,
+    arch_iter: ChunkLists.ArchIterator,
+    chunk_list_iter: ChunkList.Iterator,
+    chunk_iter: Chunk.Iterator,
     generation: IteratorGeneration,
 
     /// Advances the iterator, returning the next entity.
@@ -151,25 +162,28 @@ pub const Iterator = struct {
         if (self.generation != self.es.iterator_generation) {
             @panic("called next after iterator was invalidated");
         }
-        // Keep in mind that in view iterator, we're using max index to indicate that the iterator
-        // is invalid.
-        while (self.index < self.es.handle_tab.next_index) {
-            const index = self.index;
-            self.index += 1;
-            if (self.es.live.isSet(index)) {
-                const entity_loc = self.es.handle_tab.values[index];
-                if (entity_loc.chunk != null and
-                    self.required_comps.subsetOf(entity_loc.getArch()))
-                {
-                    return .{ .key = .{
-                        .index = index,
-                        .generation = self.es.handle_tab.generations[index],
-                    } };
-                }
-            }
-        }
 
-        return null;
+        while (true) {
+            // Get the next entity in this chunk
+            if (self.chunk_iter.next(&self.es.handle_tab)) |entity| {
+                return entity;
+            }
+
+            // If that fails, get the next chunk in this chunk list
+            if (self.chunk_list_iter.next()) |chunk| {
+                self.chunk_iter = chunk.iterator();
+                continue;
+            }
+
+            // If that fails, get the next chunk list in this archetype
+            if (self.arch_iter.next()) |chunk_list| {
+                self.chunk_list_iter = chunk_list.iterator();
+                continue;
+            }
+
+            // If that fails, return null;
+            return null;
+        }
     }
 };
 
@@ -177,27 +191,38 @@ pub const Iterator = struct {
 pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
     var base: view.Comps(View) = undefined;
     var required_comps: CompFlag.Set = .{};
-    const valid = inline for (@typeInfo(view.Comps(View)).@"struct".fields) |field| {
+    inline for (@typeInfo(view.Comps(View)).@"struct".fields) |field| {
         const T = view.UnwrapField(field.type);
         if (@typeInfo(field.type) != .optional) {
             if (typeId(T).comp_flag) |flag| {
                 required_comps.insert(flag);
-            } else break false;
+            } else {
+                return .empty(self);
+            }
         }
 
         if (typeId(T).comp_flag) |flag| {
             // Don't need `.ptr` once this is merged: https://github.com/ziglang/zig/pull/22706
             @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(flag)].ptr);
         }
-    } else true;
+    }
 
+    var arch_iter = self.chunk_lists.archIterator(required_comps);
+    var chunk_list_iter: ChunkList.Iterator = if (arch_iter.next()) |chunk_list|
+        chunk_list.iterator()
+    else
+        .empty;
+    const chunk_iter: Chunk.Iterator = if (chunk_list_iter.next()) |chunk|
+        chunk.iterator()
+    else
+        .empty;
     return .{
-        .es = self,
-        .entity_iterator = .{
+        .entity_iter = .{
             .es = self,
-            .required_comps = required_comps,
-            .index = if (valid) 0 else std.math.maxInt(@FieldType(Iterator, "index")),
             .generation = self.iterator_generation,
+            .arch_iter = arch_iter,
+            .chunk_list_iter = chunk_list_iter,
+            .chunk_iter = chunk_iter,
         },
         .base = base,
     };
@@ -206,13 +231,25 @@ pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
 /// See `Entities.viewIterator`.
 pub fn ViewIterator(View: type) type {
     return struct {
-        es: *const Entities,
-        entity_iterator: Iterator,
+        entity_iter: Iterator,
         base: view.Comps(View),
+
+        pub fn empty(es: *const Entities) @This() {
+            return .{
+                .entity_iter = .{
+                    .es = es,
+                    .arch_iter = .empty,
+                    .chunk_list_iter = .empty,
+                    .chunk_iter = .empty,
+                    .generation = es.iterator_generation,
+                },
+                .base = undefined,
+            };
+        }
 
         /// Advances the iterator, returning the next view.
         pub fn next(self: *@This()) ?View {
-            while (self.entity_iterator.next()) |entity| {
+            while (self.entity_iter.next()) |entity| {
                 var result: View = undefined;
                 inline for (@typeInfo(View).@"struct".fields) |field| {
                     if (field.type == Entity) {
@@ -222,7 +259,7 @@ pub fn ViewIterator(View: type) type {
                         const T = view.UnwrapField(field.type);
 
                         // Get the handle value
-                        const entity_loc = self.es.handle_tab.values[entity.key.index];
+                        const entity_loc = self.entity_iter.es.handle_tab.values[entity.key.index];
                         assert(entity_loc.chunk != null);
 
                         // Check if we have the component or not
