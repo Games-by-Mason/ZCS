@@ -302,10 +302,11 @@ pub const Exec = struct {
         while (batches.next()) |batch| {
             var node_exec: @This() = .{};
 
-            var arch_change = batch.getArchChangeImmediate(es);
+            var arch_change = batch.initArchChange(es);
             {
                 var iter = batch.iterator();
                 while (iter.next()) |cmd| {
+                    arch_change.beforeCmdImmediate(cmd);
                     node_exec.beforeCmdImmediate(es, batch, &arch_change, cmd);
                 }
             }
@@ -315,7 +316,7 @@ pub const Exec = struct {
             {
                 var iter = batch.iterator();
                 while (iter.next()) |cmd| {
-                    try node_exec.afterCmdImmediate(es, batch, arch_change, cmd);
+                    try node_exec.afterCmdImmediate(es, batch, cmd);
                 }
             }
         }
@@ -331,7 +332,7 @@ pub const Exec = struct {
     ) void {
         switch (cmd) {
             .ext => |ext| if (ext.id == typeId(SetParent)) {
-                if (!arch_change.from.contains(.registerImmediate(typeId(Node)))) {
+                if (!arch_change.to.contains(.registerImmediate(typeId(Node)))) {
                     arch_change.to.insert(typeId(Node).comp_flag.?);
                     self.init_node = true;
                 }
@@ -353,10 +354,9 @@ pub const Exec = struct {
         self: *@This(),
         es: *Entities,
         batch: CmdBuf.Batch,
-        arch_change: CmdBuf.Batch.ArchChange,
         cmd: CmdBuf.Batch.Item,
     ) error{ ZcsCompOverflow, ZcsEntityOverflow }!void {
-        self.afterCmdImmediateOrErr(es, batch, arch_change, cmd) catch |err|
+        self.afterCmdImmediateOrErr(es, batch, cmd) catch |err|
             @panic(@errorName(err));
     }
 
@@ -365,12 +365,11 @@ pub const Exec = struct {
         self: *@This(),
         es: *Entities,
         batch: CmdBuf.Batch,
-        arch_change: CmdBuf.Batch.ArchChange,
         cmd: CmdBuf.Batch.Item,
     ) error{ ZcsCompOverflow, ZcsEntityOverflow, ZcsArchOverflow, ZcsChunkOverflow }!void {
         switch (cmd) {
             .ext => |ev| if (ev.as(SetParent)) |set_parent| {
-                if (self.init_node and !arch_change.from.contains(typeId(Node).comp_flag.?)) {
+                if (self.init_node) {
                     if (batch.entity.get(es, Node)) |node| {
                         node.* = .{};
                     }

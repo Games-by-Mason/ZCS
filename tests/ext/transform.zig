@@ -281,10 +281,11 @@ pub fn exec(es: *Entities, cb: *CmdBuf) void {
     while (batches.next()) |batch| {
         var node_exec: Node.Exec = .{};
 
-        var arch_change = batch.getArchChangeImmediate(es);
+        var arch_change = batch.initArchChange(es);
         {
             var iter = batch.iterator();
             while (iter.next()) |cmd| {
+                arch_change.beforeCmdImmediate(cmd);
                 node_exec.beforeCmdImmediate(es, batch, &arch_change, cmd);
             }
         }
@@ -294,7 +295,7 @@ pub fn exec(es: *Entities, cb: *CmdBuf) void {
         {
             var iter = batch.iterator();
             while (iter.next()) |cmd| {
-                node_exec.afterCmdImmediate(es, batch, arch_change, cmd) catch |err|
+                node_exec.afterCmdImmediate(es, batch, cmd) catch |err|
                     @panic(@errorName(err));
                 Transform.Exec.afterCmdImmediate(es, batch, cmd);
             }

@@ -139,7 +139,12 @@ pub fn execImmediateOrErr(
 ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!void {
     var iter = self.iterator();
     while (iter.next()) |batch| {
-        _ = try batch.execImmediateOrErr(es, batch.getArchChangeImmediate(es));
+        var arch_change = batch.initArchChange(es);
+        var cmds = batch.iterator();
+        while (cmds.next()) |cmd| {
+            arch_change.beforeCmdImmediate(cmd);
+        }
+        _ = try batch.execImmediateOrErr(es, arch_change);
     }
 }
 
@@ -209,6 +214,8 @@ pub const Batch = struct {
             self.destroyed = true;
         }
 
+        // XXX: what if "added" after destroyed? we could check here, or we could make function for
+        // add that checks there. same for removed if relevant.
         /// Returns the components that will be added.
         pub fn added(self: @This()) CompFlag.Set {
             return self.to.differenceWith(self.from);
@@ -218,11 +225,38 @@ pub const Batch = struct {
         pub fn removed(self: @This()) CompFlag.Set {
             return self.from.differenceWith(self.to);
         }
+
+        // XXX: before cmd but it's before item?
+        pub fn beforeCmdImmediate(self: *@This(), cmd: CmdBuf.Batch.Item) void {
+            switch (cmd) {
+                .add => |comp| {
+                    self.to.insert(CompFlag.registerImmediate(comp.id));
+                },
+                .remove => |id| {
+                    self.to.remove(CompFlag.registerImmediate(id));
+                },
+                .destroy => {
+                    self.destroy();
+                },
+                .ext => {},
+            }
+        }
     };
 
+    // XXX: document
+    pub fn initArchChange(self: @This(), es: *const Entities) ArchChange {
+        const from = self.entity.getArch(es);
+        return .{
+            .from = from,
+            .to = from,
+            .destroyed = false,
+        };
+    }
+
+    // XXX: ...remove, but need to update tests to use other methods or whatever
     /// Gets the archetype change that this command would result in, registering component types if
     /// necessary. May be modified before execution if desired.
-    pub fn getArchChangeImmediate(self: @This(), es: *const Entities) ArchChange {
+    pub fn getArchChangeImmediate_(self: @This(), es: *const Entities) ArchChange {
         const from = self.entity.getArch(es);
         var result: ArchChange = .{
             .from = from,

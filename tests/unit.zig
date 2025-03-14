@@ -229,7 +229,7 @@ test "cb interning" {
     {
         const cmd = iter.next().?;
         try expectEqual(e0, cmd.entity);
-        const arch_change = cmd.getArchChangeImmediate(&es);
+        const arch_change = cmd.getArchChangeImmediate_(&es);
         try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
@@ -253,7 +253,7 @@ test "cb interning" {
     }
     {
         const cmd = iter.next().?;
-        const arch_change = cmd.getArchChangeImmediate(&es);
+        const arch_change = cmd.getArchChangeImmediate_(&es);
         try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
@@ -278,7 +278,7 @@ test "cb interning" {
     }
     {
         const cmd = iter.next().?;
-        const arch_change = cmd.getArchChangeImmediate(&es);
+        const arch_change = cmd.getArchChangeImmediate_(&es);
         try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
@@ -303,7 +303,7 @@ test "cb interning" {
     }
     {
         const cmd = iter.next().?;
-        const arch_change = cmd.getArchChangeImmediate(&es);
+        const arch_change = cmd.getArchChangeImmediate_(&es);
         try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
@@ -328,7 +328,7 @@ test "cb interning" {
     }
     {
         const cmd = iter.next().?;
-        const arch_change = cmd.getArchChangeImmediate(&es);
+        const arch_change = cmd.getArchChangeImmediate_(&es);
         try expectEqual(e2, cmd.entity);
         try expectEqual(CompFlag.Set.initEmpty(), arch_change.added());
         try expectEqual(CompFlag.Set.initMany(&.{
@@ -342,7 +342,7 @@ test "cb interning" {
     }
     {
         const cmd = iter.next().?;
-        const arch_change = cmd.getArchChangeImmediate(&es);
+        const arch_change = cmd.getArchChangeImmediate_(&es);
         try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
@@ -367,7 +367,7 @@ test "cb interning" {
     }
     {
         const cmd = iter.next().?;
-        const arch_change = cmd.getArchChangeImmediate(&es);
+        const arch_change = cmd.getArchChangeImmediate_(&es);
         try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Tag)),
         }), arch_change.added());
@@ -506,7 +506,7 @@ test "cb overflow" {
 
         {
             const cmd = iter.next().?;
-            const arch_change = cmd.getArchChangeImmediate(&es);
+            const arch_change = cmd.getArchChangeImmediate_(&es);
             try expectEqual(e, cmd.entity);
             try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.added());
             try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
@@ -555,7 +555,7 @@ test "cb overflow" {
 
         {
             const cmd = iter.next().?;
-            const arch_change = cmd.getArchChangeImmediate(&es);
+            const arch_change = cmd.getArchChangeImmediate_(&es);
             try expectEqual(e, cmd.entity);
             try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.added());
             try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
