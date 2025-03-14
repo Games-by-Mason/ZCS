@@ -233,9 +233,9 @@ test "cb interning" {
         try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
-        }), arch_change.add);
-        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.remove);
-        try expect(!arch_change.destroy);
+        }), arch_change.added());
+        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
+        try expect(!arch_change.destroyed);
         var batches = cmd.iterator();
         const comp1 = batches.next().?.add;
         try expect(isInAnyBytes(cb, comp1.as(Model).?));
@@ -257,9 +257,9 @@ test "cb interning" {
         try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
-        }), arch_change.add);
-        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.remove);
-        try expect(!arch_change.destroy);
+        }), arch_change.added());
+        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
+        try expect(!arch_change.destroyed);
         try expectEqual(e1, cmd.entity);
         var batches = cmd.iterator();
         const comp1 = batches.next().?.add;
@@ -282,9 +282,9 @@ test "cb interning" {
         try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
-        }), arch_change.add);
-        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.remove);
-        try expect(!arch_change.destroy);
+        }), arch_change.added());
+        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
+        try expect(!arch_change.destroyed);
         try expectEqual(e0, cmd.entity);
         var batches = cmd.iterator();
         const comp1 = batches.next().?.add;
@@ -307,9 +307,9 @@ test "cb interning" {
         try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
-        }), arch_change.add);
-        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.remove);
-        try expect(!arch_change.destroy);
+        }), arch_change.added());
+        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
+        try expect(!arch_change.destroyed);
         try expectEqual(e1, cmd.entity);
         var batches = cmd.iterator();
         const comp1 = batches.next().?.add;
@@ -330,12 +330,12 @@ test "cb interning" {
         const cmd = iter.next().?;
         const arch_change = cmd.getArchChangeImmediate(&es);
         try expectEqual(e2, cmd.entity);
-        try expectEqual(CompFlag.Set.initEmpty(), arch_change.add);
+        try expectEqual(CompFlag.Set.initEmpty(), arch_change.added());
         try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
-        }), arch_change.remove);
-        try expect(arch_change.destroy);
+        }), arch_change.removed());
+        try expect(arch_change.destroyed);
         var batches = cmd.iterator();
         try expectEqual(.destroy, batches.next());
         try expectEqual(null, batches.next());
@@ -346,9 +346,9 @@ test "cb interning" {
         try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Model)),
             CompFlag.registerImmediate(typeId(RigidBody)),
-        }), arch_change.add);
-        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.remove);
-        try expect(!arch_change.destroy);
+        }), arch_change.added());
+        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
+        try expect(!arch_change.destroyed);
         try expectEqual(e0, cmd.entity);
         var batches = cmd.iterator();
         const comp1 = batches.next().?.add;
@@ -370,9 +370,9 @@ test "cb interning" {
         const arch_change = cmd.getArchChangeImmediate(&es);
         try expectEqual(CompFlag.Set.initMany(&.{
             CompFlag.registerImmediate(typeId(Tag)),
-        }), arch_change.add);
-        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.remove);
-        try expect(!arch_change.destroy);
+        }), arch_change.added());
+        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
+        try expect(!arch_change.destroyed);
         try expectEqual(e1, cmd.entity);
         var batches = cmd.iterator();
         const comp1 = batches.next().?.add;
@@ -508,9 +508,9 @@ test "cb overflow" {
             const cmd = iter.next().?;
             const arch_change = cmd.getArchChangeImmediate(&es);
             try expectEqual(e, cmd.entity);
-            try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.add);
-            try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.remove);
-            try expect(arch_change.destroy);
+            try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.added());
+            try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
+            try expect(arch_change.destroyed);
             var batches = cmd.iterator();
             try expectEqual(.destroy, batches.next());
             try expectEqual(null, batches.next());
@@ -557,9 +557,9 @@ test "cb overflow" {
             const cmd = iter.next().?;
             const arch_change = cmd.getArchChangeImmediate(&es);
             try expectEqual(e, cmd.entity);
-            try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.add);
-            try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.remove);
-            try expect(arch_change.destroy);
+            try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.added());
+            try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
+            try expect(arch_change.destroyed);
             var batches = cmd.iterator();
             try expectEqual(.destroy, batches.next());
             try expectEqual(null, batches.next());

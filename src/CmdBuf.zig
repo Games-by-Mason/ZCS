@@ -197,39 +197,48 @@ pub const Batch = struct {
         /// The initial archetype before the command is run.
         from: CompFlag.Set,
 
-        /// The component types scheduled to be added.
-        add: CompFlag.Set = .initEmpty(),
-
-        /// The component types scheduled to be removed.
-        ///
-        /// Entities scheduled for destruction list all of their components here.
-        remove: CompFlag.Set = .initEmpty(),
+        /// The final archetype after the command is run.
+        to: CompFlag.Set,
 
         /// Whether or not the entity is scheduled for destruction.
-        destroy: bool = false,
+        destroyed: bool = false,
+
+        /// Destroys the entity.
+        pub fn destroy(self: *@This()) void {
+            self.to = .{};
+            self.destroyed = true;
+        }
+
+        /// Returns the components that will be added.
+        pub fn added(self: @This()) CompFlag.Set {
+            return self.to.differenceWith(self.from);
+        }
+
+        /// Returns the components that will be removed.
+        pub fn removed(self: @This()) CompFlag.Set {
+            return self.from.differenceWith(self.to);
+        }
     };
 
     /// Gets the archetype change that this command would result in, registering component types if
     /// necessary. May be modified before execution if desired.
     pub fn getArchChangeImmediate(self: @This(), es: *const Entities) ArchChange {
+        const from = self.entity.getArch(es);
         var result: ArchChange = .{
-            .from = self.entity.getArch(es),
+            .from = from,
+            .to = from,
         };
         var iter = self.iterator();
         while (iter.next()) |cmd| {
             switch (cmd) {
                 .add => |comp| {
-                    result.add.insert(CompFlag.registerImmediate(comp.id));
-                    result.remove.remove(CompFlag.registerImmediate(comp.id));
+                    result.to.insert(CompFlag.registerImmediate(comp.id));
                 },
                 .remove => |id| {
-                    result.remove.insert(CompFlag.registerImmediate(id));
-                    result.add.remove(CompFlag.registerImmediate(id));
+                    result.to.remove(CompFlag.registerImmediate(id));
                 },
                 .destroy => {
-                    result.add = .initEmpty();
-                    result.remove = self.entity.getArch(es);
-                    result.destroy = true;
+                    result.destroy();
                     break;
                 },
                 .ext => {},
@@ -261,15 +270,15 @@ pub const Batch = struct {
         arch_change: ArchChange,
     ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!bool {
         // If the entity is scheduled for destruction, destroy it and early out.
-        if (arch_change.destroy) {
+        if (arch_change.destroyed) {
             return self.entity.destroyImmediate(es);
         }
 
         // Issue the change archetype command.  If no changes were requested, this will
         // still commit the entity. If the entity doesn't exist, early out.
         if (!try self.entity.changeArchUninitImmediateOrErr(es, .{
-            .add = arch_change.add,
-            .remove = arch_change.remove,
+            .add = arch_change.added(),
+            .remove = arch_change.removed(),
         })) {
             return false;
         }
