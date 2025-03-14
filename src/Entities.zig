@@ -32,7 +32,6 @@ handle_tab: HandleTab,
 comps: *[CompFlag.max][]align(max_align) u8,
 max_archetypes: u16,
 chunk_lists: ChunkLists,
-live: std.DynamicBitSetUnmanaged,
 iterator_generation: IteratorGeneration = 0,
 reserved_entities: usize = 0,
 chunk_pool: ChunkPool,
@@ -67,9 +66,6 @@ pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
     var chunk_pool: ChunkPool = try .init(gpa, capacity.max_chunks);
     errdefer chunk_pool.deinit(gpa);
 
-    var live = try std.DynamicBitSetUnmanaged.initEmpty(gpa, capacity.max_entities);
-    errdefer live.deinit(gpa);
-
     var chunk_lists: ChunkLists = try .init(gpa, capacity.max_archetypes);
     errdefer chunk_lists.deinit(gpa);
 
@@ -79,7 +75,6 @@ pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
         .chunk_lists = chunk_lists,
         .comps = comps,
         .chunk_pool = chunk_pool,
-        .live = live,
     };
 }
 
@@ -87,7 +82,6 @@ pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
 pub fn deinit(self: *@This(), gpa: Allocator) void {
     self.chunk_lists.deinit(gpa);
     self.chunk_pool.deinit(gpa);
-    self.live.deinit(gpa);
     for (self.comps) |comp| {
         gpa.free(comp);
     }
@@ -98,13 +92,16 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
 
 /// Recycles all entities with the given archetype.
 pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
-    for (0..self.handle_tab.next_index) |index| {
-        if (self.live.isSet(index) and self.handle_tab.values[index].getArch().eql(arch)) {
-            const entity: Entity = .{ .key = .{
-                .index = @intCast(index),
-                .generation = self.handle_tab.generations[index],
-            } };
-            assert(entity.recycleImmediate(self));
+    var chunk_lists_iter = self.chunk_lists.archIterator(arch);
+    while (chunk_lists_iter.next()) |chunk_list| {
+        var chunk_list_iter = chunk_list.iterator();
+        while (chunk_list_iter.next()) |chunk| {
+            var chunk_iter = chunk.iterator();
+            while (chunk_iter.next(&self.handle_tab)) |entity| {
+                self.handle_tab.recycle(entity.key);
+            }
+            // We have a mutable reference to entities, so it's fine to cast the const away here
+            @constCast(chunk).indices.clear();
         }
     }
 }

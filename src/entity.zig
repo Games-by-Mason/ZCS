@@ -119,7 +119,6 @@ pub const Entity = packed struct {
         const key = es.handle_tab.put(.reserved) catch |err| switch (err) {
             error.Overflow => return error.ZcsEntityOverflow,
         };
-        es.live.set(key.index);
         es.reserved_entities += 1;
         return .{ .key = key };
     }
@@ -153,7 +152,6 @@ pub const Entity = packed struct {
             } else {
                 es.reserved_entities -= 1;
             }
-            es.live.unset(self.key.index);
             es.handle_tab.remove(self.key);
             return true;
         } else {
