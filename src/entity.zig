@@ -208,8 +208,7 @@ pub const Entity = packed struct {
     /// or has been destroyed.
     pub fn get(self: @This(), es: *const Entities, T: type) ?*T {
         const untyped = self.getId(es, typeId(T)) orelse return null;
-        // Don't need `.ptr` once this is merged: https://github.com/ziglang/zig/pull/22706
-        return @alignCast(@ptrCast(untyped.ptr));
+        return @alignCast(@ptrCast(untyped));
     }
 
     /// Similar to `get`, but operates on component IDs instead of types.
