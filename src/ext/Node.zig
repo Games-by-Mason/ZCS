@@ -333,6 +333,7 @@ pub const Exec = struct {
             .ext => |ext| if (ext.id == typeId(SetParent)) {
                 if (!arch_change.from.contains(.registerImmediate(typeId(Node)))) {
                     arch_change.add.insert(typeId(Node).comp_flag.?);
+                    arch_change.remove.remove(typeId(Node).comp_flag.?);
                     self.init_node = true;
                 }
             },
