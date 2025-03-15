@@ -11,6 +11,8 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
+const meta = @import("meta.zig");
+
 const zcs = @import("root.zig");
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
@@ -19,9 +21,9 @@ const TypeId = zcs.TypeId;
 const CompFlag = zcs.CompFlag;
 
 const CmdBuf = @This();
-const Cmd = @import("cmd.zig").Cmd;
+const Subcmd = @import("subcmd.zig").Subcmd;
 
-tags: std.ArrayListUnmanaged(Cmd.Tag),
+tags: std.ArrayListUnmanaged(Subcmd.Tag),
 args: std.ArrayListUnmanaged(u64),
 any_bytes: std.ArrayListAlignedUnmanaged(u8, zcs.TypeInfo.max_align),
 bound: Entity.Optional = .none,
@@ -44,7 +46,7 @@ pub fn initGranularCapacity(
 ) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
     comptime assert(CompFlag.max < std.math.maxInt(u64));
 
-    var tags: std.ArrayListUnmanaged(Cmd.Tag) = try .initCapacity(gpa, capacity.tags);
+    var tags: std.ArrayListUnmanaged(Subcmd.Tag) = try .initCapacity(gpa, capacity.tags);
     errdefer tags.deinit(gpa);
 
     var args: std.ArrayListUnmanaged(u64) = try .initCapacity(gpa, capacity.args);
@@ -78,6 +80,42 @@ pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
     self.args.deinit(gpa);
     self.tags.deinit(gpa);
     self.* = undefined;
+}
+
+/// Appends an extension command to the buffer.
+///
+/// See notes on `Entity.add` with regards to performance and pass by value vs pointer.
+pub inline fn ext(self: *@This(), T: type, payload: T) void {
+    // Don't get tempted to remove inline from here! It's required for `isComptimeKnown`.
+    comptime assert(@typeInfo(@TypeOf(ext)).@"fn".calling_convention == .@"inline");
+    self.extOrErr(T, payload) catch |err|
+        @panic(@errorName(err));
+}
+
+/// Similar to `ext`, but returns an error on failure instead of panicking.
+pub inline fn extOrErr(self: *@This(), T: type, payload: T) error{ZcsCmdBufOverflow}!void {
+    // Don't get tempted to remove inline from here! It's required for `isComptimeKnown`.
+    comptime assert(@typeInfo(@TypeOf(extOrErr)).@"fn".calling_convention == .@"inline");
+    if (@sizeOf(T) > @sizeOf(*T) and meta.isComptimeKnown(payload)) {
+        const Interned = struct {
+            const value = payload;
+        };
+        try self.extAnyPtr(.init(T, comptime &Interned.value));
+    } else {
+        try self.extAnyVal(.init(T, &payload));
+    }
+}
+
+/// Similar to `extOrErr`, but doesn't require compile time types and forces the command to be
+/// copied by value to the command buffer. Prefer `ext`.
+pub fn extAnyVal(self: *@This(), payload: Any) error{ZcsCmdBufOverflow}!void {
+    try Subcmd.encode(self, .{ .ext_val = payload });
+}
+
+/// Similar to `extOrErr`, but doesn't require compile time types and forces the command to be
+/// copied by pointer to the command buffer. Prefer `ext`.
+pub fn extAnyPtr(self: *@This(), payload: Any) error{ZcsCmdBufOverflow}!void {
+    try Subcmd.encode(self, .{ .ext_ptr = payload });
 }
 
 /// Clears the command buffer for reuse. Refills the reserved entity list to capacity.
@@ -139,12 +177,12 @@ pub fn execImmediateOrErr(
 ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!void {
     var iter = self.iterator();
     while (iter.next()) |batch| {
-        var arch_change = batch.initArchChange(es);
-        var cmds = batch.iterator();
-        while (cmds.next()) |cmd| {
-            arch_change.beforeCmdImmediate(cmd);
+        switch (batch) {
+            .arch_change => |arch_change| {
+                _ = try arch_change.execImmediateOrErr(es);
+            },
+            .ext => {},
         }
-        _ = try batch.execImmediateOrErr(es, arch_change);
     }
 }
 
@@ -166,7 +204,7 @@ pub const GranularCapacity = struct {
 
     /// Estimates the granular capacity from worst case capacity.
     pub fn init(cap: Capacity) @This() {
-        _ = Cmd.rename_when_changing_encoding;
+        _ = Subcmd.rename_when_changing_encoding;
 
         // Each command can have at most one component's worth of component data.
         const cmd_bytes_cap = (cap.avg_cmd_bytes + zcs.TypeInfo.max_align) * cap.cmds;
@@ -192,209 +230,140 @@ pub const GranularCapacity = struct {
 };
 
 /// A batch of sequential commands that all have the same entity bound.
-pub const Batch = struct {
-    /// The bound entity.
-    entity: Entity,
-    decoder: Cmd.Decoder,
+pub const Batch = union(enum) {
+    ext: Any,
+    arch_change: ArchChange,
 
-    /// Information on an archetype change.
     pub const ArchChange = struct {
-        /// The initial archetype before the command is run.
-        from: CompFlag.Set,
+        /// The bound entity.
+        entity: Entity,
+        decoder: Subcmd.Decoder,
 
-        /// The final archetype after the command is run.
-        to: CompFlag.Set,
-
-        /// Whether or not the entity is scheduled for destruction.
-        destroyed: bool = false,
-
-        /// Destroys the entity.
-        pub fn destroy(self: *@This()) void {
-            self.to = .{};
-            self.destroyed = true;
+        /// An iterator over this batch's commands.
+        pub fn iterator(self: @This()) @This().Iterator {
+            return .{
+                .decoder = self.decoder,
+            };
         }
 
-        // XXX: what if "added" after destroyed? we could check here, or we could make function for
-        // add that checks there. same for removed if relevant.
-        /// Returns the components that will be added.
-        pub fn added(self: @This()) CompFlag.Set {
-            return self.to.differenceWith(self.from);
+        /// Executes the batch. Returns true if the entity exists before the command is run, false
+        /// otherwise.
+        ///
+        /// See `getArchChangeImmediate` to get the default archetype change argument.
+        pub fn execImmediate(self: @This(), es: *Entities) bool {
+            return self.execImmediateOrErr(es) catch |err|
+                @panic(@errorName(err));
         }
 
-        /// Returns the components that will be removed.
-        pub fn removed(self: @This()) CompFlag.Set {
-            return self.from.differenceWith(self.to);
-        }
+        /// Similar to `execImmediate`, but returns an error on overflow instead of panicking.
+        pub fn execImmediateOrErr(
+            self: @This(),
+            es: *Entities,
+        ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!bool {
+            var add: CompFlag.Set = .{};
+            var remove: CompFlag.Set = .{};
+            {
+                var cmds = self.iterator();
+                while (cmds.next()) |cmd| {
+                    switch (cmd) {
+                        .add => |comp| {
+                            const flag = CompFlag.registerImmediate(comp.id);
+                            add.insert(flag);
+                            remove.remove(flag);
+                        },
+                        .remove => |id| {
+                            const flag = CompFlag.registerImmediate(id);
+                            add.remove(flag);
+                            remove.insert(flag);
+                        },
+                        .destroy => return self.entity.destroyImmediate(es),
+                    }
+                }
 
-        // XXX: before cmd but it's before item?
-        pub fn beforeCmdImmediate(self: *@This(), cmd: CmdBuf.Batch.Item) void {
-            switch (cmd) {
-                .add => |comp| {
-                    self.to.insert(CompFlag.registerImmediate(comp.id));
-                },
-                .remove => |id| {
-                    self.to.remove(CompFlag.registerImmediate(id));
-                },
-                .destroy => {
-                    self.destroy();
-                },
-                .ext => {},
+                // Issue the change archetype command.  If no changes were requested, this will
+                // still commit the entity. If the entity doesn't exist, early out.
+                if (!try self.entity.changeArchUninitImmediateOrErr(es, .{
+                    .add = add,
+                    .remove = remove,
+                })) {
+                    return false;
+                }
             }
-        }
-    };
 
-    // XXX: document
-    pub fn initArchChange(self: @This(), es: *const Entities) ArchChange {
-        const from = self.entity.getArch(es);
-        return .{
-            .from = from,
-            .to = from,
-            .destroyed = false,
+            // Initialize any new components. Note that we check for existence on each because they
+            // could have been subsequently removed.
+            {
+                var cmds = self.iterator();
+                while (cmds.next()) |op| {
+                    switch (op) {
+                        .add => |comp| if (self.entity.getId(es, comp.id)) |dest| {
+                            @memcpy(dest, comp.bytes());
+                        },
+                        .remove,
+                        .destroy,
+                        => {},
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        /// An archetype change operation.
+        pub const Op = union(enum) {
+            add: Any,
+            remove: TypeId,
+            destroy: void,
         };
-    }
 
-    // XXX: ...remove, but need to update tests to use other methods or whatever
-    /// Gets the archetype change that this command would result in, registering component types if
-    /// necessary. May be modified before execution if desired.
-    pub fn getArchChangeImmediate_(self: @This(), es: *const Entities) ArchChange {
-        const from = self.entity.getArch(es);
-        var result: ArchChange = .{
-            .from = from,
-            .to = from,
+        /// An iterator over this batch's commands.
+        pub const Iterator = struct {
+            decoder: Subcmd.Decoder,
+
+            /// Returns the next operation, or `null` if there are none.
+            pub fn next(self: *@This()) ?Op {
+                while (self.decoder.peekTag()) |tag| {
+                    const op: Op = switch (tag) {
+                        .add_val => .{ .add = self.decoder.next().?.add_val },
+                        .add_ptr => .{ .add = self.decoder.next().?.add_ptr },
+                        .remove => .{ .remove = self.decoder.next().?.remove },
+                        .destroy => b: {
+                            _ = self.decoder.next().?.destroy;
+                            break :b .destroy;
+                        },
+                        .bind_entity, .ext_val, .ext_ptr => break,
+                    };
+
+                    // Return the operation.
+                    return op;
+                }
+                return null;
+            }
         };
-        var iter = self.iterator();
-        while (iter.next()) |cmd| {
-            switch (cmd) {
-                .add => |comp| {
-                    result.to.insert(CompFlag.registerImmediate(comp.id));
-                },
-                .remove => |id| {
-                    result.to.remove(CompFlag.registerImmediate(id));
-                },
-                .destroy => {
-                    result.destroy();
-                    break;
-                },
-                .ext => {},
-            }
-        }
-        return result;
-    }
-
-    /// An iterator over this batch's commands.
-    pub fn iterator(self: @This()) @This().Iterator {
-        return .{
-            .decoder = self.decoder,
-        };
-    }
-
-    /// Executes the batch. Returns true if the entity exists before the command is run, false
-    /// otherwise.
-    ///
-    /// See `getArchChangeImmediate` to get the default archetype change argument.
-    pub fn execImmediate(self: @This(), es: *Entities, arch_change: ArchChange) bool {
-        return self.execImmediateOrErr(es, arch_change) catch |err|
-            @panic(@errorName(err));
-    }
-
-    /// Similar to `execImmediate`, but returns an error on overflow instead of panicking.
-    pub fn execImmediateOrErr(
-        self: @This(),
-        es: *Entities,
-        arch_change: ArchChange,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!bool {
-        // If the entity is scheduled for destruction, destroy it and early out.
-        if (arch_change.destroyed) {
-            return self.entity.destroyImmediate(es);
-        }
-
-        // Issue the change archetype command.  If no changes were requested, this will
-        // still commit the entity. If the entity doesn't exist, early out.
-        if (!try self.entity.changeArchUninitImmediateOrErr(es, .{
-            .add = arch_change.added(),
-            .remove = arch_change.removed(),
-        })) {
-            return false;
-        }
-
-        // Initialize any new components. Note that we check for existence on each because they
-        // could have been subsequently removed.
-        var ops = self.iterator();
-        while (ops.next()) |op| {
-            switch (op) {
-                .add => |comp| if (self.entity.getId(es, comp.id)) |dest| {
-                    @memcpy(dest, comp.bytes());
-                },
-                .remove,
-                .destroy,
-                .ext,
-                => {},
-            }
-        }
-
-        return true;
-    }
-
-    /// A decoded command.
-    pub const Item = union(enum) {
-        add: Any,
-        remove: TypeId,
-        destroy: void,
-        ext: Any,
-    };
-
-    /// An iterator over this batch's commands.
-    pub const Iterator = struct {
-        decoder: Cmd.Decoder,
-
-        /// Returns the next command, or `null` if there are none.
-        pub fn next(self: *@This()) ?Item {
-            while (self.decoder.peekTag()) |tag| {
-                const cmd: Item = switch (tag) {
-                    .add_val => .{ .add = self.decoder.next().?.add_val },
-                    .add_ptr => .{ .add = self.decoder.next().?.add_ptr },
-                    .ext_val => .{ .ext = self.decoder.next().?.ext_val },
-                    .ext_ptr => .{ .ext = self.decoder.next().?.ext_ptr },
-                    .remove => .{ .remove = self.decoder.next().?.remove },
-                    .destroy => b: {
-                        _ = self.decoder.next().?.destroy;
-                        break :b .destroy;
-                    },
-                    .bind_entity => break,
-                };
-
-                // Return the operation.
-                return cmd;
-            }
-            return null;
-        }
     };
 };
 
 /// An iterator over batches of encoded commands.
 pub const Iterator = struct {
-    decoder: Cmd.Decoder,
+    decoder: Subcmd.Decoder,
 
     /// Returns the next command batch, or `null` if there is none.
     pub fn next(self: *@This()) ?Batch {
-        _ = Cmd.rename_when_changing_encoding;
+        _ = Subcmd.rename_when_changing_encoding;
 
-        // We just return bind operations here, `Cmd` handles the add/remove commands. If the first
-        // bind is `.none` it's elided, and we end up skipping the initial add/removes, but that's
-        // fine since adding/removing to `.none` is a noop anyway.
+        // We just return bind operations here, `Subcmd` handles the add/remove commands.
         while (self.decoder.next()) |cmd| {
             switch (cmd) {
                 // We buffer all ops on a given entity into a single command
-                .bind_entity => |entity| return .{
+                .bind_entity => |entity| return .{ .arch_change = .{
                     .entity = entity,
                     .decoder = self.decoder,
-                },
-                // Skip decoder ops here, they're handled in command. We always start with a bind so
-                // this will never miss ops.
+                } },
+                .ext_val, .ext_ptr => |payload| return .{ .ext = payload },
+                // These are handled by archetype change. We always start archetype change with a
+                // bind so this will never miss ops.
                 .add_ptr,
                 .add_val,
-                .ext_ptr,
-                .ext_val,
                 .remove,
                 .destroy,
                 => {},

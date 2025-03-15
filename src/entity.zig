@@ -2,10 +2,11 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const zcs = @import("root.zig");
+const meta = @import("meta.zig");
 
 const typeId = zcs.typeId;
 
-const Cmd = @import("cmd.zig").Cmd;
+const Subcmd = @import("subcmd.zig").Subcmd;
 
 const Entities = zcs.Entities;
 const Any = zcs.Any;
@@ -21,8 +22,8 @@ const Chunk = zcs.storage.Chunk;
 /// `Entity.exists`. This is useful for dynamic systems like games where object lifetime may depend
 /// on user input.
 ///
-/// Methods with `cmd` in the name append the command to a command buffer for execution at a later
-/// time. Methods with `immediate` in the name are executed immediately, usage of these is
+/// Methods that take a command buffer append the command to a command buffer for execution at a
+/// later time. Methods with `immediate` in the name are executed immediately, usage of these is
 /// discouraged as they are not valid while iterating unless otherwise noted and are not thread
 /// safe.
 pub const Entity = packed struct {
@@ -137,8 +138,8 @@ pub const Entity = packed struct {
         // Restore the state on failure
         const restore = cb.*;
         errdefer cb.* = restore;
-        try Cmd.encode(cb, .{ .bind_entity = self });
-        try Cmd.encode(cb, .destroy);
+        try Subcmd.encode(cb, .{ .bind_entity = self });
+        try Subcmd.encode(cb, .destroy);
     }
 
     /// Similar to `destroy`, but destroys the entity immediately. Prefer `destroy`.
@@ -233,6 +234,8 @@ pub const Entity = packed struct {
     ///
     /// Adding components to an entity that no longer exists has no effect.
     pub inline fn add(self: @This(), cb: *CmdBuf, T: type, comp: T) void {
+        // Don't get tempted to remove inline from here! It's required for `isComptimeKnown`.
+        comptime assert(@typeInfo(@TypeOf(add)).@"fn".calling_convention == .@"inline");
         self.addOrErr(cb, T, comp) catch |err|
             @panic(@errorName(err));
     }
@@ -244,7 +247,9 @@ pub const Entity = packed struct {
         T: type,
         comp: T,
     ) error{ZcsCmdBufOverflow}!void {
-        if (@sizeOf(T) > @sizeOf(*T) and isComptimeKnown(comp)) {
+        // Don't get tempted to remove inline from here! It's required for `isComptimeKnown`.
+        comptime assert(@typeInfo(@TypeOf(addOrErr)).@"fn".calling_convention == .@"inline");
+        if (@sizeOf(T) > @sizeOf(*T) and meta.isComptimeKnown(comp)) {
             const Interned = struct {
                 const value = comp;
             };
@@ -262,8 +267,8 @@ pub const Entity = packed struct {
         errdefer cb.* = restore;
 
         // Issue the commands
-        try Cmd.encode(cb, .{ .bind_entity = self });
-        try Cmd.encode(cb, .{ .add_val = comp });
+        try Subcmd.encode(cb, .{ .bind_entity = self });
+        try Subcmd.encode(cb, .{ .add_val = comp });
     }
 
     /// Similar to `addOrErr`, but doesn't require compile time types and forces the component to be
@@ -274,59 +279,8 @@ pub const Entity = packed struct {
         errdefer cb.* = restore;
 
         // Issue the commands
-        try Cmd.encode(cb, .{ .bind_entity = self });
-        try Cmd.encode(cb, .{ .add_ptr = comp });
-    }
-
-    /// Queues an extension command.
-    ///
-    /// Adding commands to an entity that no longer exists has no effect.
-    ///
-    /// See notes on `add` with regards to performance and pass by value vs pointer.
-    pub inline fn cmd(self: @This(), cb: *CmdBuf, T: type, payload: T) void {
-        self.cmdOrErr(cb, T, payload) catch |err|
-            @panic(@errorName(err));
-    }
-
-    /// Similar to `cmd`, but returns an error on failure instead of panicking.
-    pub inline fn cmdOrErr(
-        self: @This(),
-        cb: *CmdBuf,
-        T: type,
-        payload: T,
-    ) error{ZcsCmdBufOverflow}!void {
-        if (@sizeOf(T) > @sizeOf(*T) and isComptimeKnown(payload)) {
-            const Interned = struct {
-                const value = payload;
-            };
-            try self.cmdAnyPtr(cb, .init(T, comptime &Interned.value));
-        } else {
-            try self.cmdAnyVal(cb, .init(T, &payload));
-        }
-    }
-
-    /// Similar to `cmdOrErr`, but doesn't require compile time types and forces the command to be
-    /// copied by value to the command buffer. Prefer `cmd`.
-    pub fn cmdAnyVal(self: @This(), cb: *CmdBuf, payload: Any) error{ZcsCmdBufOverflow}!void {
-        // Restore the state on failure
-        const restore = cb.*;
-        errdefer cb.* = restore;
-
-        // Issue the commands
-        try Cmd.encode(cb, .{ .bind_entity = self });
-        try Cmd.encode(cb, .{ .ext_val = payload });
-    }
-
-    /// Similar to `cmdOrErr`, but doesn't require compile time types and forces the command to be
-    /// copied by pointer to the command buffer. Prefer `cmd`.
-    pub fn cmdAnyPtr(self: @This(), cb: *CmdBuf, payload: Any) error{ZcsCmdBufOverflow}!void {
-        // Restore the state on failure
-        const restore = cb.*;
-        errdefer cb.* = restore;
-
-        // Issue the commands
-        try Cmd.encode(cb, .{ .bind_entity = self });
-        try Cmd.encode(cb, .{ .ext_ptr = payload });
+        try Subcmd.encode(cb, .{ .bind_entity = self });
+        try Subcmd.encode(cb, .{ .add_ptr = comp });
     }
 
     /// Queues the given component to be removed. Has no effect if the component is not present, or
@@ -354,8 +308,8 @@ pub const Entity = packed struct {
         errdefer cb.* = restore;
 
         // Issue the commands
-        try Cmd.encode(cb, .{ .bind_entity = self });
-        try Cmd.encode(cb, .{ .remove = id });
+        try Subcmd.encode(cb, .{ .bind_entity = self });
+        try Subcmd.encode(cb, .{ .remove = id });
     }
 
     /// Queues the entity to be committed. Has no effect if it has already been committed, called
@@ -372,7 +326,7 @@ pub const Entity = packed struct {
         errdefer cb.* = restore;
 
         // Issue the subcommand
-        try Cmd.encode(cb, .{ .bind_entity = self });
+        try Subcmd.encode(cb, .{ .bind_entity = self });
     }
 
     pub const ChangeArchImmediateOptions = struct {
@@ -510,6 +464,29 @@ pub const Entity = packed struct {
         return self.viewAssumeArch(es, View);
     }
 
+    /// Similar to `viewOrAddImmediate`, but for a single component.
+    pub fn getOrAddImmediate(
+        self: @This(),
+        es: *Entities,
+        T: type,
+        default: T,
+    ) ?T {
+        return self.getOrAddImmediateOrErr(es, T, default) catch |err|
+            @panic(@errorName(err));
+    }
+
+    /// Similar to `getOrAddImmediate`, but for a single component.
+    pub fn getOrAddImmediateOrErr(
+        self: @This(),
+        es: *Entities,
+        T: type,
+        default: T,
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!?*T {
+        const result = try self.viewOrAddImmediateOrErr(es, struct { *T }, .{&default}) orelse
+            return null;
+        return result[0];
+    }
+
     /// Similar to `view`, but will attempt to fill in any non-optional missing components with
     /// the defaults from the `comps` view if present.
     pub fn viewOrAddImmediate(
@@ -635,16 +612,3 @@ pub const Entity = packed struct {
         }
     }
 };
-
-inline fn isComptimeKnown(value: anytype) bool {
-    return @typeInfo(@TypeOf(.{value})).@"struct".fields[0].is_comptime;
-}
-
-test isComptimeKnown {
-    try std.testing.expect(isComptimeKnown(123));
-    const foo = 456;
-    try std.testing.expect(isComptimeKnown(foo));
-    var bar: u8 = 123;
-    bar += 1;
-    try std.testing.expect(!isComptimeKnown(bar));
-}
