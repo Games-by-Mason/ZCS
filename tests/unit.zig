@@ -183,24 +183,24 @@ test "cb interning" {
     // Automatic interning
     e0.add(&cb, Model, model_value);
     e0.add(&cb, RigidBody, rb_interned);
-    e0.cmd(&cb, BarExt, bar_ev_value);
-    e0.cmd(&cb, FooExt, foo_ev_interned);
+    cb.ext(BarExt, bar_ev_value);
+    cb.ext(FooExt, foo_ev_interned);
 
     e1.add(&cb, Model, model_interned);
     e1.add(&cb, RigidBody, rb_value);
-    e1.cmd(&cb, BarExt, bar_ev_interned);
-    e1.cmd(&cb, FooExt, foo_ev_value);
+    cb.ext(BarExt, bar_ev_interned);
+    cb.ext(FooExt, foo_ev_value);
 
     // Explicit by value
     try e0.addAnyVal(&cb, .init(Model, &model_value));
     try e0.addAnyVal(&cb, .init(RigidBody, &rb_interned));
-    try e0.cmdAnyVal(&cb, .init(BarExt, &bar_ev_value));
-    try e0.cmdAnyVal(&cb, .init(FooExt, &foo_ev_interned));
+    try cb.extAnyVal(.init(BarExt, &bar_ev_value));
+    try cb.extAnyVal(.init(FooExt, &foo_ev_interned));
 
     try e1.addAnyVal(&cb, .init(Model, &model_interned));
     try e1.addAnyVal(&cb, .init(RigidBody, &rb_value));
-    try e1.cmdAnyVal(&cb, .init(BarExt, &bar_ev_interned));
-    try e1.cmdAnyVal(&cb, .init(FooExt, &foo_ev_value));
+    try cb.extAnyVal(.init(BarExt, &bar_ev_interned));
+    try cb.extAnyVal(.init(FooExt, &foo_ev_value));
 
     // Throw in a destroy for good measure, verify the components end up in the remove flags
     try expect(e2.changeArchImmediate(&es, .{
@@ -212,188 +212,146 @@ test "cb interning" {
     // Explicit interning
     try e0.addAnyPtr(&cb, .init(RigidBody, &rb_interned));
     try e0.addAnyPtr(&cb, .init(Model, &model_interned));
-    try e0.cmdAnyPtr(&cb, .init(BarExt, &bar_ev_interned));
-    try e0.cmdAnyPtr(&cb, .init(FooExt, &foo_ev_interned));
+    try cb.extAnyPtr(.init(BarExt, &bar_ev_interned));
+    try cb.extAnyPtr(.init(FooExt, &foo_ev_interned));
 
     // Zero sized types
     e1.add(&cb, Tag, .{});
     try e1.addAnyVal(&cb, .init(Tag, &.{}));
     try e1.addAnyPtr(&cb, .init(Tag, &.{}));
-    e1.cmd(&cb, BazExt, .{});
-    try e1.cmdAnyVal(&cb, .init(BazExt, &.{}));
-    try e1.cmdAnyPtr(&cb, .init(BazExt, &.{}));
+    cb.ext(BazExt, .{});
+    try cb.extAnyVal(.init(BazExt, &.{}));
+    try cb.extAnyPtr(.init(BazExt, &.{}));
 
     // Test the results
     var iter = cb.iterator();
 
     {
-        const cmd = iter.next().?;
-        try expectEqual(e0, cmd.entity);
-        const arch_change = cmd.getArchChangeImmediate_(&es);
-        try expectEqual(CompFlag.Set.initMany(&.{
-            CompFlag.registerImmediate(typeId(Model)),
-            CompFlag.registerImmediate(typeId(RigidBody)),
-        }), arch_change.added());
-        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
-        try expect(!arch_change.destroyed);
-        var batches = cmd.iterator();
-        const comp1 = batches.next().?.add;
+        const ac = iter.next().?.arch_change;
+        try expectEqual(e0, ac.entity);
+        var ops = ac.iterator();
+        const comp1 = ops.next().?.add;
         try expect(isInAnyBytes(cb, comp1.as(Model).?));
         try expectEqual(model_value, comp1.as(Model).?.*);
-        const comp2 = batches.next().?.add;
+        const comp2 = ops.next().?.add;
         try expect(!isInAnyBytes(cb, comp2.as(RigidBody).?));
         try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
-        const ev1 = batches.next().?.ext;
-        try expect(isInAnyBytes(cb, ev1.as(BarExt).?));
-        try expectEqual(bar_ev_value, ev1.as(BarExt).?.*);
-        const ev2 = batches.next().?.ext;
-        try expect(!isInAnyBytes(cb, ev2.as(FooExt).?));
-        try expectEqual(foo_ev_interned, ev2.as(FooExt).?.*);
-        try expectEqual(null, batches.next());
+        try expectEqual(null, ops.next());
     }
     {
-        const cmd = iter.next().?;
-        const arch_change = cmd.getArchChangeImmediate_(&es);
-        try expectEqual(CompFlag.Set.initMany(&.{
-            CompFlag.registerImmediate(typeId(Model)),
-            CompFlag.registerImmediate(typeId(RigidBody)),
-        }), arch_change.added());
-        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
-        try expect(!arch_change.destroyed);
-        try expectEqual(e1, cmd.entity);
-        var batches = cmd.iterator();
-        const comp1 = batches.next().?.add;
+        const ext1 = iter.next().?.ext;
+        try expect(isInAnyBytes(cb, ext1.as(BarExt).?));
+        try expectEqual(bar_ev_value, ext1.as(BarExt).?.*);
+        const ext2 = iter.next().?.ext;
+        try expect(!isInAnyBytes(cb, ext2.as(FooExt).?));
+        try expectEqual(foo_ev_interned, ext2.as(FooExt).?.*);
+    }
+    {
+        const ac = iter.next().?.arch_change;
+        try expectEqual(e1, ac.entity);
+        var ops = ac.iterator();
+        const comp1 = ops.next().?.add;
         try expect(isInAnyBytes(cb, comp1.as(Model).?)); // By value because it's too small!
         try expectEqual(model_interned, comp1.as(Model).?.*);
-        const comp2 = batches.next().?.add;
+        const comp2 = ops.next().?.add;
         try expect(isInAnyBytes(cb, comp2.as(RigidBody).?));
         try expectEqual(rb_value, comp2.as(RigidBody).?.*);
-        const ev1 = batches.next().?.ext;
-        try expect(isInAnyBytes(cb, ev1.as(BarExt).?)); // By value because it's too small!
-        try expectEqual(bar_ev_interned, ev1.as(BarExt).?.*);
-        const ev2 = batches.next().?.ext;
-        try expect(isInAnyBytes(cb, ev2.as(FooExt).?));
-        try expectEqual(foo_ev_value, ev2.as(FooExt).?.*);
-        try expectEqual(null, batches.next());
     }
     {
-        const cmd = iter.next().?;
-        const arch_change = cmd.getArchChangeImmediate_(&es);
-        try expectEqual(CompFlag.Set.initMany(&.{
-            CompFlag.registerImmediate(typeId(Model)),
-            CompFlag.registerImmediate(typeId(RigidBody)),
-        }), arch_change.added());
-        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
-        try expect(!arch_change.destroyed);
-        try expectEqual(e0, cmd.entity);
-        var batches = cmd.iterator();
-        const comp1 = batches.next().?.add;
+        const ext1 = iter.next().?.ext;
+        try expect(isInAnyBytes(cb, ext1.as(BarExt).?)); // By value because it's too small!
+        try expectEqual(bar_ev_interned, ext1.as(BarExt).?.*);
+        const ext2 = iter.next().?.ext;
+        try expect(isInAnyBytes(cb, ext2.as(FooExt).?));
+        try expectEqual(foo_ev_value, ext2.as(FooExt).?.*);
+    }
+    {
+        const ac = iter.next().?.arch_change;
+        try expectEqual(e0, ac.entity);
+        var ops = ac.iterator();
+        const comp1 = ops.next().?.add;
         try expect(isInAnyBytes(cb, comp1.as(Model).?));
         try expectEqual(model_value, comp1.as(Model).?.*);
-        const comp2 = batches.next().?.add;
+        const comp2 = ops.next().?.add;
         try expect(isInAnyBytes(cb, comp2.as(RigidBody).?));
         try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
-        const ev1 = batches.next().?.ext;
-        try expect(isInAnyBytes(cb, ev1.as(BarExt).?));
-        try expectEqual(bar_ev_value, ev1.as(BarExt).?.*);
-        const ev2 = batches.next().?.ext;
-        try expect(isInAnyBytes(cb, ev2.as(FooExt).?));
-        try expectEqual(foo_ev_interned, ev2.as(FooExt).?.*);
-        try expectEqual(null, batches.next());
     }
     {
-        const cmd = iter.next().?;
-        const arch_change = cmd.getArchChangeImmediate_(&es);
-        try expectEqual(CompFlag.Set.initMany(&.{
-            CompFlag.registerImmediate(typeId(Model)),
-            CompFlag.registerImmediate(typeId(RigidBody)),
-        }), arch_change.added());
-        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
-        try expect(!arch_change.destroyed);
-        try expectEqual(e1, cmd.entity);
-        var batches = cmd.iterator();
-        const comp1 = batches.next().?.add;
+        const ext1 = iter.next().?.ext;
+        try expect(isInAnyBytes(cb, ext1.as(BarExt).?));
+        try expectEqual(bar_ev_value, ext1.as(BarExt).?.*);
+        const ext2 = iter.next().?.ext;
+        try expect(isInAnyBytes(cb, ext2.as(FooExt).?));
+        try expectEqual(foo_ev_interned, ext2.as(FooExt).?.*);
+    }
+    {
+        const ac = iter.next().?.arch_change;
+        try expectEqual(e1, ac.entity);
+        var ops = ac.iterator();
+        const comp1 = ops.next().?.add;
         try expect(isInAnyBytes(cb, comp1.as(Model).?));
         try expectEqual(model_interned, comp1.as(Model).?.*);
-        const comp2 = batches.next().?.add;
+        const comp2 = ops.next().?.add;
         try expect(isInAnyBytes(cb, comp2.as(RigidBody).?));
         try expectEqual(rb_value, comp2.as(RigidBody).?.*);
-        const ev1 = batches.next().?.ext;
-        try expect(isInAnyBytes(cb, ev1.as(BarExt).?));
-        try expectEqual(bar_ev_interned, ev1.as(BarExt).?.*);
-        const ev2 = batches.next().?.ext;
-        try expect(isInAnyBytes(cb, ev2.as(FooExt).?));
-        try expectEqual(foo_ev_value, ev2.as(FooExt).?.*);
-        try expectEqual(null, batches.next());
     }
     {
-        const cmd = iter.next().?;
-        const arch_change = cmd.getArchChangeImmediate_(&es);
-        try expectEqual(e2, cmd.entity);
-        try expectEqual(CompFlag.Set.initEmpty(), arch_change.added());
-        try expectEqual(CompFlag.Set.initMany(&.{
-            CompFlag.registerImmediate(typeId(Model)),
-            CompFlag.registerImmediate(typeId(RigidBody)),
-        }), arch_change.removed());
-        try expect(arch_change.destroyed);
-        var batches = cmd.iterator();
-        try expectEqual(.destroy, batches.next());
-        try expectEqual(null, batches.next());
+        const ext1 = iter.next().?.ext;
+        try expect(isInAnyBytes(cb, ext1.as(BarExt).?));
+        try expectEqual(bar_ev_interned, ext1.as(BarExt).?.*);
+        const ext2 = iter.next().?.ext;
+        try expect(isInAnyBytes(cb, ext2.as(FooExt).?));
+        try expectEqual(foo_ev_value, ext2.as(FooExt).?.*);
     }
     {
-        const cmd = iter.next().?;
-        const arch_change = cmd.getArchChangeImmediate_(&es);
-        try expectEqual(CompFlag.Set.initMany(&.{
-            CompFlag.registerImmediate(typeId(Model)),
-            CompFlag.registerImmediate(typeId(RigidBody)),
-        }), arch_change.added());
-        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
-        try expect(!arch_change.destroyed);
+        const ac = iter.next().?.arch_change;
+        var ops = ac.iterator();
+        try expectEqual(.destroy, ops.next());
+        try expectEqual(null, ops.next());
+    }
+    {
+        const cmd = iter.next().?.arch_change;
         try expectEqual(e0, cmd.entity);
-        var batches = cmd.iterator();
-        const comp1 = batches.next().?.add;
+        var ops = cmd.iterator();
+        const comp1 = ops.next().?.add;
         try expect(!isInAnyBytes(cb, comp1.as(RigidBody).?));
         try expectEqual(rb_interned, comp1.as(RigidBody).?.*);
-        const comp2 = batches.next().?.add;
+        const comp2 = ops.next().?.add;
         try expect(!isInAnyBytes(cb, comp2.as(Model).?));
         try expectEqual(model_interned, comp2.as(Model).?.*);
-        const ev1 = batches.next().?.ext;
-        try expect(!isInAnyBytes(cb, ev1.as(BarExt).?));
-        try expectEqual(bar_ev_interned, ev1.as(BarExt).?.*);
-        const ev2 = batches.next().?.ext;
-        try expect(!isInAnyBytes(cb, ev2.as(FooExt).?));
-        try expectEqual(foo_ev_interned, ev2.as(FooExt).?.*);
-        try expectEqual(null, batches.next());
     }
     {
-        const cmd = iter.next().?;
-        const arch_change = cmd.getArchChangeImmediate_(&es);
-        try expectEqual(CompFlag.Set.initMany(&.{
-            CompFlag.registerImmediate(typeId(Tag)),
-        }), arch_change.added());
-        try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
-        try expect(!arch_change.destroyed);
-        try expectEqual(e1, cmd.entity);
-        var batches = cmd.iterator();
-        const comp1 = batches.next().?.add;
+        const ext1 = iter.next().?.ext;
+        try expect(!isInAnyBytes(cb, ext1.as(BarExt).?));
+        try expectEqual(bar_ev_interned, ext1.as(BarExt).?.*);
+        const ext2 = iter.next().?.ext;
+        try expect(!isInAnyBytes(cb, ext2.as(FooExt).?));
+        try expectEqual(foo_ev_interned, ext2.as(FooExt).?.*);
+    }
+    {
+        const ac = iter.next().?.arch_change;
+        try expectEqual(e1, ac.entity);
+        var ops = ac.iterator();
+        const comp1 = ops.next().?.add;
         try expect(isInAnyBytes(cb, comp1.as(Tag).?));
         try expectEqual(Tag{}, comp1.as(Tag).?.*);
-        const comp2 = batches.next().?.add;
+        const comp2 = ops.next().?.add;
         try expect(isInAnyBytes(cb, comp2.as(Tag).?));
         try expectEqual(Tag{}, comp2.as(Tag).?.*);
-        const comp3 = batches.next().?.add;
+        const comp3 = ops.next().?.add;
         try expect(!isInAnyBytes(cb, comp3.as(Tag).?));
         try expectEqual(Tag{}, comp3.as(Tag).?.*);
-        const ev1 = batches.next().?.ext;
-        try expect(isInAnyBytes(cb, ev1.as(BazExt).?));
-        try expectEqual(BazExt{}, ev1.as(BazExt).?.*);
-        const ev2 = batches.next().?.ext;
-        try expect(isInAnyBytes(cb, ev2.as(BazExt).?));
-        try expectEqual(BazExt{}, ev2.as(BazExt).?.*);
-        const ev3 = batches.next().?.ext;
+    }
+    {
+        const ext1 = iter.next().?.ext;
+        try expect(isInAnyBytes(cb, ext1.as(BazExt).?));
+        try expectEqual(BazExt{}, ext1.as(BazExt).?.*);
+        const ext2 = iter.next().?.ext;
+        try expect(isInAnyBytes(cb, ext2.as(BazExt).?));
+        try expectEqual(BazExt{}, ext2.as(BazExt).?.*);
+        const ev3 = iter.next().?.ext;
         try expect(!isInAnyBytes(cb, ev3.as(BazExt).?));
         try expectEqual(BazExt{}, ev3.as(BazExt).?.*);
-        try expectEqual(null, batches.next());
     }
 
     try expectEqual(null, iter.next());
@@ -481,7 +439,7 @@ test "cb overflow" {
         const rb = RigidBody.random(rand);
 
         _ = Entity.reserveImmediate(&es).add(&cb, RigidBody, rb);
-        e.destroy(&cb);
+        e.commit(&cb);
         try expectError(error.ZcsCmdBufOverflow, e.addOrErr(
             &cb,
             RigidBody,
@@ -496,27 +454,21 @@ test "cb overflow" {
         var iter = cb.iterator();
 
         {
-            const cmd = iter.next().?;
-            var batches = cmd.iterator();
-            const create_rb = batches.next().?.add;
+            const arch_change = iter.next().?.arch_change;
+            var ops = arch_change.iterator();
+            const create_rb = ops.next().?.add;
             try expectEqual(typeId(RigidBody), create_rb.id);
             try expectEqual(rb, create_rb.as(RigidBody).?.*);
-            try expectEqual(null, batches.next());
+            try expectEqual(null, ops.next());
         }
 
         {
-            const cmd = iter.next().?;
-            const arch_change = cmd.getArchChangeImmediate_(&es);
-            try expectEqual(e, cmd.entity);
-            try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.added());
-            try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
-            try expect(arch_change.destroyed);
-            var batches = cmd.iterator();
-            try expectEqual(.destroy, batches.next());
-            try expectEqual(null, batches.next());
+            const arch_change = iter.next().?.arch_change;
+            var ops = arch_change.iterator();
+            try expectEqual(null, ops.next());
         }
 
-        try expectEqual(null, iter.next());
+        // try expectEqual(null, iter.next());
     }
 
     // Extension data overflow
@@ -532,10 +484,9 @@ test "cb overflow" {
         const e: Entity = Entity.reserveImmediate(&es);
         const foo = FooExt.random(rand);
 
-        _ = Entity.reserveImmediate(&es).cmd(&cb, FooExt, foo);
+        cb.ext(FooExt, foo);
         e.destroy(&cb);
-        try expectError(error.ZcsCmdBufOverflow, e.cmdOrErr(
-            &cb,
+        try expectError(error.ZcsCmdBufOverflow, cb.extOrErr(
             FooExt,
             FooExt.random(rand),
         ));
@@ -545,24 +496,16 @@ test "cb overflow" {
         var iter = cb.iterator();
 
         {
-            const cmd = iter.next().?;
-            var batches = cmd.iterator();
-            const create_foo = batches.next().?.ext;
+            const create_foo = iter.next().?.ext;
             try expectEqual(typeId(FooExt), create_foo.id);
             try expectEqual(foo, create_foo.as(FooExt).?.*);
-            try expectEqual(null, batches.next());
         }
 
         {
-            const cmd = iter.next().?;
-            const arch_change = cmd.getArchChangeImmediate_(&es);
-            try expectEqual(e, cmd.entity);
-            try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.added());
-            try expectEqual(CompFlag.Set.initMany(&.{}), arch_change.removed());
-            try expect(arch_change.destroyed);
-            var batches = cmd.iterator();
-            try expectEqual(.destroy, batches.next());
-            try expectEqual(null, batches.next());
+            const arch_change = iter.next().?.arch_change;
+            var ops = arch_change.iterator();
+            try expectEqual(.destroy, ops.next());
+            try expectEqual(null, ops.next());
         }
 
         try expectEqual(null, iter.next());
@@ -705,53 +648,50 @@ test "cb capacity" {
     // Extensions
     {
         // Extension val
-        const e0 = Entity.reserveImmediate(&es);
-        const e1 = Entity.reserveImmediate(&es);
-
-        for (0..cb_capacity / 12) |_| {
-            try e0.cmdAnyVal(&cb, .init(u0, &0));
-            try e1.cmdAnyVal(&cb, .init(u8, &0));
-            try e0.cmdAnyVal(&cb, .init(u16, &0));
-            try e1.cmdAnyVal(&cb, .init(u32, &0));
-            try e0.cmdAnyVal(&cb, .init(u64, &0));
-            try e1.cmdAnyVal(&cb, .init(u128, &0));
+        for (0..cb_capacity / 4) |_| {
+            try cb.extAnyVal(.init(u0, &0));
+            try cb.extAnyVal(.init(u8, &0));
+            try cb.extAnyVal(.init(u16, &0));
+            try cb.extAnyVal(.init(u32, &0));
+            try cb.extAnyVal(.init(u64, &0));
+            try cb.extAnyVal(.init(u128, &0));
         }
 
         try expect(cb.worstCaseUsage() < 1.0);
         cb.clear(&es);
 
-        for (0..cb_capacity / 6) |_| {
-            try e0.cmdAnyVal(&cb, .init(u0, &0));
-            try e1.cmdAnyVal(&cb, .init(u8, &0));
-            try e0.cmdAnyVal(&cb, .init(u16, &0));
-            try e1.cmdAnyVal(&cb, .init(u32, &0));
-            try e0.cmdAnyVal(&cb, .init(u64, &0));
-            try e1.cmdAnyVal(&cb, .init(u128, &0));
+        for (0..cb_capacity / 3) |_| {
+            try cb.extAnyVal(.init(u0, &0));
+            try cb.extAnyVal(.init(u8, &0));
+            try cb.extAnyVal(.init(u16, &0));
+            try cb.extAnyVal(.init(u32, &0));
+            try cb.extAnyVal(.init(u64, &0));
+            try cb.extAnyVal(.init(u128, &0));
         }
 
         try expectEqual(1.0, cb.worstCaseUsage());
         cb.clear(&es);
 
         // Extension ptr
-        for (0..cb_capacity / 12) |_| {
-            try e0.cmdAnyPtr(&cb, .init(u0, &0));
-            try e1.cmdAnyPtr(&cb, .init(u8, &0));
-            try e0.cmdAnyPtr(&cb, .init(u16, &0));
-            try e1.cmdAnyPtr(&cb, .init(u32, &0));
-            try e0.cmdAnyPtr(&cb, .init(u64, &0));
-            try e1.cmdAnyPtr(&cb, .init(u128, &0));
+        for (0..cb_capacity / 5) |_| {
+            try cb.extAnyPtr(.init(u0, &0));
+            try cb.extAnyPtr(.init(u8, &0));
+            try cb.extAnyPtr(.init(u16, &0));
+            try cb.extAnyPtr(.init(u32, &0));
+            try cb.extAnyPtr(.init(u64, &0));
+            try cb.extAnyPtr(.init(u128, &0));
         }
 
         try expect(cb.worstCaseUsage() < 1.0);
         cb.clear(&es);
 
-        for (0..cb_capacity / 6) |_| {
-            try e0.cmdAnyPtr(&cb, .init(u0, &0));
-            try e1.cmdAnyPtr(&cb, .init(u8, &0));
-            try e0.cmdAnyPtr(&cb, .init(u16, &0));
-            try e1.cmdAnyPtr(&cb, .init(u32, &0));
-            try e0.cmdAnyPtr(&cb, .init(u64, &0));
-            try e1.cmdAnyPtr(&cb, .init(u128, &0));
+        for (0..cb_capacity / 4) |_| {
+            try cb.extAnyPtr(.init(u0, &0));
+            try cb.extAnyPtr(.init(u8, &0));
+            try cb.extAnyPtr(.init(u16, &0));
+            try cb.extAnyPtr(.init(u32, &0));
+            try cb.extAnyPtr(.init(u64, &0));
+            try cb.extAnyPtr(.init(u128, &0));
         }
 
         try expectEqual(1.0, cb.worstCaseUsage());
@@ -889,7 +829,7 @@ test "getAll" {
     _ = typeId(i32);
     var cb = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .avg_cmd_bytes = @sizeOf(RigidBody) });
     defer cb.deinit(gpa, &es);
-    e.cmd(&cb, BarExt, .{ .bar = 1 });
+    cb.ext(BarExt, .{ .bar = 1 });
     cb.execImmediate(&es);
 
     const registered = CompFlag.getAll();

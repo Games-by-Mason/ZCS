@@ -1,4 +1,4 @@
-//! For internal use. See `Cmd`.
+//! For internal use. See `Subcmd`.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -11,7 +11,7 @@ const CmdBuf = zcs.CmdBuf;
 const Entities = zcs.Entities;
 
 /// For internal use. An unencoded representation of command buffer commands.
-pub const Cmd = union(enum) {
+pub const Subcmd = union(enum) {
     /// Binds an existing entity.
     bind_entity: Entity,
     /// Destroys the bound entity.
@@ -43,7 +43,7 @@ pub const Cmd = union(enum) {
         arg_index: usize = 0,
         comp_bytes_index: usize = 0,
 
-        pub inline fn next(self: *@This()) ?Cmd {
+        pub inline fn next(self: *@This()) ?Subcmd {
             _ = rename_when_changing_encoding;
 
             // Decode the next command
@@ -94,7 +94,7 @@ pub const Cmd = union(enum) {
             return null;
         }
 
-        pub inline fn peekTag(self: *@This()) ?Cmd.Tag {
+        pub inline fn peekTag(self: *@This()) ?Subcmd.Tag {
             if (self.tag_index < self.cb.tags.items.len) {
                 return self.cb.tags.items[self.tag_index];
             } else {
@@ -102,7 +102,7 @@ pub const Cmd = union(enum) {
             }
         }
 
-        pub inline fn nextTag(self: *@This()) ?Cmd.Tag {
+        pub inline fn nextTag(self: *@This()) ?Subcmd.Tag {
             const tag = self.peekTag() orelse return null;
             self.tag_index += 1;
             return tag;
@@ -136,23 +136,35 @@ pub const Cmd = union(enum) {
     };
 
     /// Encodes a command.
-    pub fn encode(cb: *CmdBuf, cmd: Cmd) error{ZcsCmdBufOverflow}!void {
-        _ = Cmd.rename_when_changing_encoding;
+    pub fn encode(cb: *CmdBuf, subcmd: Subcmd) error{ZcsCmdBufOverflow}!void {
+        _ = Subcmd.rename_when_changing_encoding;
 
-        switch (cmd) {
-            .destroy => {
-                if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
-                cb.tags.appendAssumeCapacity(.destroy);
-            },
+        // Decide whether or not to keep the bound entity
+        switch (subcmd) {
+            // We're in an archetype change, keep it
+            .destroy, .bind_entity, .add_val, .add_ptr, .remove => {},
+            // We're in an extension command, clear it. Archetype changes must start with a bind so we
+            // don't want it to be cached across other commands.
+            .ext_ptr, .ext_val => cb.binding = .none,
+        }
+
+        switch (subcmd) {
             .bind_entity => |entity| {
-                if (cb.bound == entity.toOptional()) return;
-                cb.bound = entity.toOptional();
+                if (cb.binding.entity == entity.toOptional()) return;
                 if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (cb.args.items.len >= cb.args.capacity) return error.ZcsCmdBufOverflow;
+                cb.binding = .{ .entity = entity.toOptional() };
                 cb.tags.appendAssumeCapacity(.bind_entity);
                 cb.args.appendAssumeCapacity(@bitCast(entity));
             },
+            .destroy => {
+                if (cb.binding.destroyed) return;
+                if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
+                cb.tags.appendAssumeCapacity(.destroy);
+                cb.binding.destroyed = true;
+            },
             inline .add_val, .ext_val => |comp| {
+                if (cb.binding.destroyed) return;
                 const aligned = std.mem.alignForward(
                     usize,
                     cb.any_bytes.items.len,
@@ -163,19 +175,23 @@ pub const Cmd = union(enum) {
                 if (aligned + comp.id.size > cb.any_bytes.capacity) {
                     return error.ZcsCmdBufOverflow;
                 }
-                cb.tags.appendAssumeCapacity(cmd);
+
+                cb.tags.appendAssumeCapacity(subcmd);
                 cb.args.appendAssumeCapacity(@intFromPtr(comp.id));
                 cb.any_bytes.items.len = aligned;
                 cb.any_bytes.appendSliceAssumeCapacity(comp.constSlice());
             },
-            .add_ptr, .ext_ptr => |comp| {
+            inline .add_ptr, .ext_ptr => |comp| {
+                if (cb.binding.destroyed) return;
                 if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (cb.args.items.len + 2 > cb.args.capacity) return error.ZcsCmdBufOverflow;
-                cb.tags.appendAssumeCapacity(cmd);
+
+                cb.tags.appendAssumeCapacity(subcmd);
                 cb.args.appendAssumeCapacity(@intFromPtr(comp.id));
                 cb.args.appendAssumeCapacity(@intFromPtr(comp.ptr));
             },
             .remove => |id| {
+                if (cb.binding.destroyed) return;
                 if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
                 if (cb.args.items.len >= cb.args.capacity) return error.ZcsCmdBufOverflow;
                 cb.tags.appendAssumeCapacity(.remove);

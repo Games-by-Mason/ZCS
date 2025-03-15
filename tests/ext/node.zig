@@ -262,7 +262,7 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
             }
         }
 
-        Node.Exec.immediate(&fz.es, cb);
+        Node.exec.immediate(&fz.es, cb);
         try checkOracle(&fz, &o);
         cb.clear(&fz.es);
     }
@@ -296,7 +296,7 @@ fn fuzzNodeCyclesCmdBuf(_: void, input: []const u8) !void {
             try setParentCmd(&fz, &o, &cb);
         }
 
-        Node.Exec.immediate(&fz.es, cb);
+        Node.exec.immediate(&fz.es, cb);
         try checkOracle(&fz, &o);
         cb.clear(&fz.es);
     }
@@ -474,7 +474,7 @@ fn setParentCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
     const child = fz.randomEntity().unwrap() orelse return;
     if (log) std.debug.print("{}.parent = {}\n", .{ child, parent });
 
-    child.cmd(cb, SetParent, .{parent});
+    cb.ext(SetParent, .{ .child = child, .parent = parent });
     if (o.entities.getPtr(child) != null) {
         try setParentInOracle(fz, o, child, parent);
     }

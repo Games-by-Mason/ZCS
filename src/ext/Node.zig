@@ -14,6 +14,7 @@ const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const CmdBuf = zcs.CmdBuf;
 const CompFlag = zcs.CompFlag;
+const Any = zcs.Any;
 
 const Node = @This();
 
@@ -273,16 +274,17 @@ pub const PostOrderIterator = struct {
 ///   exists, then no change is made.
 /// * If parent is `.none`, child is unparented.
 /// * If parent no longer exists, child is destroyed.
-pub const SetParent = struct { Entity.Optional };
+pub const SetParent = struct {
+    child: Entity,
+    parent: Entity.Optional,
+};
 
-/// `Exec` provides helpers for processing hierarchy changes via the command buffer.
+/// `exec` provides helpers for processing hierarchy changes via the command buffer.
 ///
 /// By convention, `Exec` only calls into the stable public interface of the types it's working
 /// with. As such, documentation is sparse. You are welcome to call these methods directly, or
 /// use them as reference for implementing your own command buffer iterator.
-pub const Exec = struct {
-    init_node: bool = false,
-
+pub const exec = struct {
     /// Provided as reference. Executes a command buffer, maintaining the hierarchy and reacting to
     /// related events along the way. In practice, you likely want to call the finer grained
     /// functions provided directly, so that other libraries you use can also hook into the command
@@ -300,105 +302,64 @@ pub const Exec = struct {
     ) error{ ZcsCompOverflow, ZcsEntityOverflow, ZcsArchOverflow, ZcsChunkOverflow }!void {
         var batches = cb.iterator();
         while (batches.next()) |batch| {
-            var node_exec: @This() = .{};
+            switch (batch) {
+                .arch_change => |arch_change| {
+                    var delta: CmdBuf.Batch.ArchChange.Delta = .{};
+                    var ops = arch_change.iterator();
+                    while (ops.next()) |op| {
+                        beforeArchChangeImmediate(es, arch_change, op);
+                        delta.updateImmediate(op);
+                    }
 
-            var arch_change = batch.initArchChange(es);
-            {
-                var iter = batch.iterator();
-                while (iter.next()) |cmd| {
-                    arch_change.beforeCmdImmediate(cmd);
-                    node_exec.beforeCmdImmediate(es, batch, &arch_change, cmd);
-                }
+                    _ = try arch_change.execImmediateOrErr(es, delta);
+                },
+                .ext => |ext| try extImmediateOrErr(es, ext),
             }
+        }
+    }
 
-            _ = try batch.execImmediateOrErr(es, arch_change);
-
-            {
-                var iter = batch.iterator();
-                while (iter.next()) |cmd| {
-                    try node_exec.afterCmdImmediate(es, batch, cmd);
+    pub fn extImmediateOrErr(
+        es: *Entities,
+        payload: Any,
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!void {
+        if (payload.as(SetParent)) |set_parent| {
+            const child = set_parent.child;
+            if (set_parent.parent.unwrap()) |parent| {
+                if (try child.getOrAddImmediateOrErr(es, Node, .{})) |child_node| {
+                    if (try parent.getOrAddImmediateOrErr(es, Node, .{})) |parent_node| {
+                        // If a parent that exists is assigned, set it as the parent
+                        try child_node.setParentImmediateOrErr(es, parent_node);
+                    } else {
+                        // Otherwise destroy the child
+                        child_node.destroyImmediate(es);
+                    }
+                }
+            } else {
+                // If our parent is being cleared and we have a node, clear it. If not leave
+                // it alone since it's implicitly clear.
+                if (child.get(es, Node)) |node| {
+                    try node.setParentImmediateOrErr(es, null);
                 }
             }
         }
     }
 
     /// Call this before executing a command.
-    pub inline fn beforeCmdImmediate(
-        self: *@This(),
+    pub inline fn beforeArchChangeImmediate(
         es: *Entities,
-        batch: CmdBuf.Batch,
-        arch_change: *CmdBuf.Batch.ArchChange,
-        cmd: CmdBuf.Batch.Item,
+        arch_change: CmdBuf.Batch.ArchChange,
+        op: CmdBuf.Batch.ArchChange.Op,
     ) void {
-        switch (cmd) {
-            .ext => |ext| if (ext.id == typeId(SetParent)) {
-                if (!arch_change.to.contains(.registerImmediate(typeId(Node)))) {
-                    arch_change.to.insert(typeId(Node).comp_flag.?);
-                    self.init_node = true;
-                }
-            },
-            .destroy => if (batch.entity.get(es, Node)) |node| {
+        switch (op) {
+            .destroy => if (arch_change.entity.get(es, Node)) |node| {
                 _ = node.destroyChildrenAndUnparentImmediate(es);
             },
             .remove => |id| if (id == typeId(Node)) {
-                if (batch.entity.get(es, Node)) |node| {
+                if (arch_change.entity.get(es, Node)) |node| {
                     _ = node.destroyChildrenAndUnparentImmediate(es);
                 }
             },
             .add => {},
-        }
-    }
-
-    /// Call this after executing a command.
-    pub inline fn afterCmdImmediate(
-        self: *@This(),
-        es: *Entities,
-        batch: CmdBuf.Batch,
-        cmd: CmdBuf.Batch.Item,
-    ) error{ ZcsCompOverflow, ZcsEntityOverflow }!void {
-        self.afterCmdImmediateOrErr(es, batch, cmd) catch |err|
-            @panic(@errorName(err));
-    }
-
-    /// Similar to `afterCmdImmediate`, but returns an error on failure instead of panicking.
-    pub inline fn afterCmdImmediateOrErr(
-        self: *@This(),
-        es: *Entities,
-        batch: CmdBuf.Batch,
-        cmd: CmdBuf.Batch.Item,
-    ) error{ ZcsCompOverflow, ZcsEntityOverflow, ZcsArchOverflow, ZcsChunkOverflow }!void {
-        switch (cmd) {
-            .ext => |ev| if (ev.as(SetParent)) |set_parent| {
-                if (self.init_node) {
-                    if (batch.entity.get(es, Node)) |node| {
-                        node.* = .{};
-                    }
-                    self.init_node = false;
-                }
-                if (set_parent[0].unwrap()) |parent| {
-                    if (batch.entity.get(es, Node)) |node| {
-                        // We have a node, set the parent
-                        if (try parent.viewOrAddImmediateOrErr(
-                            es,
-                            struct { node: *Node },
-                            .{ .node = &Node{} },
-                        )) |parent_view| {
-                            try node.setParentImmediateOrErr(es, parent_view.node);
-                        } else {
-                            node.destroyImmediate(es);
-                        }
-                    } else if (!parent.exists(es)) {
-                        // If we were set a parent that doesn't exist, we need to be destroyed even
-                        // if we had our node subsequently removed.
-                        _ = batch.entity.destroyImmediate(es);
-                    }
-                } else if (batch.entity.get(es, Node)) |node| {
-                    // If we have a node and are being asked to clear the parent, clear it. If we
-                    // have no node it's implicitly clear anyway.
-                    try node.setParentImmediateOrErr(es, null);
-                }
-            },
-            .destroy, .add, .remove => {},
         }
     }
 };

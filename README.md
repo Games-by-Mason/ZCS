@@ -69,9 +69,11 @@ e.add(&cb, RigidBody, .{ .mass = 20 });
 e.add(&cb, Sprite, .{ .index = .cat });
 
 // Execute the command buffer, and then clear it for reuse. This would be done from the main thread.
-cb.execute(&es);
+cb.execImmediate(&es);
 cb.clear(&es);
 ```
+
+`execImmediate` only exercises ZCS's public interface. You can implement extensions to the command buffer by iterating it and executing it yourself.
 
 ## Command Buffer Iteration
 
@@ -117,7 +119,7 @@ Two extensions are supplied. These only rely on the public interface of ZCS an c
 
 `Node` allows for linking objects to other objects in parent child relationships:
 ```zig
-thruster.cmd(cb, Node.SetParent, .{ship.toOptional()});
+cb.ext(Node.SetParent, .{ .child = thruster, .parent = ship.toOptional() });
 
 // ...
 
