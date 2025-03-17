@@ -1,7 +1,7 @@
 //! Storage for entities.
 //!
 //! See `SlotMap` for how handle safety works. Note that you may want to check
-//! `saturated_generations` every now and then and warn if it's nonzero.
+//! `saturated` every now and then and warn if it's nonzero.
 //!
 //! See `README.md` for more information.
 
@@ -14,9 +14,12 @@ const zcs = @import("root.zig");
 const typeId = zcs.typeId;
 const Any = zcs.Any;
 const CompFlag = zcs.CompFlag;
-const slot_map = @import("slot_map");
-const SlotMap = slot_map.SlotMap;
 const Entity = zcs.Entity;
+const ChunkList = zcs.storage.ChunkList;
+const ChunkPool = zcs.storage.ChunkPool;
+const Chunk = zcs.storage.Chunk;
+const HandleTab = zcs.storage.HandleTab;
+const ChunkLists = zcs.storage.ChunkLists;
 const view = zcs.view;
 
 const Entities = @This();
@@ -25,17 +28,13 @@ const IteratorGeneration = if (std.debug.runtime_safety) u64 else u0;
 
 const max_align = zcs.TypeInfo.max_align;
 
-/// For internal use. A slot in the slot map.
-pub const Slot = struct {
-    arch: CompFlag.Set,
-    committed: bool,
-};
-
-slots: SlotMap(Slot, .{}),
+handle_tab: HandleTab,
 comps: *[CompFlag.max][]align(max_align) u8,
-live: std.DynamicBitSetUnmanaged,
+max_archetypes: u16,
+chunk_lists: ChunkLists,
 iterator_generation: IteratorGeneration = 0,
 reserved_entities: usize = 0,
+chunk_pool: ChunkPool,
 
 /// The capacity for `Entities`.
 pub const Capacity = struct {
@@ -43,12 +42,16 @@ pub const Capacity = struct {
     max_entities: u32,
     /// The number of bytes per component type array.
     comp_bytes: usize,
+    /// The max number of archetypes.
+    max_archetypes: u16,
+    /// The number of chunks to allocate.
+    max_chunks: u32,
 };
 
 /// Initializes the entity storage with the given capacity.
 pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
-    var slots = try SlotMap(Slot, .{}).init(gpa, capacity.max_entities);
-    errdefer slots.deinit(gpa);
+    var handle_tab: HandleTab = try .init(gpa, capacity.max_entities);
+    errdefer handle_tab.deinit(gpa);
 
     const comps = try gpa.create([CompFlag.max][]align(max_align) u8);
     errdefer gpa.destroy(comps);
@@ -60,49 +63,58 @@ pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
         comps_init += 1;
     }
 
-    const live = try std.DynamicBitSetUnmanaged.initEmpty(gpa, capacity.max_entities);
-    errdefer live.deinit(gpa);
+    var chunk_pool: ChunkPool = try .init(gpa, capacity.max_chunks);
+    errdefer chunk_pool.deinit(gpa);
+
+    var chunk_lists: ChunkLists = try .init(gpa, capacity.max_archetypes);
+    errdefer chunk_lists.deinit(gpa);
 
     return .{
-        .slots = slots,
+        .handle_tab = handle_tab,
+        .max_archetypes = capacity.max_archetypes,
+        .chunk_lists = chunk_lists,
         .comps = comps,
-        .live = live,
+        .chunk_pool = chunk_pool,
     };
 }
 
 /// Destroys the entity storage.
 pub fn deinit(self: *@This(), gpa: Allocator) void {
-    self.live.deinit(gpa);
+    self.chunk_lists.deinit(gpa);
+    self.chunk_pool.deinit(gpa);
     for (self.comps) |comp| {
         gpa.free(comp);
     }
     gpa.destroy(self.comps);
-    self.slots.deinit(gpa);
+    self.handle_tab.deinit(gpa);
     self.* = undefined;
 }
 
 /// Recycles all entities with the given archetype.
 pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
-    for (0..self.slots.next_index) |index| {
-        if (self.live.isSet(index) and self.slots.values[index].arch.eql(arch)) {
-            const entity: Entity = .{ .key = .{
-                .index = @intCast(index),
-                .generation = self.slots.generations[index],
-            } };
-            assert(entity.recycleImmediate(self));
+    var chunk_lists_iter = self.chunk_lists.iterator(arch);
+    while (chunk_lists_iter.next()) |chunk_list| {
+        var chunk_list_iter = chunk_list.iterator();
+        while (chunk_list_iter.next()) |chunk| {
+            var chunk_iter = chunk.iterator();
+            while (chunk_iter.next(&self.handle_tab)) |entity| {
+                self.handle_tab.recycle(entity.key);
+            }
+            // We have a mutable reference to entities, so it's fine to cast the const away here
+            @constCast(chunk).header().indices.clear();
         }
     }
 }
 
 /// Recycles all entities.
 pub fn recycleImmediate(self: *@This()) void {
-    self.slots.recycleAll();
+    self.handle_tab.recycleAll();
     self.reserved_entities = 0;
 }
 
 /// Returns the current number of entities.
 pub fn count(self: @This()) usize {
-    return self.slots.count() - self.reserved_entities;
+    return self.handle_tab.count() - self.reserved_entities;
 }
 
 /// Returns the number of reserved but not committed entities that currently exist.
@@ -116,19 +128,30 @@ pub fn iterator(
     self: *const @This(),
     required_comps: CompFlag.Set,
 ) Iterator {
+    var arch_iter = self.chunk_lists.iterator(required_comps);
+    var chunk_list_iter: ChunkList.Iterator = if (arch_iter.next()) |chunk_list|
+        chunk_list.iterator()
+    else
+        .empty;
+    const chunk_iter: Chunk.Iterator = if (chunk_list_iter.next()) |chunk|
+        chunk.iterator()
+    else
+        .empty;
     return .{
         .es = self,
-        .required_comps = required_comps,
-        .index = 0,
         .generation = self.iterator_generation,
+        .arch_iter = arch_iter,
+        .chunk_list_iter = chunk_list_iter,
+        .chunk_iter = chunk_iter,
     };
 }
 
 /// See `iterator`.
 pub const Iterator = struct {
     es: *const Entities,
-    required_comps: CompFlag.Set,
-    index: u32,
+    arch_iter: ChunkLists.Iterator,
+    chunk_list_iter: ChunkList.Iterator,
+    chunk_iter: Chunk.Iterator,
     generation: IteratorGeneration,
 
     /// Advances the iterator, returning the next entity.
@@ -136,23 +159,28 @@ pub const Iterator = struct {
         if (self.generation != self.es.iterator_generation) {
             @panic("called next after iterator was invalidated");
         }
-        // Keep in mind that in view iterator, we're using max index to indicate that the iterator
-        // is invalid.
-        while (self.index < self.es.slots.next_index) {
-            const index = self.index;
-            self.index += 1;
-            if (self.es.live.isSet(index)) {
-                const slot = self.es.slots.values[index];
-                if (slot.committed and self.required_comps.subsetOf(slot.arch)) {
-                    return .{ .key = .{
-                        .index = index,
-                        .generation = self.es.slots.generations[index],
-                    } };
-                }
-            }
-        }
 
-        return null;
+        while (true) {
+            // Get the next entity in this chunk
+            if (self.chunk_iter.next(&self.es.handle_tab)) |entity| {
+                return entity;
+            }
+
+            // If that fails, get the next chunk in this chunk list
+            if (self.chunk_list_iter.next()) |chunk| {
+                self.chunk_iter = chunk.iterator();
+                continue;
+            }
+
+            // If that fails, get the next chunk list in this archetype
+            if (self.arch_iter.next()) |chunk_list| {
+                self.chunk_list_iter = chunk_list.iterator();
+                continue;
+            }
+
+            // If that fails, return null;
+            return null;
+        }
     }
 };
 
@@ -160,27 +188,37 @@ pub const Iterator = struct {
 pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
     var base: view.Comps(View) = undefined;
     var required_comps: CompFlag.Set = .{};
-    const valid = inline for (@typeInfo(view.Comps(View)).@"struct".fields) |field| {
+    inline for (@typeInfo(view.Comps(View)).@"struct".fields) |field| {
         const T = view.UnwrapField(field.type);
         if (@typeInfo(field.type) != .optional) {
             if (typeId(T).comp_flag) |flag| {
                 required_comps.insert(flag);
-            } else break false;
+            } else {
+                return .empty(self);
+            }
         }
 
         if (typeId(T).comp_flag) |flag| {
-            // Don't need `.ptr` once this is merged: https://github.com/ziglang/zig/pull/22706
-            @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(flag)].ptr);
+            @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(flag)]);
         }
-    } else true;
+    }
 
+    var arch_iter = self.chunk_lists.iterator(required_comps);
+    var chunk_list_iter: ChunkList.Iterator = if (arch_iter.next()) |chunk_list|
+        chunk_list.iterator()
+    else
+        .empty;
+    const chunk_iter: Chunk.Iterator = if (chunk_list_iter.next()) |chunk|
+        chunk.iterator()
+    else
+        .empty;
     return .{
-        .es = self,
-        .entity_iterator = .{
+        .entity_iter = .{
             .es = self,
-            .required_comps = required_comps,
-            .index = if (valid) 0 else std.math.maxInt(@FieldType(Iterator, "index")),
             .generation = self.iterator_generation,
+            .arch_iter = arch_iter,
+            .chunk_list_iter = chunk_list_iter,
+            .chunk_iter = chunk_iter,
         },
         .base = base,
     };
@@ -189,13 +227,25 @@ pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
 /// See `Entities.viewIterator`.
 pub fn ViewIterator(View: type) type {
     return struct {
-        es: *const Entities,
-        entity_iterator: Iterator,
+        entity_iter: Iterator,
         base: view.Comps(View),
+
+        pub fn empty(es: *const Entities) @This() {
+            return .{
+                .entity_iter = .{
+                    .es = es,
+                    .arch_iter = .empty,
+                    .chunk_list_iter = .empty,
+                    .chunk_iter = .empty,
+                    .generation = es.iterator_generation,
+                },
+                .base = undefined,
+            };
+        }
 
         /// Advances the iterator, returning the next view.
         pub fn next(self: *@This()) ?View {
-            while (self.entity_iterator.next()) |entity| {
+            while (self.entity_iter.next()) |entity| {
                 var result: View = undefined;
                 inline for (@typeInfo(View).@"struct".fields) |field| {
                     if (field.type == Entity) {
@@ -204,9 +254,9 @@ pub fn ViewIterator(View: type) type {
                         // Get the component type
                         const T = view.UnwrapField(field.type);
 
-                        // Get the slot
-                        const slot = self.es.slots.values[entity.key.index];
-                        assert(slot.committed);
+                        // Get the handle value
+                        const entity_loc = self.entity_iter.es.handle_tab.values[entity.key.index];
+                        assert(entity_loc.chunk != null);
 
                         // Check if we have the component or not
                         const has_comp = if (@typeInfo(field.type) == .optional) b: {
@@ -214,7 +264,7 @@ pub fn ViewIterator(View: type) type {
                             const flag = typeId(T).comp_flag orelse break :b false;
 
                             // If it has a flag, check if we have it
-                            break :b slot.arch.contains(flag);
+                            break :b entity_loc.chunk.?.constHeader().arch.contains(flag);
                         } else b: {
                             // If the component isn't optional, we can assume we have it
                             break :b true;
@@ -224,7 +274,10 @@ pub fn ViewIterator(View: type) type {
                         if (has_comp) {
                             // We have the component, pass it to the caller
                             const comp: *T = if (@sizeOf(T) == 0) b: {
-                                // See `Entity.fromComp`.
+                                // See `Entity.fromAny`.
+                                const Key = @FieldType(Entity, "key");
+                                const Generation = @FieldType(Key, "generation");
+                                comptime assert(@intFromEnum(Generation.invalid) == 0);
                                 break :b @ptrFromInt(@as(u64, @bitCast(entity)));
                             } else b: {
                                 const base = @intFromPtr(@field(self.base, field.name));

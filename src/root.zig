@@ -14,6 +14,7 @@ pub const CompFlag = @import("comp_flag.zig").CompFlag;
 pub const CmdBuf = @import("CmdBuf.zig");
 pub const TypeInfo = @import("type_id.zig").TypeInfo;
 pub const TypeId = @import("type_id.zig").TypeId;
+pub const storage = @import("storage.zig");
 pub const view = @import("view.zig");
 pub const ext = @import("ext.zig");
 

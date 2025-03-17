@@ -19,6 +19,7 @@ const typeId = zcs.typeId;
 const Entity = zcs.Entity;
 const Entities = zcs.Entities;
 const CmdBuf = zcs.CmdBuf;
+const Any = zcs.Any;
 const Node = zcs.ext.Node;
 const Vec2 = zcs.ext.geom.Vec2;
 const Rotor2 = zcs.ext.geom.Rotor2;
@@ -338,15 +339,53 @@ pub fn syncImmediate(self: *@This(), parent_world_from_model: Mat2x3) void {
 /// By convention, `Exec` only calls into the stable public interface of the types it's working
 /// with. As such, documentation is sparse. You are welcome to call these methods directly, or
 /// use them as reference for implementing your own command buffer iterator.
-pub const Exec = struct {
+pub const exec = struct {
+    /// Similar to `Node.exec.immediate`, but marks transforms as dirty as needed.
+    pub fn immediate(es: *Entities, cb: CmdBuf) void {
+        immediateOrErr(es, cb) catch |err|
+            @panic(@errorName(err));
+    }
+
+    /// Similar to `immediate`, but returns an error on failure instead of panicking. On error the
+    /// commands are left partially evaluated.
+    pub fn immediateOrErr(
+        es: *Entities,
+        cb: CmdBuf,
+    ) error{ ZcsCompOverflow, ZcsEntityOverflow, ZcsArchOverflow, ZcsChunkOverflow }!void {
+        var batches = cb.iterator();
+        while (batches.next()) |batch| {
+            switch (batch) {
+                .arch_change => |arch_change| {
+                    {
+                        var delta: CmdBuf.Batch.ArchChange.Delta = .{};
+                        var ops = arch_change.iterator();
+                        while (ops.next()) |op| {
+                            Node.exec.beforeArchChangeImmediate(es, arch_change, op);
+                            delta.updateImmediate(op);
+                        }
+
+                        _ = arch_change.execImmediate(es, delta);
+                    }
+
+                    {
+                        var ops = arch_change.iterator();
+                        while (ops.next()) |op| {
+                            afterArchChangeImmediate(es, arch_change, op);
+                        }
+                    }
+                },
+                .ext => |ext| try extImmediateOrErr(es, ext),
+            }
+        }
+    }
+
     /// Call this after executing a command.
-    pub fn afterCmdImmediate(es: *Entities, batch: CmdBuf.Batch, cmd: CmdBuf.Batch.Item) void {
-        switch (cmd) {
-            .ext => |ext| if (ext.id == typeId(Node.SetParent)) {
-                if (batch.entity.get(es, Transform2D)) |transform| {
-                    transform.markDirtyImmediate(es);
-                }
-            },
+    pub fn afterArchChangeImmediate(
+        es: *Entities,
+        batch: CmdBuf.Batch.ArchChange,
+        op: CmdBuf.Batch.ArchChange.Op,
+    ) void {
+        switch (op) {
             .add => |comp| if (comp.id == typeId(Transform2D)) {
                 if (batch.entity.get(es, Transform2D)) |transform| {
                     transform.cache = .clean;
@@ -370,6 +409,18 @@ pub const Exec = struct {
                 }
             },
             else => {},
+        }
+    }
+
+    pub fn extImmediateOrErr(
+        es: *Entities,
+        payload: Any,
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!void {
+        try Node.exec.extImmediateOrErr(es, payload);
+        if (payload.as(Node.SetParent)) |set_parent| {
+            if (set_parent.child.get(es, Transform2D)) |transform| {
+                transform.markDirtyImmediate(es);
+            }
         }
     }
 };

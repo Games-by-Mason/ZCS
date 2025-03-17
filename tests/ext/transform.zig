@@ -30,6 +30,33 @@ const cmds_capacity = 100;
 const max_entities = 100000;
 const comp_bytes = 1000000;
 
+// Smoke test to verify that the transform exec does actually call the node exec
+test "exec" {
+    defer CompFlag.unregisterAll();
+
+    var es = try Entities.init(gpa, .{
+        .max_entities = 128,
+        .comp_bytes = 256,
+        .max_archetypes = 8,
+        .max_chunks = 8,
+    });
+    defer es.deinit(gpa);
+
+    var cb: CmdBuf = try .init(gpa, &es, .{
+        .cmds = 2,
+        .avg_cmd_bytes = @sizeOf(SetParent),
+    });
+    defer cb.deinit(gpa, &es);
+
+    const child: Entity = .reserve(&cb);
+    const parent: Entity = .reserve(&cb);
+    cb.ext(SetParent, .{ .child = child, .parent = parent.toOptional() });
+    Transform.exec.immediate(&es, cb);
+
+    const child_node = child.get(&es, Node).?;
+    try expectEqual(child_node.parent, parent.toOptional());
+}
+
 test "fuzz cb single thread" {
     try std.testing.fuzz(SyncMode.single_threaded, fuzzTransformsCmdBuf, .{ .corpus = &.{} });
 }
@@ -87,6 +114,8 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
     var es: Entities = try .init(gpa, .{
         .max_entities = max_entities,
         .comp_bytes = comp_bytes,
+        .max_archetypes = 8,
+        .max_chunks = 1024,
     });
     defer es.deinit(gpa);
 
@@ -136,7 +165,7 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
                     if (smith.next(u8) > 40) {
                         const parent: Entity.Optional = all.items[smith.nextLessThan(usize, all.items.len)].toOptional();
                         if (log) std.debug.print("  {}.parent = {}\n", .{ child, parent });
-                        child.cmd(&cb, SetParent, .{parent});
+                        cb.ext(SetParent, .{ .child = child, .parent = parent });
                     }
                 }
                 mode = .{ .mutate = .{ .steps = 5 } };
@@ -162,7 +191,7 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
                                 if (smith.next(u8) > 40) {
                                     const parent: Entity.Optional = all.items[smith.nextLessThan(usize, all.items.len)].toOptional();
                                     if (log) std.debug.print("  {}.parent = {}\n", .{ child, parent });
-                                    child.cmd(&cb, SetParent, .{parent});
+                                    cb.ext(SetParent, .{ .child = child, .parent = parent });
                                 }
                             }
                         },
@@ -172,7 +201,7 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
                             } else .none;
                             const child = all.items[smith.nextLessThan(usize, all.items.len)];
                             if (log) std.debug.print("  {}.parent = {}\n", .{ child, parent });
-                            child.cmd(&cb, SetParent, .{parent});
+                            cb.ext(SetParent, .{ .child = child, .parent = parent });
                         },
                         .remove => {
                             // Sometimes destroy entities, but not too often
@@ -222,7 +251,8 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
             },
         }
 
-        exec(&es, &cb);
+        Transform.exec.immediate(&es, cb);
+        cb.clear(&es);
         switch (sync_mode) {
             // Test the single threaded sync
             .single_threaded => Transform.syncAllImmediate(&es),
@@ -272,34 +302,6 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
         }
         try checkOracle(&es);
     }
-}
-
-pub fn exec(es: *Entities, cb: *CmdBuf) void {
-    var batches = cb.iterator();
-    while (batches.next()) |batch| {
-        var node_exec: Node.Exec = .{};
-
-        var arch_change = batch.getArchChangeImmediate(es);
-        {
-            var iter = batch.iterator();
-            while (iter.next()) |cmd| {
-                node_exec.beforeCmdImmediate(es, batch, &arch_change, cmd);
-            }
-        }
-
-        _ = batch.execImmediate(es, arch_change);
-
-        {
-            var iter = batch.iterator();
-            while (iter.next()) |cmd| {
-                node_exec.afterCmdImmediate(es, batch, arch_change, cmd) catch |err|
-                    @panic(@errorName(err));
-                Transform.Exec.afterCmdImmediate(es, batch, cmd);
-            }
-        }
-    }
-
-    cb.clear(es);
 }
 
 fn checkOracle(es: *const Entities) !void {
