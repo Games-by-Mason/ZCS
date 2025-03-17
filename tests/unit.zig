@@ -940,14 +940,14 @@ test "chunk overflow" {
     try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u1, &0),
     } }));
-    try expectEqual(1, es.chunk_pool.all.items.len);
+    try expectEqual(1, es.chunk_pool.free.capacity - es.chunk_pool.free.items.len);
 
     // Try to create a new archetype, and fail due to chunk overflow
     for (0..2) |_| {
         try expectError(error.ZcsChunkOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
             .init(u2, &0),
         } }));
-        try expectEqual(1, es.chunk_pool.all.items.len);
+        try expectEqual(1, es.chunk_pool.free.capacity - es.chunk_pool.free.items.len);
         try expect(!e0.has(&es, u2));
         try expectEqual(1, es.chunk_lists.arches.count());
     }
@@ -959,7 +959,7 @@ test "chunk overflow" {
             .init(u1, &0),
         } }));
     }
-    try expectEqual(1, es.chunk_pool.all.items.len);
+    try expectEqual(1, es.chunk_pool.free.capacity - es.chunk_pool.free.items.len);
     try expectEqual(1024, es.count());
 
     // Go past the end of the chunk, causing it to overflow since we've used up all available chunks
