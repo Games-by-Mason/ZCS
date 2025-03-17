@@ -39,7 +39,7 @@ pub const EntityLoc = struct {
     /// been committed.
     pub fn getArch(self: @This()) CompFlag.Set {
         const chunk = self.chunk orelse return .{};
-        return chunk.arch;
+        return chunk.constHeader().arch;
     }
 };
 
@@ -48,29 +48,42 @@ const IndexInChunkTag = u16;
 pub const IndexInChunk = enum(IndexInChunkTag) { _ };
 
 /// For internal use. A chunk of entities that all have the same archetype.
-pub const Chunk = struct {
+pub const Chunk = opaque {
     const EntityKey = HandleTab.Key;
     const EntityIndex = @FieldType(EntityKey, "index");
     const EntityIndices = std.BoundedArray(EntityIndex, 1024);
 
-    arch: CompFlag.Set,
-    indices: EntityIndices,
-    next: ?*Chunk = null,
+    /// The header information for a chunk.
+    pub const Header = struct {
+        arch: CompFlag.Set,
+        indices: EntityIndices,
+        next: ?*Chunk = null,
+    };
+
+    /// Returns a pointer to the chunk header.
+    pub inline fn header(self: *Chunk) *Header {
+        return @alignCast(@ptrCast(self));
+    }
+
+    /// Returns a const pointer to the chunk header.
+    pub inline fn constHeader(self: *const Chunk) *const Header {
+        return @alignCast(@ptrCast(self));
+    }
 
     /// For internal use. Swap removes an entity from the chunk, updating the location of the moved
     /// entity.
     pub fn swapRemove(self: *@This(), ht: *HandleTab, index_in_chunk: IndexInChunk) void {
         // Pop the last entity
-        const moved = self.indices.pop().?;
+        const moved = self.header().indices.pop().?;
 
         // If we're removing the last entity, we're done!
-        if (@intFromEnum(index_in_chunk) == self.indices.len) return;
+        if (@intFromEnum(index_in_chunk) == self.constHeader().indices.len) return;
 
         // Otherwise, overwrite the removed entity the popped entity, and then update the location
         // of the moved entity in the handle table
-        self.indices.set(@intFromEnum(index_in_chunk), moved);
+        self.header().indices.set(@intFromEnum(index_in_chunk), moved);
         const moved_loc = &ht.values[moved];
-        assert(moved_loc.chunk == self);
+        assert(moved_loc.chunk.? == self);
         moved_loc.index_in_chunk = index_in_chunk;
     }
 
@@ -85,10 +98,10 @@ pub const Chunk = struct {
     /// An iterator over a chunk's entities.
     pub const Iterator = struct {
         pub const empty: @This() = .{
-            .chunk = &.{
+            .chunk = @ptrCast(&Header{
                 .arch = .{},
                 .indices = .{},
-            },
+            }),
             .index = 0,
         };
 
@@ -98,8 +111,8 @@ pub const Chunk = struct {
         pub fn next(self: *@This(), handle_tab: *const HandleTab) ?Entity {
             comptime assert(std.math.maxInt(@TypeOf(self.index)) >=
                 @typeInfo(@FieldType(EntityIndices, "buffer")).array.len);
-            if (self.index >= self.chunk.indices.len) return null;
-            const entity_index = self.chunk.indices.get(self.index);
+            if (self.index >= self.chunk.constHeader().indices.len) return null;
+            const entity_index = self.chunk.constHeader().indices.get(self.index);
             self.index += 1;
             return .{ .key = .{
                 .index = entity_index,
@@ -122,15 +135,15 @@ pub const ChunkList = struct {
     ) error{ZcsChunkOverflow}!EntityLoc {
         var curr = self.head;
         while (true) {
-            const index_in_chunk = curr.indices.len;
-            if (index_in_chunk < @typeInfo(@TypeOf(curr.indices.buffer)).array.len) {
+            const index_in_chunk = curr.constHeader().indices.len;
+            if (index_in_chunk < @typeInfo(@TypeOf(curr.constHeader().indices.buffer)).array.len) {
                 // Add the entity to the chunk
-                curr.indices.appendAssumeCapacity(e.key.index);
+                curr.header().indices.appendAssumeCapacity(e.key.index);
 
                 // Comptime assert that casting the index to the enum index is safe. We make sure
                 // there's one extra index so that in safe builds the fact that we use max int as an
                 // invalid index is fine.
-                const Indices = @FieldType(Chunk, "indices");
+                const Indices = @FieldType(Chunk.Header, "indices");
                 const IndicesBuf = @FieldType(Indices, "buffer");
                 const chunk_cap = @typeInfo(IndicesBuf).array.len;
                 const TagType = @typeInfo(IndexInChunk).@"enum".tag_type;
@@ -143,9 +156,9 @@ pub const ChunkList = struct {
                 };
             }
 
-            curr = if (curr.next) |next| next else b: {
+            curr = if (curr.constHeader().next) |next| next else b: {
                 const next = try p.reserve(arch);
-                curr.next = next;
+                curr.header().next = next;
                 break :b next;
             };
         }
@@ -166,7 +179,7 @@ pub const ChunkList = struct {
 
         pub fn next(self: *@This()) ?*const Chunk {
             const chunk = self.chunk orelse return null;
-            self.chunk = chunk.next;
+            self.chunk = chunk.constHeader().next;
             return chunk;
         }
     };
@@ -174,7 +187,7 @@ pub const ChunkList = struct {
 
 /// For internal use. A pool of `Chunk`s.
 pub const ChunkPool = struct {
-    all: std.ArrayListUnmanaged(Chunk),
+    all: std.ArrayListUnmanaged(Chunk.Header),
 
     /// For internal use. Allocates the chunk pool.
     pub fn init(gpa: Allocator, capacity: usize) Allocator.Error!ChunkPool {
@@ -199,7 +212,7 @@ pub const ChunkPool = struct {
             .arch = arch,
             .indices = .{},
         };
-        return chunk;
+        return @ptrCast(chunk);
     }
 };
 
