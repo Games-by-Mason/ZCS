@@ -257,26 +257,18 @@ pub const ChunkLists = struct {
         return gop.value_ptr;
     }
 
-    /// Returns an iterator over the archetype to chunk list arches.
-    pub fn iterator(self: @This()) Iterator {
-        return self.arches.iterator();
-    }
-
-    /// An iterator over the archetype to chunk list map.
-    pub const Iterator = @FieldType(@This(), "arches").Iterator;
-
     /// Returns an iterator over the chunk lists that have the given components.
-    pub fn archIterator(self: @This(), required_comps: CompFlag.Set) ArchIterator {
+    pub fn iterator(self: @This(), required_comps: CompFlag.Set) Iterator {
         return .{
             .required_comps = required_comps,
-            .all = self.iterator(),
+            .all = self.arches.iterator(),
         };
     }
 
     /// An iterator over chunk lists that have the given components.
-    pub const ArchIterator = struct {
+    pub const Iterator = struct {
         required_comps: CompFlag.Set,
-        all: Iterator,
+        all: @FieldType(ChunkLists, "arches").Iterator,
 
         pub const empty: @This() = .{
             .required_comps = .{},

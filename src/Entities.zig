@@ -92,7 +92,7 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
 
 /// Recycles all entities with the given archetype.
 pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
-    var chunk_lists_iter = self.chunk_lists.archIterator(arch);
+    var chunk_lists_iter = self.chunk_lists.iterator(arch);
     while (chunk_lists_iter.next()) |chunk_list| {
         var chunk_list_iter = chunk_list.iterator();
         while (chunk_list_iter.next()) |chunk| {
@@ -128,7 +128,7 @@ pub fn iterator(
     self: *const @This(),
     required_comps: CompFlag.Set,
 ) Iterator {
-    var arch_iter = self.chunk_lists.archIterator(required_comps);
+    var arch_iter = self.chunk_lists.iterator(required_comps);
     var chunk_list_iter: ChunkList.Iterator = if (arch_iter.next()) |chunk_list|
         chunk_list.iterator()
     else
@@ -149,7 +149,7 @@ pub fn iterator(
 /// See `iterator`.
 pub const Iterator = struct {
     es: *const Entities,
-    arch_iter: ChunkLists.ArchIterator,
+    arch_iter: ChunkLists.Iterator,
     chunk_list_iter: ChunkList.Iterator,
     chunk_iter: Chunk.Iterator,
     generation: IteratorGeneration,
@@ -203,7 +203,7 @@ pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
         }
     }
 
-    var arch_iter = self.chunk_lists.archIterator(required_comps);
+    var arch_iter = self.chunk_lists.iterator(required_comps);
     var chunk_list_iter: ChunkList.Iterator = if (arch_iter.next()) |chunk_list|
         chunk_list.iterator()
     else
