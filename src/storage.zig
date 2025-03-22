@@ -60,19 +60,6 @@ pub const Chunk = opaque {
         next: ?*Chunk = null,
     };
 
-    /// For internal use. Allocates a new chunk, its data is left undefined. Should only be called
-    /// at startup.
-    pub fn alloc(gpa: Allocator) Allocator.Error!*Chunk {
-        return @ptrCast(try gpa.create(Chunk.Header));
-    }
-
-    /// For internal use. Frees the chunk. Should only be called at shutdown, ideally only in debug
-    /// mode.
-    pub fn deinit(self: *@This(), gpa: Allocator) void {
-        self.header().* = undefined;
-        gpa.destroy(self.header());
-    }
-
     /// For internal use. Returns a pointer to the chunk header.
     pub inline fn header(self: *Chunk) *Header {
         return @alignCast(@ptrCast(self));
@@ -200,42 +187,35 @@ pub const ChunkList = struct {
 
 /// For internal use. A pool of `Chunk`s.
 pub const ChunkPool = struct {
-    free: std.ArrayListUnmanaged(*Chunk),
+    buf: []Chunk.Header,
+    allocated: u32,
 
     /// For internal use. Allocates the chunk pool.
-    pub fn init(gpa: Allocator, capacity: usize) Allocator.Error!ChunkPool {
-        var free: @FieldType(@This(), "free") = try .initCapacity(gpa, capacity);
-        errdefer {
-            for (free.items) |chunk| {
-                chunk.deinit(gpa);
-            }
-            free.deinit(gpa);
-        }
-        for (0..capacity) |_| {
-            free.appendAssumeCapacity(try Chunk.alloc(gpa));
-        }
+    pub fn init(gpa: Allocator, capacity: u32) Allocator.Error!ChunkPool {
+        const buf = try gpa.alloc(Chunk.Header, capacity);
+        errdefer comptime unreachable;
         return .{
-            .free = free,
+            .buf = buf,
+            .allocated = 0,
         };
     }
 
     /// For internal use. Frees the chunk pool.
     pub fn deinit(self: *ChunkPool, gpa: Allocator) void {
-        for (self.free.items.ptr[0..self.free.capacity]) |chunk| {
-            chunk.deinit(gpa);
-        }
-        self.free.deinit(gpa);
+        gpa.free(self.buf);
         self.* = undefined;
     }
 
     /// For internal use. Reserves a chunk from the chunk pool
     pub fn reserve(self: *ChunkPool, arch: CompFlag.Set) error{ZcsChunkOverflow}!*Chunk {
-        const chunk = self.free.pop() orelse return error.ZcsChunkOverflow;
-        chunk.*.header().* = .{
+        if (self.allocated >= self.buf.len) return error.ZcsChunkOverflow;
+        const header: *Chunk.Header = &self.buf[self.allocated];
+        self.allocated = self.allocated + 1;
+        header.* = .{
             .arch = arch,
             .indices = .{},
         };
-        return chunk;
+        return @ptrCast(header);
     }
 };
 
