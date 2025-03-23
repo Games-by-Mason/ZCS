@@ -56,6 +56,7 @@ pub const Chunk = opaque {
     pub const Header = extern struct {
         arch_mask: u64,
         next: ?*Chunk = null,
+        next_free: ?*Chunk = null,
         len: u16,
         capacity: u16,
 
@@ -109,9 +110,18 @@ pub const Chunk = opaque {
 
     /// For internal use. Swap removes an entity from the chunk, updating the location of the moved
     /// entity.
-    pub fn swapRemove(self: *@This(), ht: *HandleTab, index_in_chunk: IndexInChunk) void {
-        // Pop the last entity
+    pub fn swapRemove(
+        self: *@This(),
+        ht: *HandleTab,
+        cls: *ChunkLists,
+        index_in_chunk: IndexInChunk,
+    ) void {
         const header = self.getHeader();
+
+        // Check if we had free space before the remove
+        const was_free = header.len < header.capacity;
+
+        // Pop the last entity
         const indices = self.getIndexBuf();
         header.len -= 1;
         const moved = indices[header.len];
@@ -125,6 +135,21 @@ pub const Chunk = opaque {
         const moved_loc = &ht.values[moved];
         assert(moved_loc.chunk.? == self);
         moved_loc.index_in_chunk = index_in_chunk;
+
+        // If we weren't free before this operation, add ourselves to the free list
+        if (!was_free) {
+            assert(header.next_free == null);
+            const cl: *ChunkList = cls.arches.getPtr(header.getArch()).?;
+            if (cl.free) |head| {
+                // Don't disturb the front of the free list if there is one, this decreases
+                // fragmentation by guaranteeing that we fill one chunk at a time.
+                self.getHeader().next_free = head.getHeaderConst().next_free;
+                head.getHeader().next_free = self;
+            } else {
+                // If the free list is empty, set it to this chunk
+                cl.free = self;
+            }
+        }
     }
 
     /// Returns an iterator over this chunk's entities.
@@ -165,7 +190,12 @@ pub const Chunk = opaque {
 
 /// A linked list of chunks.
 pub const ChunkList = struct {
+    /// The chunks in this chunk list, connected via the `next` fields.
     head: *Chunk,
+    /// The final chunk in this chunk list.
+    tail: *Chunk,
+    /// The chunks in this chunk list that have free space, connected via the `next_free` fields.
+    free: ?*Chunk,
 
     /// For internal use. Adds an entity to the chunk list.
     pub fn append(
@@ -174,27 +204,46 @@ pub const ChunkList = struct {
         e: Entity,
         arch: CompFlag.Set,
     ) error{ZcsChunkOverflow}!EntityLoc {
-        var curr = self.head;
-        while (true) {
-            const curr_header = curr.getHeader();
-            const curr_indices_buf = curr.getIndexBuf();
-            const index_in_chunk = curr_header.len;
-            if (index_in_chunk < curr_indices_buf.len) {
-                // Add the entity to the chunk
-                curr_indices_buf[curr_header.len] = e.key.index;
-                curr_header.len += 1;
+        // Ensure there's a chunk with free space
+        if (self.free == null) {
+            // Allocate a new chunk
+            const new = try p.reserve(arch);
 
-                // Return the location we stored the entity
-                return .{
-                    .chunk = curr,
-                    .index_in_chunk = @enumFromInt(index_in_chunk),
-                };
+            // Point the free list to the new chunk
+            self.free = new;
+
+            // Add the new chunk to the end of the chunk list. We add to the end instead of the
+            // beginning to preserve event order.
+            self.tail.getHeader().next = new;
+            self.tail = new;
+        }
+
+        // Get a chunk with free space
+        const chunk = self.free.?;
+
+        // Add the entity to the chunk with free space
+        {
+            // Get the header and index buf
+            const header = chunk.getHeader();
+            const index_buf = chunk.getIndexBuf();
+
+            // Append the entity
+            assert(header.len < header.capacity);
+            const index_in_chunk: IndexInChunk = @enumFromInt(header.len);
+            index_buf[@intFromEnum(index_in_chunk)] = e.key.index;
+            header.len += 1;
+
+            // If the chunk is now full, remove it from the free list
+            if (header.len >= header.capacity) {
+                assert(self.free == chunk);
+                self.free = self.free.?.getHeaderConst().next_free;
+                header.next_free = null;
             }
 
-            curr = if (curr_header.next) |next| next else b: {
-                const next = try p.reserve(arch);
-                curr_header.next = next;
-                break :b next;
+            // Return the location we stored the entity
+            return .{
+                .chunk = chunk,
+                .index_in_chunk = index_in_chunk,
             };
         }
     }
@@ -340,7 +389,13 @@ pub const ChunkLists = struct {
         };
         if (!gop.found_existing) {
             if (self.arches.count() >= self.capacity) return error.ZcsArchOverflow;
-            gop.value_ptr.* = .{ .head = try p.reserve(arch) };
+            const chunk = try p.reserve(arch);
+            errdefer comptime unreachable;
+            gop.value_ptr.* = .{
+                .head = chunk,
+                .tail = chunk,
+                .free = chunk,
+            };
         }
         return gop.value_ptr;
     }
