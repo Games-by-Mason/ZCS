@@ -54,12 +54,19 @@ pub const Chunk = opaque {
 
     /// For internal use. The header information for a chunk.
     pub const Header = extern struct {
+        /// See `getArch`.
         arch_mask: u64,
+        /// The next chunk.
         next: ?*Chunk = null,
+        /// The previous chunk.
         prev: ?*Chunk = null,
+        /// The next chunk with available space.
         next_available: ?*Chunk = null,
+        /// The previous chunk with available space.
         prev_available: ?*Chunk = null,
+        /// The number of entities in this chunk.
         len: u16,
+        /// The number of entities that can be stored in this chunk.
         capacity: u16,
 
         /// Returns this chunk's archetype.
@@ -89,10 +96,34 @@ pub const Chunk = opaque {
 
     /// For internal use. Clears the chunk's entity data.
     pub fn clear(self: *Chunk, es: *Entities) void {
+        // Get the header and chunk list
         const header = self.getHeader();
+        const cl: *ChunkList = es.chunk_lists.arches.getPtr(header.getArch()).?;
+
+        // Validate this chunk
+        if (header.len >= header.capacity) {
+            // Check that we're not over capacity
+            assert(header.len == header.capacity);
+
+            // Check that we're not in the available list
+            assert(self != cl.available);
+            assert(header.next_available == null);
+            assert(header.prev_available == null);
+        } else {
+            // Check that we're in the available list
+            assert(@intFromBool(header.prev_available != null) ^
+                @intFromBool(cl.available == self) != 0);
+
+            // Check that the available pointers are self consistent
+            if (header.prev_available) |prev_available| {
+                assert(prev_available.getHeaderConst().next == self);
+            }
+            if (header.next_available) |next_available| {
+                assert(next_available.getHeaderConst().prev == self);
+            }
+        }
 
         // Remove this chunk from the chunk list head/tail
-        const cl: *ChunkList = es.chunk_lists.arches.getPtr(header.getArch()).?;
         if (cl.head == self) cl.head = header.next;
         if (cl.tail == self) cl.tail = header.prev;
         if (cl.available == self) cl.available = header.next_available;
@@ -164,6 +195,9 @@ pub const Chunk = opaque {
                 // Don't disturb the front of the available list if there is one, this decreases
                 // fragmentation by guaranteeing that we fill one chunk at a time.
                 self.getHeader().next_available = head.getHeaderConst().next_available;
+                if (self.getHeader().next_available) |next_available| {
+                    next_available.getHeader().prev_available = self;
+                }
                 self.getHeader().prev_available = head;
                 head.getHeader().next_available = self;
             } else {
@@ -247,11 +281,12 @@ pub const ChunkList = struct {
 
         // Get a chunk with space available
         const chunk = self.available.?;
+        const header = chunk.getHeader();
+        assert(header.prev_available == null);
 
         // Add the entity to the chunk
         {
             // Get the header and index buf
-            const header = chunk.getHeader();
             const index_buf = chunk.getIndexBuf();
 
             // Append the entity
@@ -263,9 +298,14 @@ pub const ChunkList = struct {
             // If the chunk is now full, remove it from the available list
             if (header.len >= header.capacity) {
                 assert(self.available == chunk);
-                self.available = self.available.?.getHeaderConst().next_available;
+                self.available = chunk.getHeaderConst().next_available;
                 header.next_available = null;
-                header.prev_available = null;
+                assert(header.prev_available == null);
+                if (self.available) |available| {
+                    const available_header = available.getHeader();
+                    assert(available_header.prev_available == chunk);
+                    available_header.prev_available = null;
+                }
             }
 
             // Return the location we stored the entity
@@ -278,7 +318,16 @@ pub const ChunkList = struct {
 
     /// Returns an iterator over this chunk list's chunks.
     pub fn iterator(self: *const ChunkList) Iterator {
-        if (self.head) |head| assert(head.getHeaderConst().prev == null);
+        // Check head validity
+        if (self.head) |head| {
+            const header = head.getHeaderConst();
+            // Head shouldn't have a previous pointer
+            assert(header.prev == null);
+            // Head should have a next pointer, xor should be equal to tail
+            assert(@intFromBool(header.next != null) ^ @intFromBool(head == self.tail) != 0);
+        }
+
+        // Return the iterator
         return .{
             .chunk = self.head,
         };
@@ -293,8 +342,27 @@ pub const ChunkList = struct {
         pub fn next(self: *@This()) ?*const Chunk {
             const chunk = self.chunk orelse return null;
             const header = chunk.getHeaderConst();
-            assert(header.len > 0); // Empty chunks should be returned to the pool!
-            if (header.next) |n| assert(n.getHeaderConst().prev == chunk);
+
+            // Check chunk validity
+            {
+                // Next and prev should be consistent
+                if (header.next) |next_chunk| {
+                    assert(next_chunk.getHeaderConst().prev == chunk);
+                }
+
+                if (header.len >= header.capacity) {
+                    // Full chunks shouldn't be past capacity and shouldn't have available list
+                    // pointers.
+                    assert(header.len == header.capacity);
+                    assert(header.next_available == null);
+                    assert(header.prev_available == null);
+                } else {
+                    // Available chunks shouldn't be empty, since empty chunks are returned to the
+                    // chunk pool.
+                    assert(header.len > 0);
+                }
+            }
+
             self.chunk = header.next;
             return chunk;
         }
