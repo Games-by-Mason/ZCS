@@ -97,7 +97,7 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
     self.* = undefined;
 }
 
-/// Recycles all entities with the given archetype.
+/// Recycles all entities compatible with the given archetype.
 pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
     var chunk_lists_iter = self.chunk_lists.iterator(arch);
     while (chunk_lists_iter.next()) |chunk_list| {
@@ -108,7 +108,7 @@ pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
                 self.handle_tab.recycle(entity.key);
             }
             // We have a mutable reference to entities, so it's fine to cast the const away here
-            @constCast(chunk).clear();
+            @constCast(chunk).clear(self);
         }
     }
 }

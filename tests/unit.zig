@@ -935,7 +935,7 @@ test "chunk overflow" {
     var es: Entities = try .init(gpa, .{
         .max_entities = 4096,
         .comp_bytes = 4096,
-        .max_archetypes = 3,
+        .max_archetypes = 4,
         .max_chunks = 1,
         .chunk_size = 512,
     });
@@ -983,6 +983,66 @@ test "chunk overflow" {
     var iter = es.iterator(.{});
     while (iter.next()) |_| count += 1;
     try expectEqual(es.count(), count);
+
+    // Recycle all the entities we created
+    es.recycleArchImmediate(.initOne(.registerImmediate(typeId(u1))));
+    try expectEqual(0, es.count());
+
+    // Now that the chunk was returned the pool, we can create a different archetype
+    for (0..n + 1) |_| {
+        const e = Entity.reserveImmediate(&es);
+        _ = try e.changeArchImmediateOrErr(&es, .{ .add = &.{
+            .init(u2, &0),
+        } });
+        try expectEqual(1, es.chunk_pool.reserved);
+        try expect(!e.has(&es, u1));
+        try expect(e.has(&es, u2));
+        try expectEqual(2, es.chunk_lists.arches.count());
+    }
+
+    // Make sure we can't overfill it
+    {
+        const e = Entity.reserveImmediate(&es);
+        try expectError(error.ZcsChunkOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
+            .init(u2, &0),
+        } }));
+        try expectEqual(n + 1, es.count());
+    }
+
+    // Destroy all the entities we created
+    {
+        var cb: CmdBuf = try .init(gpa, &es, .{
+            .cmds = n + 1,
+            .avg_cmd_bytes = @sizeOf(Entity),
+        });
+        defer cb.deinit(gpa, &es);
+        var it = es.iterator(.{});
+        while (it.next()) |e| e.destroy(&cb);
+        cb.execImmediate(&es);
+        try expectEqual(0, es.count());
+    }
+
+    // Now that the chunk was returned the pool again, we can create a different archetype
+    for (0..n + 1) |_| {
+        const e = Entity.reserveImmediate(&es);
+        _ = try e.changeArchImmediateOrErr(&es, .{ .add = &.{
+            .init(u3, &0),
+        } });
+        try expectEqual(1, es.chunk_pool.reserved);
+        try expect(!e.has(&es, u1));
+        try expect(!e.has(&es, u2));
+        try expect(e.has(&es, u3));
+        try expectEqual(3, es.chunk_lists.arches.count());
+    }
+
+    // Make sure we can't overfill it
+    {
+        const e = Entity.reserveImmediate(&es);
+        try expectError(error.ZcsChunkOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
+            .init(u3, &0),
+        } }));
+        try expectEqual(n + 1, es.count());
+    }
 }
 
 // This is a regression test. We do something a little tricky with zero sized types--we "allocate"

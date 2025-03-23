@@ -88,9 +88,26 @@ pub const Chunk = opaque {
     }
 
     /// For internal use. Clears the chunk's entity data.
-    pub fn clear(self: *Chunk) void {
+    pub fn clear(self: *Chunk, es: *Entities) void {
         const header = self.getHeader();
-        header.len = 0;
+
+        // Remove this chunk from the chunk list head/tail
+        const cl: *ChunkList = es.chunk_lists.arches.getPtr(header.getArch()).?;
+        if (cl.head == self) cl.head = header.next;
+        if (cl.tail == self) cl.tail = header.prev;
+        if (cl.available == self) cl.available = header.next_available;
+        assert((cl.head != null) == (cl.tail != null));
+
+        // Remove this chunk from the chunk list normal and available linked lists
+        if (header.prev) |prev| prev.getHeader().next = header.next;
+        if (header.next) |next| next.getHeader().prev = header.prev;
+        if (header.prev_available) |prev| prev.getHeader().next_available = header.next_available;
+        if (header.next_available) |next| next.getHeader().prev_available = header.prev_available;
+
+        // Reset this chunk, and add it to the pool's free list
+        header.* = undefined;
+        header.next = es.chunk_pool.free;
+        es.chunk_pool.free = self;
     }
 
     /// For internal use. Gets the index buffer. This includes uninitialized indices.
@@ -126,25 +143,7 @@ pub const Chunk = opaque {
         // Early out if we're popping the end of the list
         if (@intFromEnum(index_in_chunk) == header.len) {
             // If the chunk is now empty, return it to the chunk pool
-            if (header.len == 0) {
-                // Remove this chunk from the chunk list head/tail
-                const cl: *ChunkList = es.chunk_lists.arches.getPtr(header.getArch()).?;
-                if (cl.head == self) cl.head = header.next;
-                if (cl.tail == self) cl.tail = header.prev;
-                if (cl.available == self) cl.available = header.next_available;
-
-                // Remove this chunk from the chunk list normal and available linked lists
-                if (header.prev) |prev| prev.getHeader().next = header.next;
-                if (header.next) |next| next.getHeader().prev = header.prev;
-                if (header.prev_available) |prev| prev.getHeader().next_available = header.next_available;
-                if (header.next_available) |next| next.getHeader().prev_available = header.prev_available;
-
-                // Reset this chunk, and add it to the pool's free list
-                header.* = undefined;
-                header.next = es.chunk_pool.free;
-                es.chunk_pool.free = self;
-            }
-
+            if (header.len == 0) self.clear(es);
             // Either way, early out
             return;
         }
@@ -311,7 +310,7 @@ pub const max_chunk_size: u16 = std.heap.page_size_max;
 pub const ChunkPool = struct {
     /// Memory reserved for chunks
     buf: []align(max_chunk_size) u8,
-    /// The number of chunks reserved
+    /// The number of unique chunks that have ever reserved
     reserved: u32,
     /// The size of a chunk
     chunk_size: u16,
@@ -365,15 +364,13 @@ pub const ChunkPool = struct {
             // Pop the next chunk from the preallocated buffer
             if (self.reserved >= self.buf.len / self.chunk_size) return error.ZcsChunkOverflow;
             const chunk: *Chunk = @ptrCast(&self.buf[self.reserved * self.chunk_size]);
+            self.reserved = self.reserved + 1;
             break :b chunk;
         };
         errdefer comptime unreachable; // Already modified the free list!
 
         // Check the alignment
         assert(@intFromPtr(chunk) % self.chunk_size == 0);
-
-        // Increment the number of reserved chunks
-        self.reserved = self.reserved + 1;
 
         // Initialize the chunk and return it
         const header = chunk.getHeader();
