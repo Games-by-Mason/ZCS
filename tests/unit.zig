@@ -935,7 +935,7 @@ test "chunk overflow" {
     var es: Entities = try .init(gpa, .{
         .max_entities = 4096,
         .comp_bytes = 4096,
-        .max_archetypes = 4,
+        .max_archetypes = 5,
         .max_chunks = 1,
         .chunk_size = 512,
     });
@@ -949,6 +949,7 @@ test "chunk overflow" {
         .init(u1, &0),
     } }));
     try expectEqual(1, es.chunk_pool.reserved);
+    try expectEqual(1, es.chunk_lists.arches.count());
 
     // Try to create a new archetype, and fail due to chunk overflow
     for (0..2) |_| {
@@ -957,7 +958,7 @@ test "chunk overflow" {
         } }));
         try expectEqual(1, es.chunk_pool.reserved);
         try expect(!e0.has(&es, u2));
-        try expectEqual(1, es.chunk_lists.arches.count());
+        try expectEqual(2, es.chunk_lists.arches.count());
     }
 
     // Create new entities in the chunk that was already allocated, this should be fine
@@ -970,6 +971,7 @@ test "chunk overflow" {
     }
     try expectEqual(1, es.chunk_pool.reserved);
     try expectEqual(n + 1, es.count());
+    try expectEqual(2, es.chunk_lists.arches.count());
 
     // Go past the end of the chunk, causing it to overflow since we've used up all available chunks
     {
@@ -997,7 +999,7 @@ test "chunk overflow" {
         try expectEqual(1, es.chunk_pool.reserved);
         try expect(!e.has(&es, u1));
         try expect(e.has(&es, u2));
-        try expectEqual(2, es.chunk_lists.arches.count());
+        try expectEqual(3, es.chunk_lists.arches.count());
     }
 
     // Make sure we can't overfill it
@@ -1032,7 +1034,7 @@ test "chunk overflow" {
         try expect(!e.has(&es, u1));
         try expect(!e.has(&es, u2));
         try expect(e.has(&es, u3));
-        try expectEqual(3, es.chunk_lists.arches.count());
+        try expectEqual(4, es.chunk_lists.arches.count());
     }
 
     // Make sure we can't overfill it

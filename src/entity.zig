@@ -393,6 +393,9 @@ pub const Entity = packed struct {
     /// Similar to `changeArchetypeOrErr`, but does not initialize the components. Furthermore, any
     /// added component's values are considered undefined after this call, even if they were
     /// previously initialized.
+    ///
+    /// May change internal allocator state even on failure, chunk lists are not destroyed even if
+    /// no chunks could be allocated for them at this time.
     pub fn changeArchUninitImmediateOrErr(
         self: @This(),
         es: *Entities,
@@ -415,7 +418,7 @@ pub const Entity = packed struct {
         }
 
         // Get the archetype list
-        const chunk_list = try es.chunk_lists.getOrPut(&es.chunk_pool, new_arch);
+        const chunk_list = try es.chunk_lists.getOrPut(new_arch);
 
         // Check if we have enough space
         var added = options.add.differenceWith(options.remove).iterator();

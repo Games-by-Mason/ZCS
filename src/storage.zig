@@ -212,12 +212,12 @@ pub const Chunk = opaque {
 /// A linked list of chunks.
 pub const ChunkList = struct {
     /// The chunks in this chunk list, connected via the `next` and `prev` fields.
-    head: ?*Chunk,
+    head: ?*Chunk = null,
     /// The final chunk in this chunk list.
-    tail: ?*Chunk,
+    tail: ?*Chunk = null,
     /// The chunks in this chunk list that have space available, connected via the `next_available`
     /// and `prev_available` fields.
-    available: ?*Chunk,
+    available: ?*Chunk = null,
 
     /// For internal use. Adds an entity to the chunk list.
     pub fn append(
@@ -410,11 +410,7 @@ pub const ChunkLists = struct {
 
     /// For internal use. Gets the chunk list for the given archetype, initializing it if it doesn't
     /// exist.
-    pub fn getOrPut(
-        self: *@This(),
-        p: *ChunkPool,
-        arch: CompFlag.Set,
-    ) error{ ZcsChunkOverflow, ZcsArchOverflow }!*ChunkList {
+    pub fn getOrPut(self: *@This(), arch: CompFlag.Set) error{ZcsArchOverflow}!*ChunkList {
         // This is a bit awkward, but works around there not being a get or put variation
         // that fails when allocation is needed.
         //
@@ -432,13 +428,7 @@ pub const ChunkLists = struct {
         };
         if (!gop.found_existing) {
             if (self.arches.count() >= self.capacity) return error.ZcsArchOverflow;
-            const chunk = try p.reserve(arch);
-            errdefer comptime unreachable;
-            gop.value_ptr.* = .{
-                .head = chunk,
-                .tail = chunk,
-                .available = chunk,
-            };
+            gop.value_ptr.* = .{};
         }
         return gop.value_ptr;
     }
