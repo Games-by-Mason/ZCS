@@ -36,8 +36,8 @@ iterator_generation: IteratorGeneration = 0,
 reserved_entities: usize = 0,
 chunk_pool: ChunkPool,
 
-/// The capacity for `Entities`.
-pub const Capacity = struct {
+/// Options for `init`.
+pub const Options = struct {
     /// The max number of entities.
     max_entities: u32,
     /// The number of bytes per component type array.
@@ -46,11 +46,15 @@ pub const Capacity = struct {
     max_archetypes: u16,
     /// The number of chunks to allocate.
     max_chunks: u32,
+    /// The size of each chunk. It's recommended that you leave this set to `null`.
+    ///
+    /// See the documentation on `Chunk` for more details.
+    chunk_size: ?u32 = null,
 };
 
 /// Initializes the entity storage with the given capacity.
-pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
-    var handle_tab: HandleTab = try .init(gpa, capacity.max_entities);
+pub fn init(gpa: Allocator, options: Options) Allocator.Error!@This() {
+    var handle_tab: HandleTab = try .init(gpa, options.max_entities);
     errdefer handle_tab.deinit(gpa);
 
     const comps = try gpa.create([CompFlag.max][]align(max_align) u8);
@@ -59,19 +63,22 @@ pub fn init(gpa: Allocator, capacity: Capacity) Allocator.Error!@This() {
     comptime var comps_init = 0;
     errdefer for (0..comps_init) |i| gpa.free(comps[i]);
     inline for (comps) |*comp| {
-        comp.* = try gpa.alignedAlloc(u8, max_align, capacity.comp_bytes);
+        comp.* = try gpa.alignedAlloc(u8, max_align, options.comp_bytes);
         comps_init += 1;
     }
 
-    var chunk_pool: ChunkPool = try .init(gpa, capacity.max_chunks);
+    var chunk_pool: ChunkPool = try .init(gpa, .{
+        .capacity = options.max_chunks,
+        .chunk_size = options.chunk_size,
+    });
     errdefer chunk_pool.deinit(gpa);
 
-    var chunk_lists: ChunkLists = try .init(gpa, capacity.max_archetypes);
+    var chunk_lists: ChunkLists = try .init(gpa, options.max_archetypes);
     errdefer chunk_lists.deinit(gpa);
 
     return .{
         .handle_tab = handle_tab,
-        .max_archetypes = capacity.max_archetypes,
+        .max_archetypes = options.max_archetypes,
         .chunk_lists = chunk_lists,
         .comps = comps,
         .chunk_pool = chunk_pool,
