@@ -149,7 +149,7 @@ pub const Entity = packed struct {
         invalidateIterators(es);
         if (es.handle_tab.get(self.key)) |entity_loc| {
             if (entity_loc.chunk) |chunk| {
-                chunk.swapRemove(&es.handle_tab, &es.chunk_lists, entity_loc.index_in_chunk);
+                chunk.swapRemove(es, entity_loc.index_in_chunk);
             } else {
                 es.reserved_entities -= 1;
             }
@@ -432,7 +432,7 @@ pub const Entity = packed struct {
         // Commit the change
         const new_loc = try chunk_list.append(&es.chunk_pool, self, new_arch);
         if (entity_loc.chunk) |chunk| {
-            chunk.swapRemove(&es.handle_tab, &es.chunk_lists, entity_loc.index_in_chunk);
+            chunk.swapRemove(es, entity_loc.index_in_chunk);
         } else {
             es.reserved_entities -= 1;
         }

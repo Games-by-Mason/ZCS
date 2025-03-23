@@ -56,7 +56,9 @@ pub const Chunk = opaque {
     pub const Header = extern struct {
         arch_mask: u64,
         next: ?*Chunk = null,
-        next_free: ?*Chunk = null,
+        prev: ?*Chunk = null,
+        next_available: ?*Chunk = null,
+        prev_available: ?*Chunk = null,
         len: u16,
         capacity: u16,
 
@@ -110,44 +112,64 @@ pub const Chunk = opaque {
 
     /// For internal use. Swap removes an entity from the chunk, updating the location of the moved
     /// entity.
-    pub fn swapRemove(
-        self: *@This(),
-        ht: *HandleTab,
-        cls: *ChunkLists,
-        index_in_chunk: IndexInChunk,
-    ) void {
+    pub fn swapRemove(self: *@This(), es: *Entities, index_in_chunk: IndexInChunk) void {
         const header = self.getHeader();
 
-        // Check if we had free space before the remove
-        const was_free = header.len < header.capacity;
+        // Check if we were full before the remove
+        const was_full = header.len >= header.capacity;
 
         // Pop the last entity
         const indices = self.getIndexBuf();
         header.len -= 1;
         const moved = indices[header.len];
 
-        // If we're removing the last entity, we're done!
-        if (@intFromEnum(index_in_chunk) == header.len) return;
+        // Early out if we're popping the end of the list
+        if (@intFromEnum(index_in_chunk) == header.len) {
+            // If the chunk is now empty, return it to the chunk pool
+            if (header.len == 0) {
+                // Remove this chunk from the chunk list head/tail
+                const cl: *ChunkList = es.chunk_lists.arches.getPtr(header.getArch()).?;
+                if (cl.head == self) cl.head = header.next;
+                if (cl.tail == self) cl.tail = header.prev;
+                if (cl.available == self) cl.available = header.next_available;
+
+                // Remove this chunk from the chunk list normal and available linked lists
+                if (header.prev) |prev| prev.getHeader().next = header.next;
+                if (header.next) |next| next.getHeader().prev = header.prev;
+                if (header.prev_available) |prev| prev.getHeader().next_available = header.next_available;
+                if (header.next_available) |next| next.getHeader().prev_available = header.prev_available;
+
+                // Reset this chunk, and add it to the pool's free list
+                header.* = undefined;
+                header.next = es.chunk_pool.free;
+                es.chunk_pool.free = self;
+            }
+
+            // Either way, early out
+            return;
+        }
 
         // Otherwise, overwrite the removed entity the popped entity, and then update the location
         // of the moved entity in the handle table
         indices[@intFromEnum(index_in_chunk)] = moved;
-        const moved_loc = &ht.values[moved];
+        const moved_loc = &es.handle_tab.values[moved];
         assert(moved_loc.chunk.? == self);
         moved_loc.index_in_chunk = index_in_chunk;
 
-        // If we weren't free before this operation, add ourselves to the free list
-        if (!was_free) {
-            assert(header.next_free == null);
-            const cl: *ChunkList = cls.arches.getPtr(header.getArch()).?;
-            if (cl.free) |head| {
-                // Don't disturb the front of the free list if there is one, this decreases
+        // If this chunk was previously full, add it to this chunk list's available list
+        if (was_full) {
+            assert(header.next_available == null);
+            assert(header.prev_available == null);
+            const cl: *ChunkList = es.chunk_lists.arches.getPtr(header.getArch()).?;
+            if (cl.available) |head| {
+                // Don't disturb the front of the available list if there is one, this decreases
                 // fragmentation by guaranteeing that we fill one chunk at a time.
-                self.getHeader().next_free = head.getHeaderConst().next_free;
-                head.getHeader().next_free = self;
+                self.getHeader().next_available = head.getHeaderConst().next_available;
+                self.getHeader().prev_available = head;
+                head.getHeader().next_available = self;
             } else {
-                // If the free list is empty, set it to this chunk
-                cl.free = self;
+                // If the available list is empty, set it to this chunk
+                cl.available = self;
             }
         }
     }
@@ -190,12 +212,13 @@ pub const Chunk = opaque {
 
 /// A linked list of chunks.
 pub const ChunkList = struct {
-    /// The chunks in this chunk list, connected via the `next` fields.
-    head: *Chunk,
+    /// The chunks in this chunk list, connected via the `next` and `prev` fields.
+    head: ?*Chunk,
     /// The final chunk in this chunk list.
-    tail: *Chunk,
-    /// The chunks in this chunk list that have free space, connected via the `next_free` fields.
-    free: ?*Chunk,
+    tail: ?*Chunk,
+    /// The chunks in this chunk list that have space available, connected via the `next_available`
+    /// and `prev_available` fields.
+    available: ?*Chunk,
 
     /// For internal use. Adds an entity to the chunk list.
     pub fn append(
@@ -204,24 +227,29 @@ pub const ChunkList = struct {
         e: Entity,
         arch: CompFlag.Set,
     ) error{ZcsChunkOverflow}!EntityLoc {
-        // Ensure there's a chunk with free space
-        if (self.free == null) {
+        // Ensure there's a chunk with space available
+        if (self.available == null) {
             // Allocate a new chunk
             const new = try p.reserve(arch);
 
-            // Point the free list to the new chunk
-            self.free = new;
+            // Point the available list to the new chunk
+            self.available = new;
 
-            // Add the new chunk to the end of the chunk list. We add to the end instead of the
-            // beginning to preserve event order.
-            self.tail.getHeader().next = new;
-            self.tail = new;
+            // Add the new chunk to the end of the chunk list
+            if (self.tail) |tail| {
+                new.getHeader().prev = tail;
+                tail.getHeader().next = new;
+                self.tail = new;
+            } else {
+                self.head = new;
+                self.tail = new;
+            }
         }
 
-        // Get a chunk with free space
-        const chunk = self.free.?;
+        // Get a chunk with space available
+        const chunk = self.available.?;
 
-        // Add the entity to the chunk with free space
+        // Add the entity to the chunk
         {
             // Get the header and index buf
             const header = chunk.getHeader();
@@ -233,11 +261,12 @@ pub const ChunkList = struct {
             index_buf[@intFromEnum(index_in_chunk)] = e.key.index;
             header.len += 1;
 
-            // If the chunk is now full, remove it from the free list
+            // If the chunk is now full, remove it from the available list
             if (header.len >= header.capacity) {
-                assert(self.free == chunk);
-                self.free = self.free.?.getHeaderConst().next_free;
-                header.next_free = null;
+                assert(self.available == chunk);
+                self.available = self.available.?.getHeaderConst().next_available;
+                header.next_available = null;
+                header.prev_available = null;
             }
 
             // Return the location we stored the entity
@@ -250,6 +279,7 @@ pub const ChunkList = struct {
 
     /// Returns an iterator over this chunk list's chunks.
     pub fn iterator(self: *const ChunkList) Iterator {
+        if (self.head) |head| assert(head.getHeaderConst().prev == null);
         return .{
             .chunk = self.head,
         };
@@ -264,6 +294,7 @@ pub const ChunkList = struct {
         pub fn next(self: *@This()) ?*const Chunk {
             const chunk = self.chunk orelse return null;
             const header = chunk.getHeaderConst();
+            if (header.next) |n| assert(n.getHeaderConst().prev == chunk);
             self.chunk = header.next;
             return chunk;
         }
@@ -278,9 +309,14 @@ pub const max_chunk_size: u16 = std.heap.page_size_max;
 
 /// For internal use. A pool of `Chunk`s.
 pub const ChunkPool = struct {
+    /// Memory reserved for chunks
     buf: []align(max_chunk_size) u8,
+    /// The number of chunks reserved
     reserved: u32,
+    /// The size of a chunk
     chunk_size: u16,
+    /// Freed chunks, connected by the `next` field. All other fields are undefined.
+    free: ?*Chunk = null,
 
     /// Options for `init`.
     pub const Options = struct {
@@ -319,11 +355,21 @@ pub const ChunkPool = struct {
 
     /// For internal use. Reserves a chunk from the chunk pool
     pub fn reserve(self: *ChunkPool, arch: CompFlag.Set) error{ZcsChunkOverflow}!*Chunk {
-        // Return an error if all chunks are reserved
-        if (self.reserved >= self.buf.len / self.chunk_size) return error.ZcsChunkOverflow;
+        // Get a free chunk. Try the free list first, then fall back to bump allocation from the
+        // preallocated buffer.
+        const chunk = if (self.free) |free| b: {
+            // Pop the next chunk from the free list
+            self.free = free.getHeader().next;
+            break :b free;
+        } else b: {
+            // Pop the next chunk from the preallocated buffer
+            if (self.reserved >= self.buf.len / self.chunk_size) return error.ZcsChunkOverflow;
+            const chunk: *Chunk = @ptrCast(&self.buf[self.reserved * self.chunk_size]);
+            break :b chunk;
+        };
+        errdefer comptime unreachable; // Already modified the free list!
 
-        // Get the next chunk, and assert that it has the correct alignment
-        const chunk: *Chunk = @ptrCast(&self.buf[self.reserved * self.chunk_size]);
+        // Check the alignment
         assert(@intFromPtr(chunk) % self.chunk_size == 0);
 
         // Increment the number of reserved chunks
@@ -394,7 +440,7 @@ pub const ChunkLists = struct {
             gop.value_ptr.* = .{
                 .head = chunk,
                 .tail = chunk,
-                .free = chunk,
+                .available = chunk,
             };
         }
         return gop.value_ptr;
