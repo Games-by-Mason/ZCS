@@ -41,35 +41,70 @@ pub const EntityLoc = struct {
     pub fn getArch(self: @This()) CompFlag.Set {
         const chunk = self.chunk orelse return .{};
         const header = chunk.getHeaderConst();
-        return header.arch;
+        return header.getArch();
     }
 };
 
 /// An index into a chunk.
-const IndexInChunkTag = u16;
-pub const IndexInChunk = enum(IndexInChunkTag) { _ };
+pub const IndexInChunk = enum(u16) { _ };
 
 /// For internal use. A chunk of entities that all have the same archetype.
 pub const Chunk = opaque {
-    const EntityKey = HandleTab.Key;
-    const EntityIndex = @FieldType(EntityKey, "index");
-    const EntityIndices = std.BoundedArray(EntityIndex, 512);
+    const EntityIndex = @FieldType(HandleTab.Key, "index");
 
     /// For internal use. The header information for a chunk.
-    pub const Header = struct {
-        arch: CompFlag.Set,
-        indices: EntityIndices,
+    pub const Header = extern struct {
+        arch_mask: u64,
         next: ?*Chunk = null,
+        len: u16,
+        capacity: u16,
+
+        /// Returns this chunk's archetype.
+        pub fn getArch(self: *const @This()) CompFlag.Set {
+            return .{ .bits = .{ .mask = self.arch_mask } };
+        }
     };
+
+    /// For internal use. Computes the capacity for a given chunk size.
+    fn computeCapacity(chunk_size: u16) u16 {
+        const buf_start = std.mem.alignForward(u16, @sizeOf(Chunk.Header), @alignOf(EntityIndex));
+        const buf_end = chunk_size;
+        const buf_len = buf_end - buf_start;
+        return buf_len / @sizeOf(EntityIndex);
+    }
 
     /// For internal use. Returns a pointer to the chunk header.
     pub inline fn getHeader(self: *Chunk) *Header {
+        // This const cast is okay since it starts out mutable.
+        return @constCast(self.getHeaderConst());
+    }
+
+    /// For internal use. See `getHeader`.
+    pub inline fn getHeaderConst(self: *const Chunk) *const Header {
         return @alignCast(@ptrCast(self));
     }
 
-    /// For internal use. Returns a const pointer to the chunk header.
-    pub inline fn getHeaderConst(self: *const Chunk) *const Header {
-        return @alignCast(@ptrCast(self));
+    /// For internal use. Clears the chunk's entity data.
+    pub fn clear(self: *Chunk) void {
+        const header = self.getHeader();
+        header.len = 0;
+    }
+
+    /// For internal use. Gets the index buffer. This includes uninitialized indices.
+    fn getIndexBuf(self: *Chunk) []EntityIndex {
+        // This const cast is okay since it starts out mutable.
+        return @constCast(self.getIndexBufConst());
+    }
+
+    /// For internal use. See `getIndexBuf`.
+    fn getIndexBufConst(self: *const Chunk) []const EntityIndex {
+        const header = self.getHeaderConst();
+        const ptr: [*]EntityIndex = @ptrFromInt(std.mem.alignForward(
+            usize,
+            @intFromPtr(self) + @sizeOf(Header),
+            @alignOf(EntityIndex),
+        ));
+        return ptr[0..header.capacity];
     }
 
     /// For internal use. Swap removes an entity from the chunk, updating the location of the moved
@@ -77,14 +112,16 @@ pub const Chunk = opaque {
     pub fn swapRemove(self: *@This(), ht: *HandleTab, index_in_chunk: IndexInChunk) void {
         // Pop the last entity
         const header = self.getHeader();
-        const moved = header.indices.pop().?;
+        const indices = self.getIndexBuf();
+        header.len -= 1;
+        const moved = indices[header.len];
 
         // If we're removing the last entity, we're done!
-        if (@intFromEnum(index_in_chunk) == header.indices.len) return;
+        if (@intFromEnum(index_in_chunk) == header.len) return;
 
         // Otherwise, overwrite the removed entity the popped entity, and then update the location
         // of the moved entity in the handle table
-        header.indices.set(@intFromEnum(index_in_chunk), moved);
+        indices[@intFromEnum(index_in_chunk)] = moved;
         const moved_loc = &ht.values[moved];
         assert(moved_loc.chunk.? == self);
         moved_loc.index_in_chunk = index_in_chunk;
@@ -94,7 +131,7 @@ pub const Chunk = opaque {
     pub fn iterator(self: *const @This()) Iterator {
         return .{
             .chunk = self,
-            .index = 0,
+            .index_in_chunk = @enumFromInt(0),
         };
     }
 
@@ -102,22 +139,22 @@ pub const Chunk = opaque {
     pub const Iterator = struct {
         pub const empty: @This() = .{
             .chunk = @ptrCast(&Header{
-                .arch = .{},
-                .indices = .{},
+                .arch_mask = 0,
+                .len = 0,
+                .capacity = 0,
             }),
-            .index = 0,
+            .index_in_chunk = @enumFromInt(0),
         };
 
         chunk: *const Chunk,
-        index: u16,
+        index_in_chunk: IndexInChunk,
 
         pub fn next(self: *@This(), handle_tab: *const HandleTab) ?Entity {
-            comptime assert(math.maxInt(@TypeOf(self.index)) >=
-                @typeInfo(@FieldType(EntityIndices, "buffer")).array.len);
             const header = self.chunk.getHeaderConst();
-            if (self.index >= header.indices.len) return null;
-            const entity_index = header.indices.get(self.index);
-            self.index += 1;
+            if (@intFromEnum(self.index_in_chunk) >= header.len) return null;
+            const indices = self.chunk.getIndexBufConst();
+            const entity_index = indices[@intFromEnum(self.index_in_chunk)];
+            self.index_in_chunk = @enumFromInt(@intFromEnum(self.index_in_chunk) + 1);
             return .{ .key = .{
                 .index = entity_index,
                 .generation = handle_tab.generations[entity_index],
@@ -140,19 +177,12 @@ pub const ChunkList = struct {
         var curr = self.head;
         while (true) {
             const curr_header = curr.getHeader();
-            const index_in_chunk = curr_header.indices.len;
-            if (index_in_chunk < @typeInfo(@TypeOf(curr_header.indices.buffer)).array.len) {
+            const curr_indices_buf = curr.getIndexBuf();
+            const index_in_chunk = curr_header.len;
+            if (index_in_chunk < curr_indices_buf.len) {
                 // Add the entity to the chunk
-                curr_header.indices.appendAssumeCapacity(e.key.index);
-
-                // Comptime assert that casting the index to the enum index is safe. We make sure
-                // there's one extra index so that in safe builds the fact that we use max int as an
-                // invalid index is fine.
-                const Indices = @FieldType(Chunk.Header, "indices");
-                const IndicesBuf = @FieldType(Indices, "buffer");
-                const chunk_cap = @typeInfo(IndicesBuf).array.len;
-                const TagType = @typeInfo(IndexInChunk).@"enum".tag_type;
-                comptime assert(chunk_cap < math.maxInt(TagType));
+                curr_indices_buf[curr_header.len] = e.key.index;
+                curr_header.len += 1;
 
                 // Return the location we stored the entity
                 return .{
@@ -192,16 +222,16 @@ pub const ChunkList = struct {
 };
 
 /// The maximum chunk size.
-pub const min_chunk_size = math.ceilPowerOfTwo(usize, @sizeOf(Chunk.Header) + 1) catch unreachable;
+pub const min_chunk_size: u16 = math.ceilPowerOfTwoAssert(usize, @sizeOf(Chunk.Header) + 1);
 
 /// The minimum chunk size.
-pub const max_chunk_size = std.heap.page_size_max;
+pub const max_chunk_size: u16 = std.heap.page_size_max;
 
 /// For internal use. A pool of `Chunk`s.
 pub const ChunkPool = struct {
     buf: []align(max_chunk_size) u8,
     reserved: u32,
-    chunk_size: u32,
+    chunk_size: u16,
 
     /// Options for `init`.
     pub const Options = struct {
@@ -209,12 +239,12 @@ pub const ChunkPool = struct {
         capacity: u32,
         /// The size of each chunk. When left `null`, defaults to `std.heap.pageSize()`. Must be a
         /// power of two in the range `[min_chunk_size, max_chunk_size]`.
-        chunk_size: ?u32 = null,
+        chunk_size: ?u16 = null,
     };
 
     /// For internal use. Allocates the chunk pool.
     pub fn init(gpa: Allocator, options: Options) Allocator.Error!ChunkPool {
-        const chunk_size: u32 = @intCast(options.chunk_size orelse std.heap.pageSize());
+        const chunk_size: u16 = @intCast(options.chunk_size orelse std.heap.pageSize());
         // Check our sizes, the rest of the pool logic is allowed to depend on these invariants
         // holding true
         comptime assert(math.isPowerOfTwo(max_chunk_size));
@@ -253,8 +283,9 @@ pub const ChunkPool = struct {
         // Initialize the chunk and return it
         const header = chunk.getHeader();
         header.* = .{
-            .arch = arch,
-            .indices = .{},
+            .arch_mask = arch.bits.mask,
+            .len = 0,
+            .capacity = Chunk.computeCapacity(self.chunk_size),
         };
         return chunk;
     }

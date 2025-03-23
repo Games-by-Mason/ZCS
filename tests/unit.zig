@@ -930,6 +930,7 @@ test "chunk overflow" {
         .comp_bytes = 4096,
         .max_archetypes = 3,
         .max_chunks = 1,
+        .chunk_size = 512,
     });
     defer es.deinit(gpa);
 
@@ -953,14 +954,14 @@ test "chunk overflow" {
     }
 
     // Create new entities in the chunk that was already allocated, this should be fine
-    for (0..511) |_| {
+    for (0..121) |_| {
         const e = Entity.reserveImmediate(&es);
         try expect(try e.changeArchImmediateOrErr(&es, .{ .add = &.{
             .init(u1, &0),
         } }));
     }
     try expectEqual(1, es.chunk_pool.reserved);
-    try expectEqual(512, es.count());
+    try expectEqual(122, es.count());
 
     // Go past the end of the chunk, causing it to overflow since we've used up all available chunks
     {
@@ -968,7 +969,7 @@ test "chunk overflow" {
         try expectError(error.ZcsChunkOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
             .init(u1, &0),
         } }));
-        try expectEqual(512, es.count());
+        try expectEqual(122, es.count());
     }
     var count: usize = 0;
     var iter = es.iterator(.{});

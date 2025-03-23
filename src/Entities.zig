@@ -49,7 +49,7 @@ pub const Options = struct {
     /// The size of each chunk. It's recommended that you leave this set to `null`.
     ///
     /// See the documentation on `Chunk` for more details.
-    chunk_size: ?u32 = null,
+    chunk_size: ?u16 = null,
 };
 
 /// Initializes the entity storage with the given capacity.
@@ -108,8 +108,7 @@ pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
                 self.handle_tab.recycle(entity.key);
             }
             // We have a mutable reference to entities, so it's fine to cast the const away here
-            const chunk_header = @constCast(chunk).getHeader();
-            chunk_header.indices.clear();
+            @constCast(chunk).clear();
         }
     }
 }
@@ -273,7 +272,7 @@ pub fn ViewIterator(View: type) type {
 
                             // If it has a flag, check if we have it
                             const chunk_header = entity_loc.chunk.?.getHeaderConst();
-                            break :b chunk_header.arch.contains(flag);
+                            break :b chunk_header.getArch().contains(flag);
                         } else b: {
                             // If the component isn't optional, we can assume we have it
                             break :b true;
