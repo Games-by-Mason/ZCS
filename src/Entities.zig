@@ -108,7 +108,8 @@ pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
                 self.handle_tab.recycle(entity.key);
             }
             // We have a mutable reference to entities, so it's fine to cast the const away here
-            @constCast(chunk).header().indices.clear();
+            const chunk_header = @constCast(chunk).getHeader();
+            chunk_header.indices.clear();
         }
     }
 }
@@ -271,7 +272,8 @@ pub fn ViewIterator(View: type) type {
                             const flag = typeId(T).comp_flag orelse break :b false;
 
                             // If it has a flag, check if we have it
-                            break :b entity_loc.chunk.?.constHeader().arch.contains(flag);
+                            const chunk_header = entity_loc.chunk.?.getHeaderConst();
+                            break :b chunk_header.arch.contains(flag);
                         } else b: {
                             // If the component isn't optional, we can assume we have it
                             break :b true;

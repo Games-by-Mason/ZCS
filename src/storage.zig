@@ -40,7 +40,8 @@ pub const EntityLoc = struct {
     /// been committed.
     pub fn getArch(self: @This()) CompFlag.Set {
         const chunk = self.chunk orelse return .{};
-        return chunk.constHeader().arch;
+        const header = chunk.getHeaderConst();
+        return header.arch;
     }
 };
 
@@ -62,12 +63,12 @@ pub const Chunk = opaque {
     };
 
     /// For internal use. Returns a pointer to the chunk header.
-    pub inline fn header(self: *Chunk) *Header {
+    pub inline fn getHeader(self: *Chunk) *Header {
         return @alignCast(@ptrCast(self));
     }
 
     /// For internal use. Returns a const pointer to the chunk header.
-    pub inline fn constHeader(self: *const Chunk) *const Header {
+    pub inline fn getHeaderConst(self: *const Chunk) *const Header {
         return @alignCast(@ptrCast(self));
     }
 
@@ -75,14 +76,15 @@ pub const Chunk = opaque {
     /// entity.
     pub fn swapRemove(self: *@This(), ht: *HandleTab, index_in_chunk: IndexInChunk) void {
         // Pop the last entity
-        const moved = self.header().indices.pop().?;
+        const header = self.getHeader();
+        const moved = header.indices.pop().?;
 
         // If we're removing the last entity, we're done!
-        if (@intFromEnum(index_in_chunk) == self.constHeader().indices.len) return;
+        if (@intFromEnum(index_in_chunk) == header.indices.len) return;
 
         // Otherwise, overwrite the removed entity the popped entity, and then update the location
         // of the moved entity in the handle table
-        self.header().indices.set(@intFromEnum(index_in_chunk), moved);
+        header.indices.set(@intFromEnum(index_in_chunk), moved);
         const moved_loc = &ht.values[moved];
         assert(moved_loc.chunk.? == self);
         moved_loc.index_in_chunk = index_in_chunk;
@@ -112,8 +114,9 @@ pub const Chunk = opaque {
         pub fn next(self: *@This(), handle_tab: *const HandleTab) ?Entity {
             comptime assert(math.maxInt(@TypeOf(self.index)) >=
                 @typeInfo(@FieldType(EntityIndices, "buffer")).array.len);
-            if (self.index >= self.chunk.constHeader().indices.len) return null;
-            const entity_index = self.chunk.constHeader().indices.get(self.index);
+            const header = self.chunk.getHeaderConst();
+            if (self.index >= header.indices.len) return null;
+            const entity_index = header.indices.get(self.index);
             self.index += 1;
             return .{ .key = .{
                 .index = entity_index,
@@ -136,10 +139,11 @@ pub const ChunkList = struct {
     ) error{ZcsChunkOverflow}!EntityLoc {
         var curr = self.head;
         while (true) {
-            const index_in_chunk = curr.constHeader().indices.len;
-            if (index_in_chunk < @typeInfo(@TypeOf(curr.constHeader().indices.buffer)).array.len) {
+            const curr_header = curr.getHeader();
+            const index_in_chunk = curr_header.indices.len;
+            if (index_in_chunk < @typeInfo(@TypeOf(curr_header.indices.buffer)).array.len) {
                 // Add the entity to the chunk
-                curr.header().indices.appendAssumeCapacity(e.key.index);
+                curr_header.indices.appendAssumeCapacity(e.key.index);
 
                 // Comptime assert that casting the index to the enum index is safe. We make sure
                 // there's one extra index so that in safe builds the fact that we use max int as an
@@ -157,9 +161,9 @@ pub const ChunkList = struct {
                 };
             }
 
-            curr = if (curr.constHeader().next) |next| next else b: {
+            curr = if (curr_header.next) |next| next else b: {
                 const next = try p.reserve(arch);
-                curr.header().next = next;
+                curr_header.next = next;
                 break :b next;
             };
         }
@@ -180,7 +184,8 @@ pub const ChunkList = struct {
 
         pub fn next(self: *@This()) ?*const Chunk {
             const chunk = self.chunk orelse return null;
-            self.chunk = chunk.constHeader().next;
+            const header = chunk.getHeaderConst();
+            self.chunk = header.next;
             return chunk;
         }
     };
@@ -246,7 +251,8 @@ pub const ChunkPool = struct {
         self.reserved = self.reserved + 1;
 
         // Initialize the chunk and return it
-        chunk.header().* = .{
+        const header = chunk.getHeader();
+        header.* = .{
             .arch = arch,
             .indices = .{},
         };

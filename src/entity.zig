@@ -408,7 +408,8 @@ pub const Entity = packed struct {
 
         // If the entity is committed and the arch hasn't changed, early out
         if (entity_loc.chunk) |chunk| {
-            if (chunk.constHeader().arch.eql(new_arch)) {
+            const chunk_header = chunk.getHeaderConst();
+            if (chunk_header.arch.eql(new_arch)) {
                 return true;
             }
         }
