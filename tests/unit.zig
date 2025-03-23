@@ -953,7 +953,7 @@ test "chunk overflow" {
 
     // Try to create a new archetype, and fail due to chunk overflow
     for (0..2) |_| {
-        try expectError(error.ZcsChunkOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+        try expectError(error.ZcsChunkPoolOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
             .init(u2, &0),
         } }));
         try expectEqual(1, es.chunk_pool.reserved);
@@ -976,7 +976,7 @@ test "chunk overflow" {
     // Go past the end of the chunk, causing it to overflow since we've used up all available chunks
     {
         const e = Entity.reserveImmediate(&es);
-        try expectError(error.ZcsChunkOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
+        try expectError(error.ZcsChunkPoolOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
             .init(u1, &0),
         } }));
         try expectEqual(n + 1, es.count());
@@ -1005,7 +1005,7 @@ test "chunk overflow" {
     // Make sure we can't overfill it
     {
         const e = Entity.reserveImmediate(&es);
-        try expectError(error.ZcsChunkOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
+        try expectError(error.ZcsChunkPoolOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
             .init(u2, &0),
         } }));
         try expectEqual(n + 1, es.count());
@@ -1040,7 +1040,7 @@ test "chunk overflow" {
     // Make sure we can't overfill it
     {
         const e = Entity.reserveImmediate(&es);
-        try expectError(error.ZcsChunkOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
+        try expectError(error.ZcsChunkPoolOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
             .init(u3, &0),
         } }));
         try expectEqual(n + 1, es.count());
@@ -1075,7 +1075,7 @@ test "chunk overflow" {
     // Make sure we can't overfill it
     {
         const e = Entity.reserveImmediate(&es);
-        try expectError(error.ZcsChunkOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
+        try expectError(error.ZcsChunkPoolOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
             .init(u3, &0),
         } }));
         try expectEqual(n + 1, es.count());

@@ -259,7 +259,7 @@ pub const ChunkList = struct {
         p: *ChunkPool,
         e: Entity,
         arch: CompFlag.Set,
-    ) error{ZcsChunkOverflow}!EntityLoc {
+    ) error{ZcsChunkPoolOverflow}!EntityLoc {
         // Ensure there's a chunk with space available
         if (self.available == null) {
             // Allocate a new chunk
@@ -422,7 +422,7 @@ pub const ChunkPool = struct {
     }
 
     /// For internal use. Reserves a chunk from the chunk pool
-    pub fn reserve(self: *ChunkPool, arch: CompFlag.Set) error{ZcsChunkOverflow}!*Chunk {
+    pub fn reserve(self: *ChunkPool, arch: CompFlag.Set) error{ZcsChunkPoolOverflow}!*Chunk {
         // Get a free chunk. Try the free list first, then fall back to bump allocation from the
         // preallocated buffer.
         const chunk = if (self.free) |free| b: {
@@ -431,7 +431,7 @@ pub const ChunkPool = struct {
             break :b free;
         } else b: {
             // Pop the next chunk from the preallocated buffer
-            if (self.reserved >= self.buf.len / self.chunk_size) return error.ZcsChunkOverflow;
+            if (self.reserved >= self.buf.len / self.chunk_size) return error.ZcsChunkPoolOverflow;
             const chunk: *Chunk = @ptrCast(&self.buf[self.reserved * self.chunk_size]);
             self.reserved = self.reserved + 1;
             break :b chunk;

@@ -352,7 +352,7 @@ pub const Entity = packed struct {
         self: @This(),
         es: *Entities,
         changes: ChangeArchImmediateOptions,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!bool {
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkPoolOverflow }!bool {
         // Early out if the entity does not exist, also checks some assertions
         if (!self.exists(es)) return false;
 
@@ -400,7 +400,7 @@ pub const Entity = packed struct {
         self: @This(),
         es: *Entities,
         options: ChangeArchUninitImmediateOptions,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!bool {
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkPoolOverflow }!bool {
         invalidateIterators(es);
 
         // Get the handle value and figure out the new arch
@@ -485,7 +485,7 @@ pub const Entity = packed struct {
         es: *Entities,
         T: type,
         default: T,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!?*T {
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkPoolOverflow }!?*T {
         const result = try self.viewOrAddImmediateOrErr(es, struct { *T }, .{&default}) orelse
             return null;
         return result[0];
@@ -510,7 +510,7 @@ pub const Entity = packed struct {
         es: *Entities,
         View: type,
         comps: anytype,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!?View {
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkPoolOverflow }!?View {
         // Create the view, possibly leaving some components uninitialized
         const result = (try self.viewOrAddUninitImmediateOrErr(es, View)) orelse return null;
 
@@ -549,7 +549,7 @@ pub const Entity = packed struct {
         self: @This(),
         es: *Entities,
         View: type,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow }!?VoaUninitResult(View) {
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkPoolOverflow }!?VoaUninitResult(View) {
         // Figure out which components are missing
         const entity_loc = es.handle_tab.get(self.key) orelse return null;
         var view_arch: CompFlag.Set = .{};
