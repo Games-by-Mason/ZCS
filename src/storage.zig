@@ -51,7 +51,7 @@ pub const IndexInChunk = enum(IndexInChunkTag) { _ };
 pub const Chunk = opaque {
     const EntityKey = HandleTab.Key;
     const EntityIndex = @FieldType(EntityKey, "index");
-    const EntityIndices = std.BoundedArray(EntityIndex, 1024);
+    const EntityIndices = std.BoundedArray(EntityIndex, 512);
 
     /// For internal use. The header information for a chunk.
     pub const Header = struct {
@@ -185,18 +185,29 @@ pub const ChunkList = struct {
     };
 };
 
+const chunk_size = (std.math.ceilPowerOfTwo(usize, @sizeOf(Chunk.Header)) catch unreachable);
+const max_chunk_size = std.heap.page_size_max;
+
 /// For internal use. A pool of `Chunk`s.
 pub const ChunkPool = struct {
-    buf: []Chunk.Header,
-    allocated: u32,
+    buf: []align(max_chunk_size) u8,
+    reserved: u32,
 
     /// For internal use. Allocates the chunk pool.
     pub fn init(gpa: Allocator, capacity: u32) Allocator.Error!ChunkPool {
-        const buf = try gpa.alloc(Chunk.Header, capacity);
+        // Check our sizes, the rest of the pool logic is allowed to depend on these invariants
+        // holding true
+        comptime assert(std.math.isPowerOfTwo(max_chunk_size));
+        comptime assert(std.math.isPowerOfTwo(chunk_size));
+        comptime assert(chunk_size > @sizeOf(Chunk.Header));
+        comptime assert(chunk_size <= max_chunk_size);
+
+        const buf = try gpa.alignedAlloc(u8, max_chunk_size, chunk_size * capacity);
         errdefer comptime unreachable;
+
         return .{
             .buf = buf,
-            .allocated = 0,
+            .reserved = 0,
         };
     }
 
@@ -208,14 +219,22 @@ pub const ChunkPool = struct {
 
     /// For internal use. Reserves a chunk from the chunk pool
     pub fn reserve(self: *ChunkPool, arch: CompFlag.Set) error{ZcsChunkOverflow}!*Chunk {
-        if (self.allocated >= self.buf.len) return error.ZcsChunkOverflow;
-        const header: *Chunk.Header = &self.buf[self.allocated];
-        self.allocated = self.allocated + 1;
-        header.* = .{
+        // Return an error if all chunks are reserved
+        if (self.reserved >= self.buf.len / chunk_size) return error.ZcsChunkOverflow;
+
+        // Get the next chunk, and assert that it has the correct alignment
+        const chunk: *Chunk = @ptrCast(&self.buf[self.reserved * chunk_size]);
+        assert(@intFromPtr(chunk) % chunk_size == 0); // Check alignment
+
+        // Increment the number of reserved chunks
+        self.reserved = self.reserved + 1;
+
+        // Initialize the chunk and return it
+        chunk.header().* = .{
             .arch = arch,
             .indices = .{},
         };
-        return @ptrCast(header);
+        return chunk;
     }
 };
 

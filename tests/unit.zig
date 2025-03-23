@@ -940,27 +940,27 @@ test "chunk overflow" {
     try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
         .init(u1, &0),
     } }));
-    try expectEqual(1, es.chunk_pool.allocated);
+    try expectEqual(1, es.chunk_pool.reserved);
 
     // Try to create a new archetype, and fail due to chunk overflow
     for (0..2) |_| {
         try expectError(error.ZcsChunkOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
             .init(u2, &0),
         } }));
-        try expectEqual(1, es.chunk_pool.allocated);
+        try expectEqual(1, es.chunk_pool.reserved);
         try expect(!e0.has(&es, u2));
         try expectEqual(1, es.chunk_lists.arches.count());
     }
 
     // Create new entities in the chunk that was already allocated, this should be fine
-    for (0..1023) |_| {
+    for (0..511) |_| {
         const e = Entity.reserveImmediate(&es);
         try expect(try e.changeArchImmediateOrErr(&es, .{ .add = &.{
             .init(u1, &0),
         } }));
     }
-    try expectEqual(1, es.chunk_pool.allocated);
-    try expectEqual(1024, es.count());
+    try expectEqual(1, es.chunk_pool.reserved);
+    try expectEqual(512, es.count());
 
     // Go past the end of the chunk, causing it to overflow since we've used up all available chunks
     {
@@ -968,7 +968,7 @@ test "chunk overflow" {
         try expectError(error.ZcsChunkOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
             .init(u1, &0),
         } }));
-        try expectEqual(1024, es.count());
+        try expectEqual(512, es.count());
     }
     var count: usize = 0;
     var iter = es.iterator(.{});
