@@ -293,6 +293,7 @@ pub const ChunkList = struct {
         pub fn next(self: *@This()) ?*const Chunk {
             const chunk = self.chunk orelse return null;
             const header = chunk.getHeaderConst();
+            assert(header.len > 0); // Empty chunks should be returned to the pool!
             if (header.next) |n| assert(n.getHeaderConst().prev == chunk);
             self.chunk = header.next;
             return chunk;

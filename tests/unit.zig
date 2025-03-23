@@ -1045,6 +1045,41 @@ test "chunk overflow" {
         } }));
         try expectEqual(n + 1, es.count());
     }
+
+    // Destroy all the entities we created
+    {
+        var cb: CmdBuf = try .init(gpa, &es, .{
+            .cmds = n + 1,
+            .avg_cmd_bytes = @sizeOf(Entity),
+        });
+        defer cb.deinit(gpa, &es);
+        var it = es.iterator(.{});
+        while (it.next()) |e| e.destroy(&cb);
+        cb.execImmediate(&es);
+        try expectEqual(0, es.count());
+    }
+
+    // Refill a chunk list that already existed
+    for (0..n + 1) |_| {
+        const e = Entity.reserveImmediate(&es);
+        _ = try e.changeArchImmediateOrErr(&es, .{ .add = &.{
+            .init(u3, &0),
+        } });
+        try expectEqual(1, es.chunk_pool.reserved);
+        try expect(!e.has(&es, u1));
+        try expect(!e.has(&es, u2));
+        try expect(e.has(&es, u3));
+        try expectEqual(4, es.chunk_lists.arches.count());
+    }
+
+    // Make sure we can't overfill it
+    {
+        const e = Entity.reserveImmediate(&es);
+        try expectError(error.ZcsChunkOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
+            .init(u3, &0),
+        } }));
+        try expectEqual(n + 1, es.count());
+    }
 }
 
 // This is a regression test. We do something a little tricky with zero sized types--we "allocate"
