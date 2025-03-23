@@ -34,7 +34,7 @@ const comp_bytes = 1000000;
 test "exec" {
     defer CompFlag.unregisterAll();
 
-    var es = try Entities.init(gpa, .{
+    var es: Entities = try .init(gpa, .{
         .max_entities = 128,
         .comp_bytes = 256,
         .max_archetypes = 8,

@@ -36,11 +36,12 @@ const Event = struct {
 test "events" {
     defer CompFlag.unregisterAll();
 
-    var es = try Entities.init(gpa, .{
+    var es: Entities = try .init(gpa, .{
         .max_entities = 20,
         .comp_bytes = 8192,
         .max_archetypes = 4,
         .max_chunks = 4,
+        .chunk_size = 128,
     });
     defer es.deinit(gpa);
 

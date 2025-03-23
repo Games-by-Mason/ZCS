@@ -37,11 +37,12 @@ test "cb execImmediate" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es = try Entities.init(gpa, .{
+    var es: Entities = try .init(gpa, .{
         .max_entities = 100,
         .comp_bytes = 100,
         .max_archetypes = 8,
         .max_chunks = 8,
+        .chunk_size = 128,
     });
     defer es.deinit(gpa);
 
@@ -145,11 +146,12 @@ test "cb interning" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es = try Entities.init(gpa, .{
+    var es: Entities = try .init(gpa, .{
         .max_entities = 100,
         .comp_bytes = 4096,
         .max_archetypes = 8,
         .max_chunks = 8,
+        .chunk_size = 128,
     });
     defer es.deinit(gpa);
 
@@ -365,11 +367,12 @@ test "cb overflow" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es = try Entities.init(gpa, .{
+    var es: Entities = try .init(gpa, .{
         .max_entities = 100,
         .comp_bytes = 100,
         .max_archetypes = 8,
         .max_chunks = 8,
+        .chunk_size = 128,
     });
     defer es.deinit(gpa);
 
@@ -553,11 +556,12 @@ test "cb capacity" {
 
     const cb_capacity = 600;
 
-    var es = try Entities.init(gpa, .{
+    var es: Entities = try .init(gpa, .{
         .max_entities = cb_capacity * 10,
         .comp_bytes = cb_capacity * 10,
         .max_archetypes = 8,
         .max_chunks = 8,
+        .chunk_size = 128,
     });
     defer es.deinit(gpa);
 
@@ -748,11 +752,12 @@ test "format entity" {
 
 test "change arch immediate" {
     defer CompFlag.unregisterAll();
-    var es = try Entities.init(gpa, .{
+    var es: Entities = try .init(gpa, .{
         .max_entities = 100,
         .comp_bytes = 100,
         .max_archetypes = 8,
         .max_chunks = 8,
+        .chunk_size = 128,
     });
     defer es.deinit(gpa);
 
@@ -812,7 +817,7 @@ test "change arch immediate" {
 
 test "getAll" {
     defer CompFlag.unregisterAll();
-    var es = try Entities.init(gpa, .{
+    var es: Entities = try .init(gpa, .{
         .max_entities = 100,
         .comp_bytes = 100,
         .max_archetypes = 8,
@@ -855,11 +860,12 @@ test "getAll" {
 
 test "entity overflow" {
     defer CompFlag.unregisterAll();
-    var es = try Entities.init(gpa, .{
+    var es: Entities = try .init(gpa, .{
         .max_entities = 3,
         .comp_bytes = 4,
         .max_archetypes = 8,
         .max_chunks = 8,
+        .chunk_size = 128,
     });
     defer es.deinit(gpa);
 
@@ -878,11 +884,12 @@ test "entity overflow" {
 
 test "archetype overflow" {
     defer CompFlag.unregisterAll();
-    var es = try Entities.init(gpa, .{
+    var es: Entities = try .init(gpa, .{
         .max_entities = 3,
         .comp_bytes = 4,
         .max_archetypes = 3,
         .max_chunks = 3,
+        .chunk_size = 128,
     });
     defer es.deinit(gpa);
 
@@ -925,7 +932,7 @@ test "archetype overflow" {
 
 test "chunk overflow" {
     defer CompFlag.unregisterAll();
-    var es = try Entities.init(gpa, .{
+    var es: Entities = try .init(gpa, .{
         .max_entities = 4096,
         .comp_bytes = 4096,
         .max_archetypes = 3,
@@ -988,11 +995,12 @@ test "chunk overflow" {
 // anywhere else.
 test "zero sized Entity.from" {
     defer CompFlag.unregisterAll();
-    var es = try Entities.init(gpa, .{
+    var es: Entities = try .init(gpa, .{
         .max_entities = 3,
         .comp_bytes = 4,
         .max_archetypes = 3,
         .max_chunks = 3,
+        .chunk_size = 128,
     });
     defer es.deinit(gpa);
 

@@ -46,6 +46,8 @@ pub fn init(input: []const u8) !@This() {
         .comp_bytes = comp_bytes,
         .max_archetypes = 32,
         .max_chunks = 1024,
+        // We set a fairly small chunk size for better test coverage
+        .chunk_size = 128,
     });
     errdefer es.deinit(gpa);
 
