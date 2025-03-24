@@ -101,8 +101,8 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
 pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
     var chunk_lists_iter = self.chunk_lists.iterator(arch);
     while (chunk_lists_iter.next()) |chunk_list| {
-        var chunk_list_iter = chunk_list.iterator();
-        while (chunk_list_iter.next()) |chunk| {
+        var chunk_list_iter = chunk_list.iterator(self);
+        while (chunk_list_iter.next(self)) |chunk| {
             var chunk_iter = chunk.iterator();
             while (chunk_iter.next(&self.handle_tab)) |entity| {
                 self.handle_tab.recycle(entity.key);
@@ -137,10 +137,10 @@ pub fn iterator(
 ) Iterator {
     var arch_iter = self.chunk_lists.iterator(required_comps);
     var chunk_list_iter: ChunkList.Iterator = if (arch_iter.next()) |chunk_list|
-        chunk_list.iterator()
+        chunk_list.iterator(self)
     else
         .empty;
-    const chunk_iter: Chunk.Iterator = if (chunk_list_iter.next()) |chunk|
+    const chunk_iter: Chunk.Iterator = if (chunk_list_iter.next(self)) |chunk|
         chunk.iterator()
     else
         .empty;
@@ -174,14 +174,14 @@ pub const Iterator = struct {
             }
 
             // If that fails, get the next chunk in this chunk list
-            if (self.chunk_list_iter.next()) |chunk| {
+            if (self.chunk_list_iter.next(self.es)) |chunk| {
                 self.chunk_iter = chunk.iterator();
                 continue;
             }
 
             // If that fails, get the next chunk list in this archetype
             if (self.arch_iter.next()) |chunk_list| {
-                self.chunk_list_iter = chunk_list.iterator();
+                self.chunk_list_iter = chunk_list.iterator(self.es);
                 continue;
             }
 
@@ -212,10 +212,10 @@ pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
 
     var arch_iter = self.chunk_lists.iterator(required_comps);
     var chunk_list_iter: ChunkList.Iterator = if (arch_iter.next()) |chunk_list|
-        chunk_list.iterator()
+        chunk_list.iterator(self)
     else
         .empty;
-    const chunk_iter: Chunk.Iterator = if (chunk_list_iter.next()) |chunk|
+    const chunk_iter: Chunk.Iterator = if (chunk_list_iter.next(self)) |chunk|
         chunk.iterator()
     else
         .empty;
