@@ -75,6 +75,58 @@ pub const Chunk = opaque {
         }
     };
 
+    /// Options for `checkAssertions`.
+    const CheckAssertionsOptions = struct {
+        chunk_list: ?*const ChunkList,
+        allow_empty: bool = false,
+    };
+
+    /// Checks for self consistency.
+    fn checkAssertions(self: *const @This(), options: CheckAssertionsOptions) void {
+        const header = self.getHeaderConst();
+
+        // Validate next/prev
+        if (header.next) |next_chunk| {
+            assert(next_chunk.getHeaderConst().prev == self);
+        }
+
+        if (header.prev) |prev_chunk| {
+            assert(prev_chunk.getHeaderConst().next == self);
+        }
+
+        if (options.chunk_list) |cl| {
+            if (self == cl.head) assert(header.prev == null);
+            if (self == cl.tail) assert(header.next == null);
+        }
+
+        if (header.len >= header.capacity) {
+            // Validate full chunks
+            assert(header.len == header.capacity);
+            assert(header.next_available == null);
+            assert(header.prev_available == null);
+        } else {
+            // Available chunks shouldn't be empty, since empty chunks are returned to the chunk
+            // pool. `allow_empty` is set to true when checking a chunk that's about to be returned
+            // to the chunk pool.
+            assert(options.allow_empty or header.len > 0);
+
+            // Validate next/prev available
+            if (header.next_available) |next_available_chunk| {
+                assert(next_available_chunk.getHeaderConst().prev_available == self);
+            }
+
+            if (header.prev_available) |prev_available_chunk| {
+                assert(prev_available_chunk.getHeaderConst().next_available == self);
+            }
+
+            if (options.chunk_list) |cl| {
+                if (self == cl.available) {
+                    assert(header.prev_available == null);
+                }
+            }
+        }
+    }
+
     /// For internal use. Computes the capacity for a given chunk size.
     fn computeCapacity(chunk_size: u16) u16 {
         const buf_start = std.mem.alignForward(u16, @sizeOf(Chunk.Header), @alignOf(EntityIndex));
@@ -101,33 +153,12 @@ pub const Chunk = opaque {
         const cl: *ChunkList = es.chunk_lists.arches.getPtr(header.getArch()).?;
 
         // Validate this chunk
-        if (header.len >= header.capacity) {
-            // Check that we're not over capacity
-            assert(header.len == header.capacity);
-
-            // Check that we're not in the available list
-            assert(self != cl.available);
-            assert(header.next_available == null);
-            assert(header.prev_available == null);
-        } else {
-            // Check that we're in the available list
-            assert(@intFromBool(header.prev_available != null) ^
-                @intFromBool(cl.available == self) != 0);
-
-            // Check that the available pointers are self consistent
-            if (header.prev_available) |prev_available| {
-                assert(prev_available.getHeaderConst().next == self);
-            }
-            if (header.next_available) |next_available| {
-                assert(next_available.getHeaderConst().prev == self);
-            }
-        }
+        self.checkAssertions(.{ .chunk_list = cl, .allow_empty = true });
 
         // Remove this chunk from the chunk list head/tail
         if (cl.head == self) cl.head = header.next;
         if (cl.tail == self) cl.tail = header.prev;
         if (cl.available == self) cl.available = header.next_available;
-        assert((cl.head != null) == (cl.tail != null));
 
         // Remove this chunk from the chunk list normal and available linked lists
         if (header.prev) |prev| prev.getHeader().next = header.next;
@@ -139,6 +170,9 @@ pub const Chunk = opaque {
         header.* = undefined;
         header.next = es.chunk_pool.free;
         es.chunk_pool.free = self;
+
+        // Validate the chunk list
+        cl.checkAssertions();
     }
 
     /// For internal use. Gets the index buffer. This includes uninitialized indices.
@@ -188,8 +222,6 @@ pub const Chunk = opaque {
 
         // If this chunk was previously full, add it to this chunk list's available list
         if (was_full) {
-            assert(header.next_available == null);
-            assert(header.prev_available == null);
             const cl: *ChunkList = es.chunk_lists.arches.getPtr(header.getArch()).?;
             if (cl.available) |head| {
                 // Don't disturb the front of the available list if there is one, this decreases
@@ -204,6 +236,12 @@ pub const Chunk = opaque {
                 // If the available list is empty, set it to this chunk
                 cl.available = self;
             }
+
+            cl.checkAssertions();
+            self.checkAssertions(.{ .chunk_list = cl });
+        } else {
+            const cl: *ChunkList = es.chunk_lists.arches.getPtr(header.getArch()).?;
+            self.checkAssertions(.{ .chunk_list = cl });
         }
     }
 
@@ -282,55 +320,60 @@ pub const ChunkList = struct {
         // Get a chunk with space available
         const chunk = self.available.?;
         const header = chunk.getHeader();
-        assert(header.prev_available == null);
+        assert(header.len < header.capacity);
+        chunk.checkAssertions(.{ .chunk_list = self, .allow_empty = true });
 
-        // Add the entity to the chunk
-        {
-            // Get the header and index buf
-            const index_buf = chunk.getIndexBuf();
+        // Append the entity
+        const index_in_chunk: IndexInChunk = @enumFromInt(header.len);
+        const index_buf = chunk.getIndexBuf();
+        index_buf[@intFromEnum(index_in_chunk)] = e.key.index;
+        header.len += 1;
 
-            // Append the entity
-            assert(header.len < header.capacity);
-            const index_in_chunk: IndexInChunk = @enumFromInt(header.len);
-            index_buf[@intFromEnum(index_in_chunk)] = e.key.index;
-            header.len += 1;
-
-            // If the chunk is now full, remove it from the available list
-            if (header.len >= header.capacity) {
-                assert(self.available == chunk);
-                self.available = chunk.getHeaderConst().next_available;
-                header.next_available = null;
-                assert(header.prev_available == null);
-                if (self.available) |available| {
-                    const available_header = available.getHeader();
-                    assert(available_header.prev_available == chunk);
-                    available_header.prev_available = null;
-                }
+        // If the chunk is now full, remove it from the available list
+        if (header.len == header.capacity) {
+            assert(self.available == chunk);
+            self.available = chunk.getHeaderConst().next_available;
+            header.next_available = null;
+            if (self.available) |available| {
+                const available_header = available.getHeader();
+                assert(available_header.prev_available == chunk);
+                available_header.prev_available = null;
             }
+        }
 
-            // Return the location we stored the entity
-            return .{
-                .chunk = chunk,
-                .index_in_chunk = index_in_chunk,
-            };
+        self.checkAssertions();
+
+        // Return the location we stored the entity
+        return .{
+            .chunk = chunk,
+            .index_in_chunk = index_in_chunk,
+        };
+    }
+
+    // Validates head and tail are self consistent.
+    fn checkAssertions(self: *const ChunkList) void {
+        if (self.head) |head| {
+            const header = head.getHeaderConst();
+            head.checkAssertions(.{ .chunk_list = self });
+            self.tail.?.checkAssertions(.{ .chunk_list = self });
+            assert(@intFromBool(header.next != null) ^ @intFromBool(head == self.tail) != 0);
+            assert(self.tail != null);
+        } else {
+            assert(self.tail == null);
+            assert(self.available == null);
+        }
+
+        if (self.available) |available| {
+            const header = available.getHeaderConst();
+            available.checkAssertions(.{ .chunk_list = self });
+            assert(header.prev_available == null);
         }
     }
 
     /// Returns an iterator over this chunk list's chunks.
     pub fn iterator(self: *const ChunkList) Iterator {
-        // Check head validity
-        if (self.head) |head| {
-            const header = head.getHeaderConst();
-            // Head shouldn't have a previous pointer
-            assert(header.prev == null);
-            // Head should have a next pointer, xor should be equal to tail
-            assert(@intFromBool(header.next != null) ^ @intFromBool(head == self.tail) != 0);
-        }
-
-        // Return the iterator
-        return .{
-            .chunk = self.head,
-        };
+        self.checkAssertions();
+        return .{ .chunk = self.head };
     }
 
     /// An iterator over a chunk list's chunks.
@@ -341,28 +384,8 @@ pub const ChunkList = struct {
 
         pub fn next(self: *@This()) ?*const Chunk {
             const chunk = self.chunk orelse return null;
+            chunk.checkAssertions(.{ .chunk_list = null });
             const header = chunk.getHeaderConst();
-
-            // Check chunk validity
-            {
-                // Next and prev should be consistent
-                if (header.next) |next_chunk| {
-                    assert(next_chunk.getHeaderConst().prev == chunk);
-                }
-
-                if (header.len >= header.capacity) {
-                    // Full chunks shouldn't be past capacity and shouldn't have available list
-                    // pointers.
-                    assert(header.len == header.capacity);
-                    assert(header.next_available == null);
-                    assert(header.prev_available == null);
-                } else {
-                    // Available chunks shouldn't be empty, since empty chunks are returned to the
-                    // chunk pool.
-                    assert(header.len > 0);
-                }
-            }
-
             self.chunk = header.next;
             return chunk;
         }
