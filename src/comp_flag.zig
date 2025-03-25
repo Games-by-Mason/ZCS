@@ -14,7 +14,7 @@ const FlagInt = u6;
 /// A tightly packed index for each registered component type.
 pub const CompFlag = enum(FlagInt) {
     /// The maximum registered component flags.
-    pub const max = std.math.maxInt(FlagInt);
+    pub const max = std.math.maxInt(FlagInt) - 1;
 
     /// A set of component flags.
     pub const Set = std.enums.EnumSet(CompFlag);

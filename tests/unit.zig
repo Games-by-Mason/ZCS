@@ -962,7 +962,7 @@ test "chunk pool overflow" {
     }
 
     // Create new entities in the chunk that was already allocated, this should be fine
-    const n = 119;
+    const n = 121;
     for (0..n) |_| {
         const e = Entity.reserveImmediate(&es);
         try expect(try e.changeArchImmediateOrErr(&es, .{ .add = &.{

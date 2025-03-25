@@ -397,14 +397,14 @@ pub const Entity = packed struct {
 
         // Get the handle value and figure out the new arch
         const entity_loc = es.handle_tab.get(self.key) orelse return false;
-        var new_arch = entity_loc.getArch();
+        var new_arch = entity_loc.getArch(&es.chunk_lists);
         new_arch = new_arch.unionWith(options.add);
         new_arch = new_arch.differenceWith(options.remove);
 
         // If the entity is committed and the arch hasn't changed, early out
         if (entity_loc.chunk) |chunk| {
             const chunk_header = chunk.getHeaderConst();
-            if (chunk_header.getArch().eql(new_arch)) {
+            if (chunk_header.getArch(&es.chunk_lists).eql(new_arch)) {
                 return true;
             }
         }
@@ -425,7 +425,7 @@ pub const Entity = packed struct {
         }
 
         // Commit the change
-        const new_loc = try chunk_list.append(&es.chunk_pool, self, new_arch);
+        const new_loc = try chunk_list.append(es, self);
         if (entity_loc.chunk) |chunk| {
             chunk.swapRemove(es, entity_loc.index_in_chunk);
         } else {
@@ -454,7 +454,7 @@ pub const Entity = packed struct {
                 view_arch.insert(flag);
             }
         }
-        if (!entity_loc.getArch().supersetOf(view_arch)) return null;
+        if (!entity_loc.getArch(&es.chunk_lists).supersetOf(view_arch)) return null;
 
         // Fill in the view and return it
         return self.viewAssumeArch(es, View);
@@ -553,8 +553,9 @@ pub const Entity = packed struct {
                 view_arch.insert(flag);
             }
         }
-        const uninitialized = view_arch.differenceWith(entity_loc.getArch());
-        if (!entity_loc.getArch().supersetOf(view_arch)) {
+        const arch = entity_loc.getArch(&es.chunk_lists);
+        const uninitialized = view_arch.differenceWith(arch);
+        if (!arch.supersetOf(view_arch)) {
             assert(try self.changeArchUninitImmediateOrErr(es, .{ .add = uninitialized }));
         }
 
@@ -599,7 +600,7 @@ pub const Entity = packed struct {
     /// empty archetype will be returned.
     pub fn getArch(self: @This(), es: *const Entities) CompFlag.Set {
         const entity_loc = es.handle_tab.get(self.key) orelse return .{};
-        return entity_loc.getArch();
+        return entity_loc.getArch(&es.chunk_lists);
     }
 
     /// Explicitly invalidates iterators to catch bugs in debug builds.
