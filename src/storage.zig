@@ -70,8 +70,6 @@ pub const Chunk = opaque {
         prev_avail: ChunkPool.Index = .none,
         /// The number of entities in this chunk.
         len: u16,
-        /// The number of entities that can be stored in this chunk.
-        capacity: u16,
 
         /// Returns this chunk's archetype.
         pub fn getArch(self: *const @This(), lists: *const ChunkLists) CompFlag.Set {
@@ -81,7 +79,7 @@ pub const Chunk = opaque {
 
     /// Checks for self consistency.
     fn checkAssertions(
-        self: *const @This(),
+        self: *const Chunk,
         es: *const Entities,
         mode: enum {
             /// By default, chunks may not be empty since if they were they'd have been returned to
@@ -110,9 +108,9 @@ pub const Chunk = opaque {
         if (self == list.head.getConst(pool)) assert(header.prev == .none);
         if (self == list.tail.getConst(pool)) assert(header.next == .none);
 
-        if (header.len >= header.capacity) {
+        if (header.len >= list.chunk_capacity) {
             // Validate full chunks
-            assert(header.len == header.capacity);
+            assert(header.len == list.chunk_capacity);
             assert(header.next_avail == .none);
             assert(header.prev_avail == .none);
         } else {
@@ -195,20 +193,21 @@ pub const Chunk = opaque {
     }
 
     /// For internal use. Gets the index buffer. This includes uninitialized indices.
-    fn getIndexBuf(self: *Chunk) []EntityIndex {
+    fn getIndexBuf(self: *Chunk, es: *const Entities) []EntityIndex {
         // This const cast is okay since it starts out mutable.
-        return @constCast(self.getIndexBufConst());
+        return @constCast(self.getIndexBufConst(es));
     }
 
     /// For internal use. See `getIndexBuf`.
-    fn getIndexBufConst(self: *const Chunk) []const EntityIndex {
+    fn getIndexBufConst(self: *const Chunk, es: *const Entities) []const EntityIndex {
         const header = self.getHeaderConst();
         const ptr: [*]EntityIndex = @ptrFromInt(std.mem.alignForward(
             usize,
             @intFromPtr(self) + @sizeOf(Header),
             @alignOf(EntityIndex),
         ));
-        return ptr[0..header.capacity];
+        const list = header.list.getConst(&es.chunk_lists);
+        return ptr[0..list.chunk_capacity];
     }
 
     /// For internal use. Swap removes an entity from the chunk, updating the location of the moved
@@ -217,12 +216,13 @@ pub const Chunk = opaque {
         const pool = &es.chunk_pool;
         const header = self.getHeader();
         const index = pool.indexOf(self);
+        const list = header.list.get(&es.chunk_lists);
 
         // Check if we were full before the remove
-        const was_full = header.len >= header.capacity;
+        const was_full = header.len >= list.chunk_capacity;
 
         // Pop the last entity
-        const indices = self.getIndexBuf();
+        const indices = self.getIndexBuf(es);
         header.len -= 1;
         const moved = indices[header.len];
 
@@ -243,7 +243,6 @@ pub const Chunk = opaque {
 
         // If this chunk was previously full, add it to this chunk list's available list
         if (was_full) {
-            const list = header.list.get(&es.chunk_lists);
             if (list.avail.get(pool)) |head| {
                 // Don't disturb the front of the available list if there is one, this decreases
                 // fragmentation by guaranteeing that we fill one chunk at a time.
@@ -257,10 +256,9 @@ pub const Chunk = opaque {
                 // If the available list is empty, set it to this chunk
                 list.avail = index;
             }
-
-            list.checkAssertions(es);
         }
 
+        list.checkAssertions(es);
         self.checkAssertions(es, .default);
     }
 
@@ -280,7 +278,6 @@ pub const Chunk = opaque {
                     std.math.maxInt(@typeInfo(@FieldType(Header, "list")).@"enum".tag_type),
                 ),
                 .len = 0,
-                .capacity = 0,
             }),
             .index_in_chunk = @enumFromInt(0),
         };
@@ -288,15 +285,15 @@ pub const Chunk = opaque {
         chunk: *const Chunk,
         index_in_chunk: IndexInChunk,
 
-        pub fn next(self: *@This(), handle_tab: *const HandleTab) ?Entity {
+        pub fn next(self: *@This(), es: *const Entities) ?Entity {
             const header = self.chunk.getHeaderConst();
             if (@intFromEnum(self.index_in_chunk) >= header.len) return null;
-            const indices = self.chunk.getIndexBufConst();
+            const indices = self.chunk.getIndexBufConst(es);
             const entity_index = indices[@intFromEnum(self.index_in_chunk)];
             self.index_in_chunk = @enumFromInt(@intFromEnum(self.index_in_chunk) + 1);
             return .{ .key = .{
                 .index = entity_index,
-                .generation = handle_tab.generations[entity_index],
+                .generation = es.handle_tab.generations[entity_index],
             } };
         }
     };
@@ -316,6 +313,8 @@ pub const ChunkList = struct {
     /// A map from component flags to the byte offset of their arrays. Components that aren't
     /// present or are zero sized have undefined offsets.
     comp_buffer_offsets: std.enums.EnumArray(CompFlag, u16),
+    /// The number of entities that can be stored in a single chunk from this list.
+    chunk_capacity: u16,
 
     fn alignmentGte(_: void, lhs: CompFlag, rhs: CompFlag) bool {
         const lhs_alignment = lhs.getId().alignment;
@@ -403,7 +402,7 @@ pub const ChunkList = struct {
     }
 
     /// For internal use. Initializes a chunk list.
-    pub fn init(arch: CompFlag.Set) ChunkList {
+    pub fn init(pool: *const ChunkPool, arch: CompFlag.Set) error{ZcsChunkOverflow}!ChunkList {
         const sorted = sortCompsByAlignment(arch);
 
         _ = sorted;
@@ -414,12 +413,15 @@ pub const ChunkList = struct {
             @alignOf(@FieldType(HandleTab.Key, "index")),
         );
 
+        const chunk_capacity = try Chunk.computeCapacity(pool.size_align);
+
         return .{
             .head = .none,
             .tail = .none,
             .avail = .none,
             .comp_buffer_offsets = .initUndefined(),
             .index_buffer_offset = index_buffer_offset,
+            .chunk_capacity = chunk_capacity,
         };
     }
 
@@ -428,7 +430,7 @@ pub const ChunkList = struct {
         self: *@This(),
         es: *Entities,
         e: Entity,
-    ) error{ ZcsChunkOverflow, ZcsChunkPoolOverflow }!EntityLoc {
+    ) error{ZcsChunkPoolOverflow}!EntityLoc {
         const pool = &es.chunk_pool;
         const lists = &es.chunk_lists;
 
@@ -455,17 +457,17 @@ pub const ChunkList = struct {
         // Get the next chunk with space available
         const chunk = self.avail.get(pool).?;
         const header = chunk.getHeader();
-        assert(header.len < header.capacity);
+        assert(header.len < self.chunk_capacity);
         chunk.checkAssertions(es, .allow_empty);
 
         // Append the entity
         const index_in_chunk: IndexInChunk = @enumFromInt(header.len);
-        const index_buf = chunk.getIndexBuf();
+        const index_buf = chunk.getIndexBuf(es);
         index_buf[@intFromEnum(index_in_chunk)] = e.key.index;
         header.len += 1;
 
         // If the chunk is now full, remove it from the available list
-        if (header.len == header.capacity) {
+        if (header.len == self.chunk_capacity) {
             assert(self.avail.getConst(pool) == chunk);
             self.avail = chunk.getHeaderConst().next_avail;
             header.next_avail = .none;
@@ -621,10 +623,7 @@ pub const ChunkPool = struct {
     pub fn reserve(
         self: *ChunkPool,
         list: ChunkLists.Index,
-    ) error{ ZcsChunkPoolOverflow, ZcsChunkOverflow }!*Chunk {
-        // Calculate the chunk's capacity
-        const capacity = try Chunk.computeCapacity(self.size_align);
-
+    ) error{ZcsChunkPoolOverflow}!*Chunk {
         // Get a free chunk. Try the free list first, then fall back to bump allocation from the
         // preallocated buffer.
         const chunk = if (self.free.get(self)) |free| b: {
@@ -649,7 +648,6 @@ pub const ChunkPool = struct {
         header.* = .{
             .list = list,
             .len = 0,
-            .capacity = capacity,
         };
         return chunk;
     }
@@ -712,7 +710,11 @@ pub const ChunkLists = struct {
 
     /// For internal use. Gets the chunk list for the given archetype, initializing it if it doesn't
     /// exist.
-    pub fn getOrPut(self: *@This(), arch: CompFlag.Set) error{ZcsArchOverflow}!*ChunkList {
+    pub fn getOrPut(
+        self: *@This(),
+        pool: *const ChunkPool,
+        arch: CompFlag.Set,
+    ) error{ ZcsChunkOverflow, ZcsArchOverflow }!*ChunkList {
         // This is a bit awkward, but works around there not being a get or put variation
         // that fails when allocation is needed.
         //
@@ -724,13 +726,15 @@ pub const ChunkLists = struct {
         // work.
         const gop = self.arches.getOrPutAssumeCapacity(arch);
         errdefer if (!gop.found_existing) {
+            // We have to unlock pointers to do this, but we're just doing a swap remove so the
+            // indices that we already store into the array won't change.
             self.arches.unlockPointers();
             assert(self.arches.swapRemove(arch));
             self.arches.lockPointers();
         };
         if (!gop.found_existing) {
             if (self.arches.count() >= self.capacity) return error.ZcsArchOverflow;
-            gop.value_ptr.* = .init(arch);
+            gop.value_ptr.* = try .init(pool, arch);
         }
         return gop.value_ptr;
     }

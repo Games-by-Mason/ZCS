@@ -410,7 +410,7 @@ pub const Entity = packed struct {
         }
 
         // Get the archetype list
-        const chunk_list = try es.chunk_lists.getOrPut(new_arch);
+        const chunk_list = try es.chunk_lists.getOrPut(&es.chunk_pool, new_arch);
 
         // Check if we have enough space
         var added = options.add.differenceWith(options.remove).iterator();

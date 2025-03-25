@@ -1101,7 +1101,7 @@ test "chunk overflow" {
         .init(u1, &0),
     } }));
     try expectEqual(0, es.chunk_pool.reserved);
-    try expectEqual(1, es.chunk_lists.arches.count());
+    try expectEqual(0, es.chunk_lists.arches.count());
 }
 
 // This is a regression test. We do something a little tricky with zero sized types--we "allocate"

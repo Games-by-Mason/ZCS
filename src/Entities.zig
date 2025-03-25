@@ -102,7 +102,7 @@ pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
         var chunk_list_iter = chunk_list.iterator(self);
         while (chunk_list_iter.next(self)) |chunk| {
             var chunk_iter = chunk.iterator();
-            while (chunk_iter.next(&self.handle_tab)) |entity| {
+            while (chunk_iter.next(self)) |entity| {
                 self.handle_tab.recycle(entity.key);
             }
             // We have a mutable reference to entities, so it's fine to cast the const away here
@@ -167,7 +167,7 @@ pub const Iterator = struct {
 
         while (true) {
             // Get the next entity in this chunk
-            if (self.chunk_iter.next(&self.es.handle_tab)) |entity| {
+            if (self.chunk_iter.next(self.es)) |entity| {
                 return entity;
             }
 
