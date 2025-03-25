@@ -930,7 +930,7 @@ test "archetype overflow" {
     try expectEqual(2, es.chunk_lists.arches.count());
 }
 
-test "chunk overflow" {
+test "chunk pool overflow" {
     defer CompFlag.unregisterAll();
     var es: Entities = try .init(gpa, .{
         .max_entities = 4096,
@@ -1080,6 +1080,28 @@ test "chunk overflow" {
         } }));
         try expectEqual(n + 1, es.count());
     }
+}
+
+test "chunk overflow" {
+    defer CompFlag.unregisterAll();
+    var es: Entities = try .init(gpa, .{
+        .max_entities = 4096,
+        .comp_bytes = 4096,
+        .max_archetypes = 5,
+        .max_chunks = 1,
+        .chunk_size = 1,
+    });
+    defer es.deinit(gpa);
+
+    const e0 = Entity.reserveImmediate(&es);
+    try expectEqual(0, es.chunk_lists.arches.count());
+
+    // Create one chunk
+    try expectError(error.ZcsChunkOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+        .init(u1, &0),
+    } }));
+    try expectEqual(0, es.chunk_pool.reserved);
+    try expectEqual(1, es.chunk_lists.arches.count());
 }
 
 // This is a regression test. We do something a little tricky with zero sized types--we "allocate"

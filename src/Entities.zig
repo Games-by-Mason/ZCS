@@ -46,10 +46,8 @@ pub const Options = struct {
     max_archetypes: u16,
     /// The number of chunks to allocate.
     max_chunks: u32,
-    /// The size of each chunk. It's recommended that you leave this set to `null`.
-    ///
-    /// See the documentation on `Chunk` for more details.
-    chunk_size: ?u16 = null,
+    /// The size of each chunk.
+    chunk_size: u16 = 16 << 10,
 };
 
 /// Initializes the entity storage with the given capacity.

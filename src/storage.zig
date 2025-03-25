@@ -7,6 +7,8 @@ const slot_map = @import("slot_map");
 const assert = std.debug.assert;
 const math = std.math;
 
+const Alignment = std.mem.Alignment;
+
 const Entity = zcs.Entity;
 const Entities = zcs.Entities;
 const CompFlag = zcs.CompFlag;
@@ -130,11 +132,19 @@ pub const Chunk = opaque {
     }
 
     /// For internal use. Computes the capacity for a given chunk size.
-    fn computeCapacity(chunk_size: u16) u16 {
-        const buf_start = std.mem.alignForward(u16, @sizeOf(Chunk.Header), @alignOf(EntityIndex));
-        const buf_end = chunk_size;
-        const buf_len = buf_end - buf_start;
-        return buf_len / @sizeOf(EntityIndex);
+    fn computeCapacity(size_align: Alignment) error{ZcsChunkOverflow}!u16 {
+        const buf_start = std.mem.alignForward(
+            u16,
+            @sizeOf(Chunk.Header),
+            @alignOf(EntityIndex),
+        );
+        const buf_end: u16 = @intCast(size_align.toByteUnits());
+        const buf_len: u16 = std.math.sub(u16, buf_end, buf_start) catch |err| switch (err) {
+            error.Overflow => return error.ZcsChunkOverflow,
+        };
+        const result: u16 = buf_len / @sizeOf(EntityIndex);
+        if (result == 0) return error.ZcsChunkOverflow;
+        return result;
     }
 
     /// For internal use. Returns a pointer to the chunk header.
@@ -303,7 +313,7 @@ pub const ChunkList = struct {
         pool: *ChunkPool,
         e: Entity,
         arch: CompFlag.Set,
-    ) error{ZcsChunkPoolOverflow}!EntityLoc {
+    ) error{ ZcsChunkOverflow, ZcsChunkPoolOverflow }!EntityLoc {
         // Ensure there's a chunk with space available
         if (self.avail == .none) {
             // Allocate a new chunk
@@ -401,12 +411,6 @@ pub const ChunkList = struct {
     };
 };
 
-/// The maximum chunk size.
-pub const min_chunk_size: u16 = math.ceilPowerOfTwoAssert(usize, @sizeOf(Chunk.Header) + 1);
-
-/// The minimum chunk size.
-pub const max_chunk_size: u16 = std.heap.page_size_max;
-
 /// For internal use. A pool of `Chunk`s.
 pub const ChunkPool = struct {
     pub const Index = enum(u32) {
@@ -423,7 +427,11 @@ pub const ChunkPool = struct {
         /// See `get`.
         pub fn getConst(self: Index, pool: *const ChunkPool) ?*const Chunk {
             if (self == .none) return null;
-            const result: *const Chunk = @ptrCast(&pool.buf[@intFromEnum(self) * pool.chunk_size]);
+            const byte_idx = @shlExact(
+                @intFromEnum(self),
+                @intCast(@intFromEnum(pool.size_align)),
+            );
+            const result: *const Chunk = @ptrCast(&pool.buf[byte_idx]);
             assert(@intFromEnum(self) < pool.reserved);
             assert(pool.indexOf(result) == self);
             return result;
@@ -431,11 +439,11 @@ pub const ChunkPool = struct {
     };
 
     /// Memory reserved for chunks
-    buf: []align(max_chunk_size) u8,
+    buf: []u8,
     /// The number of unique chunks that have ever reserved
     reserved: u32,
-    /// The size of a chunk
-    chunk_size: u16,
+    /// The chunk size and alignment are both set to this value.
+    size_align: Alignment,
     /// Freed chunks, connected by the `next` field. All other fields are undefined.
     free: Index = .none,
 
@@ -444,40 +452,46 @@ pub const ChunkPool = struct {
         /// The number of chunks to reserve. Supports the range `[0, std.math.maxInt(u32))`, max int
         /// is reserved for the none index.
         capacity: u32,
-        /// The size of each chunk. When left `null`, defaults to `std.heap.pageSize()`. Must be a
-        /// power of two in the range `[min_chunk_size, max_chunk_size]`.
-        chunk_size: ?u16 = null,
+        /// The size of each chunk.
+        chunk_size: u16,
     };
 
     /// For internal use. Allocates the chunk pool.
     pub fn init(gpa: Allocator, options: Options) Allocator.Error!ChunkPool {
+        // The max size is reserved for invalid indices.
         assert(options.capacity < std.math.maxInt(u32));
-        const chunk_size: u16 = @intCast(options.chunk_size orelse std.heap.pageSize());
-        // Check our sizes, the rest of the pool logic is allowed to depend on these invariants
-        // holding true
-        comptime assert(math.isPowerOfTwo(max_chunk_size));
-        assert(math.isPowerOfTwo(chunk_size));
-        assert(chunk_size >= min_chunk_size);
-        assert(chunk_size <= max_chunk_size);
 
-        const buf = try gpa.alignedAlloc(u8, max_chunk_size, chunk_size * options.capacity);
+        // Allocate the chunk data, aligned to the size of a chunk
+        const alignment = Alignment.fromByteUnits(options.chunk_size);
+        const len = @as(usize, options.chunk_size) * @as(usize, options.capacity);
+        const buf = (gpa.rawAlloc(
+            len,
+            alignment,
+            @returnAddress(),
+        ) orelse return error.OutOfMemory)[0..len];
         errdefer comptime unreachable;
 
         return .{
             .buf = buf,
             .reserved = 0,
-            .chunk_size = chunk_size,
+            .size_align = alignment,
         };
     }
 
     /// For internal use. Frees the chunk pool.
     pub fn deinit(self: *ChunkPool, gpa: Allocator) void {
-        gpa.free(self.buf);
+        gpa.rawFree(self.buf, self.size_align, @returnAddress());
         self.* = undefined;
     }
 
     /// For internal use. Reserves a chunk from the chunk pool
-    pub fn reserve(self: *ChunkPool, arch: CompFlag.Set) error{ZcsChunkPoolOverflow}!*Chunk {
+    pub fn reserve(
+        self: *ChunkPool,
+        arch: CompFlag.Set,
+    ) error{ ZcsChunkPoolOverflow, ZcsChunkOverflow }!*Chunk {
+        // Calculate the chunk's capacity
+        const capacity = try Chunk.computeCapacity(self.size_align);
+
         // Get a free chunk. Try the free list first, then fall back to bump allocation from the
         // preallocated buffer.
         const chunk = if (self.free.get(self)) |free| b: {
@@ -486,22 +500,23 @@ pub const ChunkPool = struct {
             break :b free;
         } else b: {
             // Pop the next chunk from the preallocated buffer
-            if (self.reserved >= self.buf.len / self.chunk_size) return error.ZcsChunkPoolOverflow;
-            const chunk: *Chunk = @ptrCast(&self.buf[self.reserved * self.chunk_size]);
+            const byte_idx = @shlExact(self.reserved, @intCast(@intFromEnum(self.size_align)));
+            if (byte_idx >= self.buf.len) return error.ZcsChunkPoolOverflow;
+            const chunk: *Chunk = @ptrCast(&self.buf[byte_idx]);
             self.reserved = self.reserved + 1;
             break :b chunk;
         };
         errdefer comptime unreachable; // Already modified the free list!
 
         // Check the alignment
-        assert(@intFromPtr(chunk) % self.chunk_size == 0);
+        assert(self.size_align.check(@intFromPtr(chunk)));
 
         // Initialize the chunk and return it
         const header = chunk.getHeader();
         header.* = .{
             .arch_mask = arch.bits.mask,
             .len = 0,
-            .capacity = Chunk.computeCapacity(self.chunk_size),
+            .capacity = capacity,
         };
         return chunk;
     }
@@ -512,7 +527,7 @@ pub const ChunkPool = struct {
         assert(@intFromPtr(chunk) < @intFromPtr(self.buf.ptr) + self.buf.len);
         const offset = @intFromPtr(chunk) - @intFromPtr(self.buf.ptr);
         assert(offset < self.buf.len);
-        return @enumFromInt(@divExact(offset, self.chunk_size));
+        return @enumFromInt(@shrExact(offset, @intFromEnum(self.size_align)));
     }
 };
 

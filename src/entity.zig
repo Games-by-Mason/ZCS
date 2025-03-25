@@ -287,22 +287,14 @@ pub const Entity = packed struct {
     /// the entity no longer exists.
     ///
     /// See note on `add` with regards to performance.
-    pub fn remove(
-        self: @This(),
-        cb: *CmdBuf,
-        T: type,
-    ) void {
+    pub fn remove(self: @This(), cb: *CmdBuf, T: type) void {
         self.removeId(cb, typeId(T)) catch |err|
             @panic(@errorName(err));
     }
 
     /// Similar to `remove`, but doesn't require compile time types and returns an error on failure
     /// instead of panicking on failure.
-    pub fn removeId(
-        self: @This(),
-        cb: *CmdBuf,
-        id: TypeId,
-    ) error{ZcsCmdBufOverflow}!void {
+    pub fn removeId(self: @This(), cb: *CmdBuf, id: TypeId) error{ZcsCmdBufOverflow}!void {
         // Restore the state on failure
         const restore = cb.*;
         errdefer cb.* = restore;
@@ -352,7 +344,7 @@ pub const Entity = packed struct {
         self: @This(),
         es: *Entities,
         changes: ChangeArchImmediateOptions,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkPoolOverflow }!bool {
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!bool {
         // Early out if the entity does not exist, also checks some assertions
         if (!self.exists(es)) return false;
 
@@ -400,7 +392,7 @@ pub const Entity = packed struct {
         self: @This(),
         es: *Entities,
         options: ChangeArchUninitImmediateOptions,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkPoolOverflow }!bool {
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!bool {
         invalidateIterators(es);
 
         // Get the handle value and figure out the new arch
@@ -485,7 +477,7 @@ pub const Entity = packed struct {
         es: *Entities,
         T: type,
         default: T,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkPoolOverflow }!?*T {
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!?*T {
         const result = try self.viewOrAddImmediateOrErr(es, struct { *T }, .{&default}) orelse
             return null;
         return result[0];
@@ -510,7 +502,7 @@ pub const Entity = packed struct {
         es: *Entities,
         View: type,
         comps: anytype,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkPoolOverflow }!?View {
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!?View {
         // Create the view, possibly leaving some components uninitialized
         const result = (try self.viewOrAddUninitImmediateOrErr(es, View)) orelse return null;
 
@@ -545,11 +537,12 @@ pub const Entity = packed struct {
     }
 
     /// Similar to `viewOrAddImmediate`, but returns an error on failure instead of panicking.
-    pub fn viewOrAddUninitImmediateOrErr(
-        self: @This(),
-        es: *Entities,
-        View: type,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkPoolOverflow }!?VoaUninitResult(View) {
+    pub fn viewOrAddUninitImmediateOrErr(self: @This(), es: *Entities, View: type) error{
+        ZcsCompOverflow,
+        ZcsArchOverflow,
+        ZcsChunkOverflow,
+        ZcsChunkPoolOverflow,
+    }!?VoaUninitResult(View) {
         // Figure out which components are missing
         const entity_loc = es.handle_tab.get(self.key) orelse return null;
         var view_arch: CompFlag.Set = .{};

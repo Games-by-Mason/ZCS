@@ -180,7 +180,7 @@ pub fn execImmediate(self: *@This(), es: *Entities) void {
 pub fn execImmediateOrErr(
     self: *@This(),
     es: *Entities,
-) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkPoolOverflow }!void {
+) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
     var iter = self.iterator();
     while (iter.next()) |batch| {
         switch (batch) {
@@ -299,7 +299,7 @@ pub const Batch = union(enum) {
             self: @This(),
             es: *Entities,
             delta: Delta,
-        ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkPoolOverflow }!bool {
+        ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!bool {
             if (delta.destroy) return self.entity.destroyImmediate(es);
 
             // Issue the change archetype command.  If no changes were requested, this will

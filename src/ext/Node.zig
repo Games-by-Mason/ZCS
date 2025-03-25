@@ -299,7 +299,13 @@ pub const exec = struct {
     pub fn immediateOrErr(
         es: *Entities,
         cb: CmdBuf,
-    ) error{ ZcsCompOverflow, ZcsEntityOverflow, ZcsArchOverflow, ZcsChunkPoolOverflow }!void {
+    ) error{
+        ZcsCompOverflow,
+        ZcsEntityOverflow,
+        ZcsArchOverflow,
+        ZcsChunkOverflow,
+        ZcsChunkPoolOverflow,
+    }!void {
         var batches = cb.iterator();
         while (batches.next()) |batch| {
             switch (batch) {
@@ -321,7 +327,7 @@ pub const exec = struct {
     pub fn extImmediateOrErr(
         es: *Entities,
         payload: Any,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkPoolOverflow }!void {
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
         if (payload.as(SetParent)) |set_parent| {
             const child = set_parent.child;
             if (set_parent.parent.unwrap()) |parent| {

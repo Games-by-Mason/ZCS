@@ -348,10 +348,13 @@ pub const exec = struct {
 
     /// Similar to `immediate`, but returns an error on failure instead of panicking. On error the
     /// commands are left partially evaluated.
-    pub fn immediateOrErr(
-        es: *Entities,
-        cb: CmdBuf,
-    ) error{ ZcsCompOverflow, ZcsEntityOverflow, ZcsArchOverflow, ZcsChunkPoolOverflow }!void {
+    pub fn immediateOrErr(es: *Entities, cb: CmdBuf) error{
+        ZcsCompOverflow,
+        ZcsEntityOverflow,
+        ZcsArchOverflow,
+        ZcsChunkOverflow,
+        ZcsChunkPoolOverflow,
+    }!void {
         var batches = cb.iterator();
         while (batches.next()) |batch| {
             switch (batch) {
@@ -415,7 +418,7 @@ pub const exec = struct {
     pub fn extImmediateOrErr(
         es: *Entities,
         payload: Any,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkPoolOverflow }!void {
+    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
         try Node.exec.extImmediateOrErr(es, payload);
         if (payload.as(Node.SetParent)) |set_parent| {
             if (set_parent.child.get(es, Transform2D)) |transform| {
