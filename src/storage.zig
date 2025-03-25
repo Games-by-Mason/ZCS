@@ -201,12 +201,8 @@ pub const Chunk = opaque {
     /// For internal use. See `getIndexBuf`.
     fn getIndexBufConst(self: *const Chunk, es: *const Entities) []const EntityIndex {
         const header = self.getHeaderConst();
-        const ptr: [*]EntityIndex = @ptrFromInt(std.mem.alignForward(
-            usize,
-            @intFromPtr(self) + @sizeOf(Header),
-            @alignOf(EntityIndex),
-        ));
         const list = header.list.getConst(&es.chunk_lists);
+        const ptr: [*]EntityIndex = @ptrFromInt(@intFromPtr(self) + list.index_buffer_offset);
         return ptr[0..list.chunk_capacity];
     }
 
