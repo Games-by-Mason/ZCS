@@ -269,8 +269,8 @@ pub fn ViewIterator(View: type) type {
                             const flag = typeId(T).comp_flag orelse break :b false;
 
                             // If it has a flag, check if we have it
-                            const chunk_header = entity_loc.chunk.?.getHeaderConst();
-                            const arch = chunk_header.getArch(&self.entity_iter.es.chunk_lists);
+                            const chunk_header = entity_loc.chunk.?.header();
+                            const arch = chunk_header.arch(&self.entity_iter.es.chunk_lists);
                             break :b arch.contains(flag);
                         } else b: {
                             // If the component isn't optional, we can assume we have it

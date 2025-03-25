@@ -199,8 +199,7 @@ pub const Entity = packed struct {
     /// Similar to `has`, but operates on component IDs instead of types.
     pub fn hasId(self: @This(), es: *const Entities, id: TypeId) bool {
         const flag = id.comp_flag orelse return false;
-        const arch = self.getArch(es);
-        return arch.contains(flag);
+        return self.arch(es).contains(flag);
     }
 
     /// Retrieves the given component type. Returns null if the entity does not have this component
@@ -397,14 +396,14 @@ pub const Entity = packed struct {
 
         // Get the handle value and figure out the new arch
         const entity_loc = es.handle_tab.get(self.key) orelse return false;
-        var new_arch = entity_loc.getArch(&es.chunk_lists);
+        var new_arch = entity_loc.arch(&es.chunk_lists);
         new_arch = new_arch.unionWith(options.add);
         new_arch = new_arch.differenceWith(options.remove);
 
         // If the entity is committed and the arch hasn't changed, early out
         if (entity_loc.chunk) |chunk| {
-            const chunk_header = chunk.getHeaderConst();
-            if (chunk_header.getArch(&es.chunk_lists).eql(new_arch)) {
+            const chunk_header = chunk.header();
+            if (chunk_header.arch(&es.chunk_lists).eql(new_arch)) {
                 return true;
             }
         }
@@ -454,7 +453,7 @@ pub const Entity = packed struct {
                 view_arch.insert(flag);
             }
         }
-        if (!entity_loc.getArch(&es.chunk_lists).supersetOf(view_arch)) return null;
+        if (!entity_loc.arch(&es.chunk_lists).supersetOf(view_arch)) return null;
 
         // Fill in the view and return it
         return self.viewAssumeArch(es, View);
@@ -553,9 +552,9 @@ pub const Entity = packed struct {
                 view_arch.insert(flag);
             }
         }
-        const arch = entity_loc.getArch(&es.chunk_lists);
-        const uninitialized = view_arch.differenceWith(arch);
-        if (!arch.supersetOf(view_arch)) {
+        const curr_arch = entity_loc.arch(&es.chunk_lists);
+        const uninitialized = view_arch.differenceWith(curr_arch);
+        if (!curr_arch.supersetOf(view_arch)) {
             assert(try self.changeArchUninitImmediateOrErr(es, .{ .add = uninitialized }));
         }
 
@@ -598,9 +597,9 @@ pub const Entity = packed struct {
 
     /// Returns the archetype of the entity. If it has been destroyed or is not yet committed, the
     /// empty archetype will be returned.
-    pub fn getArch(self: @This(), es: *const Entities) CompFlag.Set {
+    pub fn arch(self: @This(), es: *const Entities) CompFlag.Set {
         const entity_loc = es.handle_tab.get(self.key) orelse return .{};
-        return entity_loc.getArch(&es.chunk_lists);
+        return entity_loc.arch(&es.chunk_lists);
     }
 
     /// Explicitly invalidates iterators to catch bugs in debug builds.
