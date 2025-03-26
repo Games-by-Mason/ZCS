@@ -9,6 +9,8 @@ const typeId = zcs.typeId;
 const assert = std.debug.assert;
 const math = std.math;
 
+const alignForward = std.mem.alignForward;
+
 const Alignment = std.mem.Alignment;
 
 const Entity = zcs.Entity;
@@ -133,22 +135,6 @@ pub const Chunk = opaque {
         }
     }
 
-    /// For internal use. Computes the capacity for a given chunk size.
-    fn computeCapacity(size_align: Alignment) error{ZcsChunkOverflow}!u16 {
-        const buf_start = std.mem.alignForward(
-            u16,
-            @sizeOf(Chunk.Header),
-            @alignOf(EntityIndex),
-        );
-        const buf_end: u16 = @intCast(size_align.toByteUnits());
-        const buf_len: u16 = std.math.sub(u16, buf_end, buf_start) catch |err| switch (err) {
-            error.Overflow => return error.ZcsChunkOverflow,
-        };
-        const result: u16 = buf_len / @sizeOf(EntityIndex);
-        if (result == 0) return error.ZcsChunkOverflow;
-        return result;
-    }
-
     /// For internal use. Returns a pointer to the chunk header.
     pub inline fn headerMut(self: *Chunk) *Header {
         // This const cast is okay since it starts out mutable.
@@ -267,7 +253,7 @@ pub const Chunk = opaque {
         pub const empty: @This() = .{
             .chunk = @ptrCast(&Header{
                 .list = @enumFromInt(
-                    std.math.maxInt(@typeInfo(@FieldType(Header, "list")).@"enum".tag_type),
+                    math.maxInt(@typeInfo(@FieldType(Header, "list")).@"enum".tag_type),
                 ),
                 .len = 0,
             }),
@@ -365,7 +351,7 @@ pub const ChunkList = struct {
                 d_2,
             }));
             try std.testing.expectEqual(15, sorted.len);
-            var prev: usize = std.math.maxInt(usize);
+            var prev: usize = math.maxInt(usize);
             for (sorted.constSlice()) |flag| {
                 const curr = flag.getId().alignment;
                 try std.testing.expect(curr <= prev);
@@ -394,21 +380,83 @@ pub const ChunkList = struct {
 
     /// For internal use. Initializes a chunk list.
     pub fn init(pool: *const ChunkPool, arch: CompFlag.Set) error{ZcsChunkOverflow}!ChunkList {
+        // Sort the components from greatest to least alignment.
         const sorted = sortCompsByAlignment(arch);
 
-        const index_buffer_offset = std.mem.alignForward(
-            u16,
-            @sizeOf(Chunk.Header),
-            @alignOf(@FieldType(HandleTab.Key, "index")),
-        );
+        // Get the max alignment required by any component or entity index
+        const EntityIndex = @FieldType(HandleTab.Key, "index");
+        var max_align: u16 = @alignOf(EntityIndex);
+        if (sorted.len > 0) max_align = @max(max_align, sorted.get(0).getId().alignment);
 
-        const chunk_capacity = try Chunk.computeCapacity(pool.size_align);
+        // Initialize the offset to the start of the data
+        const data_offset: u16 = alignForward(u16, @sizeOf(Chunk.Header), max_align);
+
+        // Calculate how many bytes of data there are
+        const bytes = math.sub(
+            u16,
+            @intCast(pool.size_align.toByteUnits()),
+            data_offset,
+        ) catch return error.ZcsChunkOverflow;
+
+        // Calculate how much space one entity takes
+        var entity_size: u16 = @sizeOf(EntityIndex);
+        for (sorted.constSlice()) |comp| {
+            const comp_size = math.cast(u16, comp.getId().size) orelse
+                return error.ZcsChunkOverflow;
+            entity_size = math.add(u16, entity_size, comp_size) catch
+                return error.ZcsChunkOverflow;
+        }
+
+        // Calculate the capacity in entities
+        const chunk_capacity: u16 = bytes / entity_size;
+
+        // Check that we have enough space for at least one entity
+        if (chunk_capacity <= 0) return error.ZcsChunkOverflow;
+
+        // Calculate the offsets for each component
+        var offset: u16 = data_offset;
+        var comp_buffer_offsets: std.enums.EnumArray(CompFlag, u16) = .initUndefined();
+        var index_buffer_offset: u16 = 0;
+        for (sorted.constSlice()) |comp| {
+            const id = comp.getId();
+
+            // If we haven't found a place for the index buffer, check if it can go here
+            if (index_buffer_offset == 0 and id.alignment <= @alignOf(EntityIndex)) {
+                assert(offset % @alignOf(EntityIndex) == 0);
+                index_buffer_offset = offset;
+                const buf_size = math.mul(u16, @sizeOf(EntityIndex), chunk_capacity) catch
+                    return error.ZcsChunkOverflow;
+                offset = math.add(u16, offset, buf_size) catch
+                    return error.ZcsChunkOverflow;
+            }
+
+            // Store the offset to this component type
+            assert(offset % id.alignment == 0);
+            comp_buffer_offsets.set(comp, offset);
+            const comp_size = math.cast(u16, id.size) orelse
+                return error.ZcsChunkOverflow;
+            const buf_size = math.mul(u16, comp_size, chunk_capacity) catch
+                return error.ZcsChunkOverflow;
+            offset = math.add(u16, offset, buf_size) catch
+                return error.ZcsChunkOverflow;
+        }
+
+        // If we haven't found a place for the index buffer, place it at the end
+        if (index_buffer_offset == 0) {
+            index_buffer_offset = offset;
+            const buf_size = math.mul(u16, @sizeOf(EntityIndex), chunk_capacity) catch
+                return error.ZcsChunkOverflow;
+            offset = math.add(u16, offset, buf_size) catch
+                return error.ZcsChunkOverflow;
+        }
+
+        assert(offset <= pool.size_align.toByteUnits());
 
         return .{
             .head = .none,
             .tail = .none,
             .avail = .none,
-            .comp_buffer_offsets = .initUndefined(),
+            .comp_buffer_offsets = comp_buffer_offsets,
             .index_buffer_offset = index_buffer_offset,
             .chunk_capacity = chunk_capacity,
         };
@@ -539,7 +587,7 @@ pub const ChunkList = struct {
 pub const ChunkPool = struct {
     pub const Index = enum(u32) {
         /// The none index. The capacity is always less than this value, so there's no overlap.
-        none = std.math.maxInt(u32),
+        none = math.maxInt(u32),
         _,
 
         /// See `get`.
@@ -573,7 +621,7 @@ pub const ChunkPool = struct {
 
     /// Options for `init`.
     pub const Options = struct {
-        /// The number of chunks to reserve. Supports the range `[0, std.math.maxInt(u32))`, max int
+        /// The number of chunks to reserve. Supports the range `[0, math.maxInt(u32))`, max int
         /// is reserved for the none index.
         capacity: u32,
         /// The size of each chunk.
@@ -583,7 +631,7 @@ pub const ChunkPool = struct {
     /// For internal use. Allocates the chunk pool.
     pub fn init(gpa: Allocator, options: Options) Allocator.Error!ChunkPool {
         // The max size is reserved for invalid indices.
-        assert(options.capacity < std.math.maxInt(u32));
+        assert(options.capacity < math.maxInt(u32));
 
         // Allocate the chunk data, aligned to the size of a chunk
         const alignment = Alignment.fromByteUnits(options.chunk_size);

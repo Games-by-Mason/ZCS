@@ -6,7 +6,9 @@ pub const RigidBody = struct {
         .{ .position = .{ 2.0, 3.0 }, .velocity = .{ 4.0, 5.0 }, .mass = 10.0 },
         .{ .position = .{ 24.0, 32.0 }, .velocity = .{ 42.0, 55.0 }, .mass = 103.0 },
     };
-    position: [2]f32 = .{ 1.0, 2.0 },
+    // We increase the alignment here to make sure that we're exercising the code that handles
+    // padding inside of chunks
+    position: [2]f32 align(16) = .{ 1.0, 2.0 },
     velocity: [2]f32 = .{ 3.0, 4.0 },
     mass: f32 = 5.0,
 

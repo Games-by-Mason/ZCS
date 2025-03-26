@@ -962,7 +962,7 @@ test "chunk pool overflow" {
     }
 
     // Create new entities in the chunk that was already allocated, this should be fine
-    const n = 121;
+    const n = 96;
     for (0..n) |_| {
         const e = Entity.reserveImmediate(&es);
         try expect(try e.changeArchImmediateOrErr(&es, .{ .add = &.{
@@ -1084,24 +1084,50 @@ test "chunk pool overflow" {
 
 test "chunk overflow" {
     defer CompFlag.unregisterAll();
-    var es: Entities = try .init(gpa, .{
-        .max_entities = 4096,
-        .comp_bytes = 4096,
-        .max_archetypes = 5,
-        .max_chunks = 1,
-        .chunk_size = 1,
-    });
-    defer es.deinit(gpa);
 
-    const e0 = Entity.reserveImmediate(&es);
-    try expectEqual(0, es.chunk_lists.arches.count());
+    // Not even enough room for the header
+    {
+        var es: Entities = try .init(gpa, .{
+            .max_entities = 4096,
+            .comp_bytes = 4096,
+            .max_archetypes = 5,
+            .max_chunks = 1,
+            .chunk_size = 1,
+        });
+        defer es.deinit(gpa);
 
-    // Create one chunk
-    try expectError(error.ZcsChunkOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
-        .init(u1, &0),
-    } }));
-    try expectEqual(0, es.chunk_pool.reserved);
-    try expectEqual(0, es.chunk_lists.arches.count());
+        const e0 = Entity.reserveImmediate(&es);
+        try expectEqual(0, es.chunk_lists.arches.count());
+
+        // Create one chunk
+        try expectError(error.ZcsChunkOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+            .init(u1, &0),
+        } }));
+        try expectEqual(0, es.chunk_pool.reserved);
+        try expectEqual(0, es.chunk_lists.arches.count());
+    }
+
+    // Enough room for the header, but a component is too big
+    {
+        var es: Entities = try .init(gpa, .{
+            .max_entities = 4096,
+            .comp_bytes = 4096,
+            .max_archetypes = 5,
+            .max_chunks = 1,
+            .chunk_size = 4096,
+        });
+        defer es.deinit(gpa);
+
+        const e0 = Entity.reserveImmediate(&es);
+        try expectEqual(0, es.chunk_lists.arches.count());
+
+        // Create one chunk
+        try expectError(error.ZcsChunkOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+            .init([4096]u8, undefined),
+        } }));
+        try expectEqual(0, es.chunk_pool.reserved);
+        try expectEqual(0, es.chunk_lists.arches.count());
+    }
 }
 
 // This is a regression test. We do something a little tricky with zero sized types--we "allocate"
