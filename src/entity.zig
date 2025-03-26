@@ -9,12 +9,14 @@ const typeId = zcs.typeId;
 const Subcmd = @import("subcmd.zig").Subcmd;
 
 const Entities = zcs.Entities;
+const PointerLock = zcs.PointerLock;
 const Any = zcs.Any;
 const CompFlag = zcs.CompFlag;
 const CmdBuf = zcs.CmdBuf;
 const TypeId = zcs.TypeId;
 const HandleTab = zcs.storage.HandleTab;
 const Chunk = zcs.storage.Chunk;
+const ChunkList = zcs.storage.ChunkList;
 
 /// An entity.
 ///
@@ -51,13 +53,33 @@ pub const Entity = packed struct {
 
     key: HandleTab.Key,
 
-    /// Given a pointer to a component, returns the corresponding entity.
+    /// Given a pointer to a non zero sized component, returns the corresponding entity.
     pub fn from(es: *const Entities, comp: anytype) @This() {
-        return fromAny(es, .init(@typeInfo(@TypeOf(comp)).pointer.child, comp));
+        const T = @typeInfo(@TypeOf(comp)).pointer.child;
+
+        // We could technically pack the entity into the pointer value since both are typically 64
+        // bits. However, this would break support for getting a slice of zero sized components from
+        // a chunk since all would have the same address.
+        //
+        // I've chosen to support the slice use case and not this one as it's simpler and seems
+        // slightly more likely to come up in generic code. I don't expect either to come up
+        // particularly often, this decision can be reversed in the future if one or the other turns
+        // out to be desirable. If we do this, make sure to have an assertion/test that valid
+        // entities are never fully zero since non optional pointers can't be zero unless explicitly
+        // annotated as such.
+        comptime assert(@sizeOf(T) != 0);
+
+        return fromAny(es, .init(T, comp));
     }
 
-    /// Similar to `from`, but does not require compile time types.
+    /// Similar to `from`, but does not require compile time types. Assumes a valid pointer is to a
+    /// non zero sized component.
     pub fn fromAny(es: *const Entities, comp: Any) @This() {
+        assert(comp.id.size != 0);
+
+        const pool = &es.chunk_pool;
+        const flag = comp.id.comp_flag.?;
+
         if (comp.id.size == 0) {
             // Our pointer math doesn't work on zero bit types, since they may all occupy the same
             // address. To work around this, zero sized types are "allocated" at the address of the
@@ -73,19 +95,34 @@ pub const Entity = packed struct {
             return @bitCast(@intFromPtr(comp.ptr));
         }
 
-        const flag = comp.id.comp_flag.?;
-        const comp_array = es.comps[@intFromEnum(flag)];
+        // Make sure this component is actually in the chunk pool
+        assert(@intFromPtr(comp.ptr) >= @intFromPtr(pool.buf.ptr));
+        assert(@intFromPtr(comp.ptr) <= @intFromPtr(&pool.buf[pool.buf.len - 1]));
 
-        const loc = @intFromPtr(comp.ptr);
-        const start = @intFromPtr(comp_array.ptr);
-        const end = @intFromPtr(comp_array.ptr) + comp_array.len + comp.id.size;
-        assert(loc >= start and loc <= end);
+        // Get the corresponding chunk by rounding down to the chunk alignment. This works as chunks
+        // are aligned to their size, in part to support this operation.
+        const chunk: *const Chunk = @ptrFromInt(pool.size_align.backward(@intFromPtr(comp.ptr)));
 
-        const index = (loc - start) / comp.id.size;
-        return .{ .key = .{
-            .index = @intCast(index),
-            .generation = es.handle_tab.generations[index],
+        // Calculate the index in this chunk that this component is at
+        const list: *const ChunkList = chunk.header().list.get(&es.chunk_lists);
+        assert(chunk.header().arch(&es.chunk_lists).contains(flag));
+        const comp_offset = @intFromPtr(comp.ptr) - @intFromPtr(chunk);
+        assert(comp_offset != 0); // Zero when missing in debug builds
+        const comp_buf_offset = list.comp_buf_offsets.get(flag);
+        const index_in_chunk = @divExact(comp_offset - comp_buf_offset, comp.id.size);
+
+        // Get the entity index from the chunk
+        const indices = chunk.entityIndices(es);
+        const entity_index = indices[index_in_chunk];
+        assert(entity_index < es.handle_tab.next_index);
+        const entity: Entity = .{ .key = .{
+            .index = @intCast(entity_index),
+            .generation = es.handle_tab.generations[entity_index],
         } };
+
+        // Assert that the entity has been committed and return it
+        assert(entity.committed(es));
+        return entity;
     }
 
     /// Pops a reserved entity.
@@ -108,7 +145,7 @@ pub const Entity = packed struct {
     /// Similar to `reserve`, but reserves a new entity instead of popping one from a command
     /// buffers reserve. Prefer `reserve`.
     ///
-    /// This does not invalidate iterators, but it's not thread safe.
+    /// This does not invalidate pointers, but it's not thread safe.
     pub fn reserveImmediate(es: *Entities) Entity {
         return reserveImmediateOrErr(es) catch |err|
             @panic(@errorName(err));
@@ -116,7 +153,12 @@ pub const Entity = packed struct {
 
     /// Similar to `reserveImmediate`, but returns `error.ZcsEntityOverflow` on failure instead of
     /// panicking.
+    ///
+    /// This does not invalidate pointers, but it's not thread safe.
     pub fn reserveImmediateOrErr(es: *Entities) error{ZcsEntityOverflow}!Entity {
+        const pointer_lock = es.pointer_generation.lock();
+        defer pointer_lock.check(es.pointer_generation);
+
         const key = es.handle_tab.put(.reserved) catch |err| switch (err) {
             error.Overflow => return error.ZcsEntityOverflow,
         };
@@ -144,9 +186,9 @@ pub const Entity = packed struct {
 
     /// Similar to `destroy`, but destroys the entity immediately. Prefer `destroy`.
     ///
-    /// Invalidates iterators.
+    /// Invalidates pointers.
     pub fn destroyImmediate(self: @This(), es: *Entities) bool {
-        invalidateIterators(es);
+        es.pointer_generation.increment();
         if (es.handle_tab.get(self.key)) |entity_loc| {
             if (entity_loc.chunk) |chunk| {
                 chunk.swapRemove(es, entity_loc.index_in_chunk);
@@ -162,9 +204,9 @@ pub const Entity = packed struct {
 
     /// Similar to `destroyImmediate`, allows the key to be reused.
     ///
-    /// Invalidates iterators.
+    /// Invalidates pointers.
     pub fn recycleImmediate(self: @This(), es: *Entities) bool {
-        invalidateIterators(es);
+        es.pointer_generation.increment();
         if (es.handle_tab.get(self.key)) |entity_loc| {
             if (entity_loc.chunk) |chunk| {
                 chunk.swapRemove(&es.handle_tab, entity_loc.index_in_chunk);
@@ -211,16 +253,10 @@ pub const Entity = packed struct {
 
     /// Similar to `get`, but operates on component IDs instead of types.
     pub fn getId(self: @This(), es: *const Entities, id: TypeId) ?[]u8 {
-        const flag = id.comp_flag orelse return null;
-        if (!self.hasId(es, id)) return null;
-
-        // See `Entity.from`.
-        if (id.size == 0) return @as([*]u8, @ptrFromInt(@as(u64, @bitCast(self))))[0..0];
-
-        const comp_buffer = es.comps[@intFromEnum(flag)];
-        const comp_offset = self.key.index * id.size;
-        const bytes = comp_buffer.ptr + comp_offset;
-        return bytes[0..id.size];
+        const entity_loc = es.handle_tab.get(self.key) orelse return null;
+        const chunk = entity_loc.chunk orelse return null;
+        const comps = chunk.compsFromId(es, id) orelse return null;
+        return comps[@intFromEnum(entity_loc.index_in_chunk) * id.size ..][0..id.size];
     }
 
     /// Queues a component to be added.
@@ -329,6 +365,8 @@ pub const Entity = packed struct {
     ///
     /// Returns `true` if the change was made, returns `false` if it couldn't be made because the
     /// entity doesn't exist.
+    ///
+    /// Invalidates pointers.
     pub fn changeArchImmediate(
         self: @This(),
         es: *Entities,
@@ -343,7 +381,9 @@ pub const Entity = packed struct {
         self: @This(),
         es: *Entities,
         changes: ChangeArchImmediateOptions,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!bool {
+    ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!bool {
+        es.pointer_generation.increment();
+
         // Early out if the entity does not exist, also checks some assertions
         if (!self.exists(es)) return false;
 
@@ -391,12 +431,13 @@ pub const Entity = packed struct {
         self: @This(),
         es: *Entities,
         options: ChangeArchUninitImmediateOptions,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!bool {
-        invalidateIterators(es);
+    ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!bool {
+        es.pointer_generation.increment();
 
         // Get the handle value and figure out the new arch
         const entity_loc = es.handle_tab.get(self.key) orelse return false;
-        var new_arch = entity_loc.arch(&es.chunk_lists);
+        const prev_arch = entity_loc.arch(&es.chunk_lists);
+        var new_arch = prev_arch;
         new_arch = new_arch.unionWith(options.add);
         new_arch = new_arch.differenceWith(options.remove);
 
@@ -408,23 +449,45 @@ pub const Entity = packed struct {
             }
         }
 
-        // Get the archetype list
+        // Get the new location. As mentioned in the doc comment, it's possible that we'll end up
+        // creating a new chunk list but not be able to allocate any chunks for it.
         const chunk_list = try es.chunk_lists.getOrPut(&es.chunk_pool, new_arch);
+        const new_loc = try chunk_list.append(es, self);
+        const new_chunk = new_loc.chunk.?;
+        errdefer comptime unreachable;
 
-        // Check if we have enough space
-        var added = options.add.differenceWith(options.remove).iterator();
-        while (added.next()) |flag| {
-            const id = flag.getId();
-            const comp_buffer = es.comps[@intFromEnum(flag)];
-            const comp_offset = self.key.index * id.size;
-            if (id.size > 0 and comp_offset + id.size > comp_buffer.len) {
-                return error.ZcsCompOverflow;
+        // Initialize the new components to undefined
+        if (std.debug.runtime_safety) {
+            var added = options.add.differenceWith(options.remove).iterator();
+            while (added.next()) |flag| {
+                const id = flag.getId();
+                const comp_buffer = new_chunk.compsFromId(es, id).?;
+                const comp_offset = @intFromEnum(new_loc.index_in_chunk) * id.size;
+                const comp = comp_buffer[comp_offset..][0..id.size];
+                @memset(comp, undefined);
             }
-            @memset(comp_buffer[comp_offset .. comp_offset + id.size], undefined);
         }
 
-        // Commit the change
-        const new_loc = try chunk_list.append(es, self);
+        // Copy components that aren't being overwritten from the old arch to the new one
+        if (entity_loc.chunk) |prev_chunk| {
+            var move = prev_arch.differenceWith(options.remove)
+                .differenceWith(options.add).iterator();
+            while (move.next()) |flag| {
+                const id = flag.getId();
+
+                const new_comp_buffer = new_chunk.compsFromId(es, id).?;
+                const new_comp_offset = @intFromEnum(new_loc.index_in_chunk) * id.size;
+                const new_comp = new_comp_buffer[new_comp_offset..][0..id.size];
+
+                const prev_comp_buffer = prev_chunk.compsFromId(es, id).?;
+                const prev_comp_offset = @intFromEnum(entity_loc.index_in_chunk) * id.size;
+                const prev_comp = prev_comp_buffer[prev_comp_offset..][0..id.size];
+
+                @memcpy(new_comp, prev_comp);
+            }
+        }
+
+        // Commit the entity to the new location
         if (entity_loc.chunk) |chunk| {
             chunk.swapRemove(es, entity_loc.index_in_chunk);
         } else {
@@ -476,7 +539,7 @@ pub const Entity = packed struct {
         es: *Entities,
         T: type,
         default: T,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!?*T {
+    ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!?*T {
         const result = try self.viewOrAddImmediateOrErr(es, struct { *T }, .{&default}) orelse
             return null;
         return result[0];
@@ -484,6 +547,8 @@ pub const Entity = packed struct {
 
     /// Similar to `view`, but will attempt to fill in any non-optional missing components with
     /// the defaults from the `comps` view if present.
+    ///
+    /// Invalidates pointers.
     pub fn viewOrAddImmediate(
         self: @This(),
         es: *Entities,
@@ -501,7 +566,7 @@ pub const Entity = packed struct {
         es: *Entities,
         View: type,
         comps: anytype,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!?View {
+    ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!?View {
         // Create the view, possibly leaving some components uninitialized
         const result = (try self.viewOrAddUninitImmediateOrErr(es, View)) orelse return null;
 
@@ -536,12 +601,13 @@ pub const Entity = packed struct {
     }
 
     /// Similar to `viewOrAddImmediate`, but returns an error on failure instead of panicking.
-    pub fn viewOrAddUninitImmediateOrErr(self: @This(), es: *Entities, View: type) error{
-        ZcsCompOverflow,
-        ZcsArchOverflow,
-        ZcsChunkOverflow,
-        ZcsChunkPoolOverflow,
-    }!?VoaUninitResult(View) {
+    pub fn viewOrAddUninitImmediateOrErr(
+        self: @This(),
+        es: *Entities,
+        View: type,
+    ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!?VoaUninitResult(View) {
+        es.pointer_generation.increment();
+
         // Figure out which components are missing
         const entity_loc = es.handle_tab.get(self.key) orelse return null;
         var view_arch: CompFlag.Set = .{};
@@ -600,12 +666,5 @@ pub const Entity = packed struct {
     pub fn arch(self: @This(), es: *const Entities) CompFlag.Set {
         const entity_loc = es.handle_tab.get(self.key) orelse return .{};
         return entity_loc.arch(&es.chunk_lists);
-    }
-
-    /// Explicitly invalidates iterators to catch bugs in debug builds.
-    fn invalidateIterators(es: *Entities) void {
-        if (@FieldType(Entities, "iterator_generation") != u0) {
-            es.iterator_generation +%= 1;
-        }
     }
 };

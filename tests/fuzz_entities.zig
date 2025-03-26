@@ -219,17 +219,17 @@ fn changeArch(fz: *Fuzzer, cb: *CmdBuf) !void {
                 .rb => {
                     const rb = try addRandomComp(fz, cb, entity, RigidBody);
                     if (expected) |e| e.rb = rb;
-                    if (log) std.debug.print("add {}\n", .{rb});
+                    if (log) std.debug.print("{}.rb = {}\n", .{ entity, rb });
                 },
                 .model => {
                     const model = try addRandomComp(fz, cb, entity, Model);
                     if (expected) |e| e.model = model;
-                    if (log) std.debug.print("add {}\n", .{model});
+                    if (log) std.debug.print("{}.model = {}\n", .{ entity, model });
                 },
                 .tag => {
                     const tag = try addRandomComp(fz, cb, entity, Tag);
                     if (expected) |e| e.tag = tag;
-                    if (log) std.debug.print("add {}\n", .{tag});
+                    if (log) std.debug.print("{}.tag = {}\n", .{ entity, tag });
                 },
             }
         } else {

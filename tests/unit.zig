@@ -765,7 +765,7 @@ test "change arch immediate" {
         const e = Entity.reserveImmediate(&es);
         try expect(e.changeArchImmediate(&es, .{
             .add = &.{ .init(RigidBody, &.{ .mass = 1.0 }), .init(Model, &.{ .vertex_start = 2 }) },
-            .remove = CompFlag.Set.initMany(&.{CompFlag.registerImmediate(typeId(RigidBody))}),
+            .remove = .initMany(&.{CompFlag.registerImmediate(typeId(RigidBody))}),
         }));
         try expectEqual(Model{ .vertex_start = 2 }, e.get(&es, Model).?.*);
         try expectEqual(null, e.get(&es, RigidBody));
@@ -779,7 +779,7 @@ test "change arch immediate" {
                 .init(RigidBody, &.{ .mass = 0.5 }),
                 .init(Model, &.{ .vertex_start = 20 }),
             },
-            .remove = CompFlag.Set.initMany(&.{CompFlag.registerImmediate(typeId(Tag))}),
+            .remove = .initMany(&.{CompFlag.registerImmediate(typeId(Tag))}),
         }));
         try expectEqual(RigidBody{ .mass = 0.5 }, e.get(&es, RigidBody).?.*);
         try expectEqual(Model{ .vertex_start = 20 }, e.get(&es, Model).?.*);
@@ -794,7 +794,7 @@ test "change arch immediate" {
                 .init(RigidBody, &.{ .mass = 0.5 }),
                 .init(Model, &.{ .vertex_start = 20 }),
             },
-            .remove = CompFlag.Set.initMany(&.{CompFlag.registerImmediate(typeId(Tag))}),
+            .remove = .initMany(&.{CompFlag.registerImmediate(typeId(Tag))}),
         }));
         try expectEqual(null, e.get(&es, RigidBody));
         try expectEqual(null, e.get(&es, Model));
@@ -877,8 +877,8 @@ test "entity overflow" {
     try expect(e0.changeArchImmediate(&es, .{ .add = &.{
         .init(u32, &0),
     } }));
-    try expectError(error.ZcsCompOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
-        .init(u128, &0),
+    try expectError(error.ZcsChunkOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+        .init([128]u8, undefined),
     } }));
 }
 
@@ -1092,7 +1092,7 @@ test "chunk overflow" {
             .comp_bytes = 4096,
             .max_archetypes = 5,
             .max_chunks = 1,
-            .chunk_size = 1,
+            .chunk_size = 16,
         });
         defer es.deinit(gpa);
 
@@ -1130,16 +1130,10 @@ test "chunk overflow" {
     }
 }
 
-// This is a regression test. We do something a little tricky with zero sized types--we "allocate"
-// them at the entity ID to make it possible to retrieve the entity again later
-// (see `Entity.fromAny`). We had a bug in our first pass at this where a valid entity ID could have
-// both an index and generation of zero, which would result in this pointer being null despite not
-// being optional.
-//
-// This has since been fixed 0 is used as the invalid generation now, so all valid entity IDs are
-// nonzero. This test just verifies the previously failing code path works since it wasn't exercised
-// anywhere else.
-test "zero sized Entity.from" {
+// This test isn't intentionally testing anything not covered by other tests, the intention is that
+// when more complex tests fail (especially fuzz tests) it may sometimes be easier to modify this
+// test to hit the failure than to debug the more complex test directly.
+test "smoke test" {
     defer CompFlag.unregisterAll();
     var es: Entities = try .init(gpa, .{
         .max_entities = 3,
@@ -1150,12 +1144,20 @@ test "zero sized Entity.from" {
     });
     defer es.deinit(gpa);
 
-    const e0 = Entity.reserveImmediate(&es);
-    try expectEqual(0, es.chunk_lists.arches.count());
+    const e0: Entity = .reserveImmediate(&es);
 
-    try expect(e0.changeArchImmediate(&es, .{ .add = &.{
-        .init(u0, &0),
-    } }));
+    _ = try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+        .init(f32, &1.5),
+        .init(bool, &true),
+    } });
+    try expectEqual(@as(f32, 1.5), e0.get(&es, f32).?.*);
+    try expectEqual(true, e0.get(&es, bool).?.*);
 
-    try expectEqual(e0, Entity.from(&es, e0.get(&es, u0).?));
+    _ = try e0.changeArchImmediateOrErr(&es, .{
+        .add = &.{.init(u8, &2)},
+        .remove = .initMany(&.{CompFlag.registerImmediate(typeId(bool))}),
+    });
+    try expectEqual(@as(f32, 1.5), e0.get(&es, f32).?.*);
+    try expectEqual(null, e0.get(&es, bool));
+    try expectEqual(2, e0.get(&es, u8).?.*);
 }

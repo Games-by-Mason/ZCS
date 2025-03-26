@@ -15,6 +15,7 @@ const typeId = zcs.typeId;
 const Any = zcs.Any;
 const CompFlag = zcs.CompFlag;
 const Entity = zcs.Entity;
+const PointerLock = zcs.PointerLock;
 const ChunkList = zcs.storage.ChunkList;
 const ChunkPool = zcs.storage.ChunkPool;
 const Chunk = zcs.storage.Chunk;
@@ -24,15 +25,9 @@ const view = zcs.view;
 
 const Entities = @This();
 
-const IteratorGeneration = if (std.debug.runtime_safety) u64 else u0;
-
-const max_align = zcs.TypeInfo.max_align;
-
 handle_tab: HandleTab,
-comps: *[CompFlag.max][]align(max_align) u8,
-max_archetypes: u16,
 chunk_lists: ChunkLists,
-iterator_generation: IteratorGeneration = 0,
+pointer_generation: PointerLock.Generation = .init,
 reserved_entities: usize = 0,
 chunk_pool: ChunkPool,
 
@@ -55,16 +50,6 @@ pub fn init(gpa: Allocator, options: Options) Allocator.Error!@This() {
     var handle_tab: HandleTab = try .init(gpa, options.max_entities);
     errdefer handle_tab.deinit(gpa);
 
-    const comps = try gpa.create([CompFlag.max][]align(max_align) u8);
-    errdefer gpa.destroy(comps);
-
-    comptime var comps_init = 0;
-    errdefer for (0..comps_init) |i| gpa.free(comps[i]);
-    inline for (comps) |*comp| {
-        comp.* = try gpa.alignedAlloc(u8, max_align, options.comp_bytes);
-        comps_init += 1;
-    }
-
     var chunk_pool: ChunkPool = try .init(gpa, .{
         .capacity = options.max_chunks,
         .chunk_size = options.chunk_size,
@@ -76,9 +61,7 @@ pub fn init(gpa: Allocator, options: Options) Allocator.Error!@This() {
 
     return .{
         .handle_tab = handle_tab,
-        .max_archetypes = options.max_archetypes,
         .chunk_lists = chunk_lists,
-        .comps = comps,
         .chunk_pool = chunk_pool,
     };
 }
@@ -87,16 +70,15 @@ pub fn init(gpa: Allocator, options: Options) Allocator.Error!@This() {
 pub fn deinit(self: *@This(), gpa: Allocator) void {
     self.chunk_lists.deinit(gpa);
     self.chunk_pool.deinit(gpa);
-    for (self.comps) |comp| {
-        gpa.free(comp);
-    }
-    gpa.destroy(self.comps);
     self.handle_tab.deinit(gpa);
     self.* = undefined;
 }
 
 /// Recycles all entities compatible with the given archetype.
+///
+/// Invalidates pointers.
 pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
+    self.pointer_generation.increment();
     var chunk_lists_iter = self.chunk_lists.iterator(arch);
     while (chunk_lists_iter.next()) |chunk_list| {
         var chunk_list_iter = chunk_list.iterator(self);
@@ -112,25 +94,31 @@ pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
 }
 
 /// Recycles all entities.
+///
+/// Invalidates pointers.
 pub fn recycleImmediate(self: *@This()) void {
+    self.pointer_generation.increment();
     self.handle_tab.recycleAll();
     self.reserved_entities = 0;
 }
 
 /// Returns the current number of entities.
-pub fn count(self: @This()) usize {
+pub fn count(self: *const @This()) usize {
     return self.handle_tab.count() - self.reserved_entities;
 }
 
 /// Returns the number of reserved but not committed entities that currently exist.
-pub fn reserved(self: @This()) usize {
+pub fn reserved(self: *const @This()) usize {
     return self.reserved_entities;
 }
 
 /// Returns an iterator over all entities that have at least the components in `required_comps` in
 /// an implementation defined order.
+///
+/// `lockPointers` is called before starting, and `unlockPointers` is called the first time the
+/// iterator returns `null`. If you stop iterating early you must call `unlockPointers` manually.
 pub fn iterator(
-    self: *const @This(),
+    self: *@This(),
     required_comps: CompFlag.Set,
 ) Iterator {
     var arch_iter = self.chunk_lists.iterator(required_comps);
@@ -144,7 +132,7 @@ pub fn iterator(
         .empty;
     return .{
         .es = self,
-        .generation = self.iterator_generation,
+        .pointer_lock = self.pointer_generation.lock(),
         .arch_iter = arch_iter,
         .chunk_list_iter = chunk_list_iter,
         .chunk_iter = chunk_iter,
@@ -157,13 +145,11 @@ pub const Iterator = struct {
     arch_iter: ChunkLists.Iterator,
     chunk_list_iter: ChunkList.Iterator,
     chunk_iter: Chunk.Iterator,
-    generation: IteratorGeneration,
+    pointer_lock: PointerLock,
 
     /// Advances the iterator, returning the next entity.
     pub fn next(self: *@This()) ?Entity {
-        if (self.generation != self.es.iterator_generation) {
-            @panic("called next after iterator was invalidated");
-        }
+        self.pointer_lock.check(self.es.pointer_generation);
 
         while (true) {
             // Get the next entity in this chunk
@@ -183,7 +169,7 @@ pub const Iterator = struct {
                 continue;
             }
 
-            // If that fails, return null;
+            // If that fails, return null
             return null;
         }
     }
@@ -191,7 +177,6 @@ pub const Iterator = struct {
 
 /// Similar to `iterator`, but returns a `view` with pointers to the requested components.
 pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
-    var base: view.Comps(View) = undefined;
     var required_comps: CompFlag.Set = .{};
     inline for (@typeInfo(view.Comps(View)).@"struct".fields) |field| {
         const T = view.UnwrapField(field.type);
@@ -201,10 +186,6 @@ pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
             } else {
                 return .empty(self);
             }
-        }
-
-        if (typeId(T).comp_flag) |flag| {
-            @field(base, field.name) = @ptrCast(self.comps[@intFromEnum(flag)]);
         }
     }
 
@@ -220,12 +201,11 @@ pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
     return .{
         .entity_iter = .{
             .es = self,
-            .generation = self.iterator_generation,
+            .pointer_lock = self.pointer_generation.lock(),
             .arch_iter = arch_iter,
             .chunk_list_iter = chunk_list_iter,
             .chunk_iter = chunk_iter,
         },
-        .base = base,
     };
 }
 
@@ -233,7 +213,6 @@ pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
 pub fn ViewIterator(View: type) type {
     return struct {
         entity_iter: Iterator,
-        base: view.Comps(View),
 
         pub fn empty(es: *const Entities) @This() {
             return .{
@@ -242,9 +221,8 @@ pub fn ViewIterator(View: type) type {
                     .arch_iter = .empty,
                     .chunk_list_iter = .empty,
                     .chunk_iter = .empty,
-                    .generation = es.iterator_generation,
+                    .pointer_lock = es.pointer_generation.lock(),
                 },
-                .base = undefined,
             };
         }
 

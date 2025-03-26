@@ -295,7 +295,7 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
             },
             .threaded => {
                 var wg: std.Thread.WaitGroup = .{};
-                Transform.syncAllThreadPool(&es, &tp, &wg, .{ .chunk_size = 2 });
+                Transform.syncAllThreadPool(&es, &tp, &wg, .{ .batch_size = 2 });
                 tp.waitAndWork(&wg);
                 Transform.finishSyncAllImmediate(&es);
             },

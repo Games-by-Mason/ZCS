@@ -6,6 +6,10 @@
 //!
 //! `CmdBuf` allocates at init time, and then never again. It should be cleared and reused when
 //! possible.
+//!
+//! All exec methods may invalidate iterators, but by convention only the high level
+//! `execImmediate*` explicitly calls `es.pointer_generation.increment()`. If you are writing your
+//! own exec function, you should call this yourself.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -170,6 +174,8 @@ pub fn iterator(self: *const @This()) Iterator {
 }
 
 /// Executes the command buffer.
+///
+/// Invalidates pointers.
 pub fn execImmediate(self: *@This(), es: *Entities) void {
     self.execImmediateOrErr(es) catch |err|
         @panic(@errorName(err));
@@ -180,7 +186,8 @@ pub fn execImmediate(self: *@This(), es: *Entities) void {
 pub fn execImmediateOrErr(
     self: *@This(),
     es: *Entities,
-) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
+) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
+    es.pointer_generation.increment();
     var iter = self.iterator();
     while (iter.next()) |batch| {
         switch (batch) {
@@ -299,7 +306,7 @@ pub const Batch = union(enum) {
             self: @This(),
             es: *Entities,
             delta: Delta,
-        ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!bool {
+        ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!bool {
             if (delta.destroy) return self.entity.destroyImmediate(es);
 
             // Issue the change archetype command.  If no changes were requested, this will

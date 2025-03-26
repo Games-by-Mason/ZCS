@@ -59,19 +59,10 @@ pub fn getNextSib(self: *const @This(), es: *const Entities) ?*Node {
 }
 
 /// Similar to the `SetParent` command, but sets the parent immediately.
-pub fn setParentImmediate(self: *Node, es: *Entities, parent: ?*Node) void {
-    self.setParentImmediateOrErr(es, parent) catch |err|
-        @panic(@errorName(err));
-}
+pub fn setParentImmediate(self: *Node, es: *Entities, parent_opt: ?*Node) void {
+    const pointer_lock = es.pointer_generation.lock();
+    defer pointer_lock.check(es.pointer_generation);
 
-/// Similar to `setParentImmediate`, but returns `error.ZcsCompOverflow` on error instead of
-/// panicking. On error, an empty node may have been added as a component to some entities, but the
-/// hierarchy is left unchanged.
-pub fn setParentImmediateOrErr(
-    self: *Node,
-    es: *Entities,
-    parent_opt: ?*Node,
-) error{ZcsCompOverflow}!void {
     // If the relationship would result in a cycle, or parent and child are equal, early out.
     if (parent_opt) |parent| {
         if (self == parent) return;
@@ -106,21 +97,44 @@ pub fn setParentImmediateOrErr(
 }
 
 /// Destroys a node, its entity, and all of its children. This behavior occurs automatically via
-/// `Exec` when an entity with an entity with a node is destroyed.
-pub fn destroyImmediate(self: *@This(), es: *Entities) void {
-    self.destroyChildrenAndUnparentImmediate(es);
-    assert(self.getEntity(es).destroyImmediate(es));
+/// `exec` when an entity with an entity with a node is destroyed.
+///
+/// Invalidates pointers.
+pub fn destroyImmediate(unstable_ptr: *@This(), es: *Entities) void {
+    // Cache the entity handle since we're about to invalidate pointers
+    const e = unstable_ptr.getEntity(es);
+
+    // Destroy the children and unparent this node
+    unstable_ptr.destroyChildrenAndUnparentImmediate(es);
+
+    // Destroy the entity
+    assert(e.destroyImmediate(es));
 }
 
-/// Destroys an node's children and then unparents it. This behavior occurs automatically via
-/// `Exec` when a node is removed from an entity.
-pub fn destroyChildrenAndUnparentImmediate(self: *@This(), es: *Entities) void {
-    var iter = self.postOrderIterator(es);
-    while (iter.next(es)) |curr| {
+/// Destroys a node's children and then unparents it. This behavior occurs automatically via `exec`
+/// when a node is removed from an entity.
+///
+/// Invalidates pointers.
+pub fn destroyChildrenAndUnparentImmediate(unstable_ptr: *@This(), es: *Entities) void {
+    const pointer_lock = es.pointer_generation.lock();
+
+    // Get an iterator over the node's children and then destroy it
+    var children = b: {
+        defer pointer_lock.check(es.pointer_generation);
+        const self = unstable_ptr; // Not yet disturbed
+
+        const iter = self.postOrderIterator(es);
+        self.setParentImmediate(es, null);
+        self.first_child = .none;
+
+        break :b iter;
+    };
+
+    // Iterate over the children and destroy them, this will invalidate `unstable_ptr`
+    es.pointer_generation.increment();
+    while (children.next(es)) |curr| {
         assert(curr.getEntity(es).destroyImmediate(es));
     }
-    self.setParentImmediate(es, null);
-    self.first_child = .none;
 }
 
 /// Returns true if an ancestor of `descendant`, false otherwise. Entities are not ancestors of
@@ -281,7 +295,7 @@ pub const SetParent = struct {
 
 /// `exec` provides helpers for processing hierarchy changes via the command buffer.
 ///
-/// By convention, `Exec` only calls into the stable public interface of the types it's working
+/// By convention, `exec` only calls into the stable public interface of the types it's working
 /// with. As such, documentation is sparse. You are welcome to call these methods directly, or
 /// use them as reference for implementing your own command buffer iterator.
 pub const exec = struct {
@@ -296,16 +310,14 @@ pub const exec = struct {
 
     /// Similar to `immediate`, but returns an error on failure instead of panicking. On error the
     /// commands are left partially evaluated.
+    ///
+    /// Invalidates pointers.
     pub fn immediateOrErr(
         es: *Entities,
         cb: CmdBuf,
-    ) error{
-        ZcsCompOverflow,
-        ZcsEntityOverflow,
-        ZcsArchOverflow,
-        ZcsChunkOverflow,
-        ZcsChunkPoolOverflow,
-    }!void {
+    ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
+        es.pointer_generation.increment();
+
         var batches = cb.iterator();
         while (batches.next()) |batch| {
             switch (batch) {
@@ -324,17 +336,20 @@ pub const exec = struct {
         }
     }
 
+    /// Executes an extension command.
     pub fn extImmediateOrErr(
         es: *Entities,
         payload: Any,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
+    ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
+        es.pointer_generation.increment();
+
         if (payload.as(SetParent)) |set_parent| {
             const child = set_parent.child;
             if (set_parent.parent.unwrap()) |parent| {
                 if (try child.getOrAddImmediateOrErr(es, Node, .{})) |child_node| {
                     if (try parent.getOrAddImmediateOrErr(es, Node, .{})) |parent_node| {
                         // If a parent that exists is assigned, set it as the parent
-                        try child_node.setParentImmediateOrErr(es, parent_node);
+                        child_node.setParentImmediate(es, parent_node);
                     } else {
                         // Otherwise destroy the child
                         child_node.destroyImmediate(es);
@@ -344,7 +359,7 @@ pub const exec = struct {
                 // If our parent is being cleared and we have a node, clear it. If not leave
                 // it alone since it's implicitly clear.
                 if (child.get(es, Node)) |node| {
-                    try node.setParentImmediateOrErr(es, null);
+                    node.setParentImmediate(es, null);
                 }
             }
         }

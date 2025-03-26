@@ -8,6 +8,7 @@ const typeId = zcs.typeId;
 
 const assert = std.debug.assert;
 const math = std.math;
+const runtime_safety = std.debug.runtime_safety;
 
 const alignForward = std.mem.alignForward;
 
@@ -16,6 +17,8 @@ const Alignment = std.mem.Alignment;
 const Entity = zcs.Entity;
 const Entities = zcs.Entities;
 const CompFlag = zcs.CompFlag;
+const TypeId = zcs.TypeId;
+const PointerLock = zcs.PointerLock;
 
 const SlotMap = slot_map.SlotMap;
 
@@ -31,7 +34,7 @@ pub const EntityLoc = struct {
     /// A handle that's been reserved but not committed.
     pub const reserved: @This() = .{
         .chunk = null,
-        .index_in_chunk = if (std.debug.runtime_safety)
+        .index_in_chunk = if (runtime_safety)
             @enumFromInt(math.maxInt(@typeInfo(IndexInChunk).@"enum".tag_type))
         else
             undefined,
@@ -92,7 +95,7 @@ pub const Chunk = opaque {
             allow_empty,
         },
     ) void {
-        if (!std.debug.runtime_safety) return;
+        if (!runtime_safety) return;
 
         const list = self.header().list.get(&es.chunk_lists);
         const pool = &es.chunk_pool;
@@ -185,8 +188,25 @@ pub const Chunk = opaque {
     /// For internal use. See `entityIndices`.
     pub fn entityIndices(self: *const Chunk, es: *const Entities) []const EntityIndex {
         const list = self.header().list.get(&es.chunk_lists);
-        const ptr: [*]EntityIndex = @ptrFromInt(@intFromPtr(self) + list.index_buffer_offset);
+        const ptr: [*]EntityIndex = @ptrFromInt(@intFromPtr(self) + list.index_buf_offsets);
         return ptr[0..self.header().len];
+    }
+
+    /// Similar to `comps` but doesn't require comptime types.
+    pub fn compsFromId(self: *Chunk, es: *const Entities, id: TypeId) ?[]u8 {
+        const list = self.header().list.get(&es.chunk_lists);
+        const flag = id.comp_flag orelse return null;
+        if (!self.header().arch(&es.chunk_lists).contains(flag)) return null;
+        const offset = list.comp_buf_offsets.get(flag);
+        assert(offset != 0); // Zero when missing in debug mode
+        const ptr: [*]u8 = @ptrFromInt(@intFromPtr(self) + offset);
+        return ptr[0 .. self.header().len * id.size];
+    }
+
+    /// For internal use. Returns a slice of component data for the given type, or `null` if this
+    /// chunk doesn't contain the given component type.
+    pub fn comps(self: *Chunk, es: *const Entities, T: type) ?[]T {
+        return @ptrCast(self.compsId(es, typeId(T)));
     }
 
     /// For internal use. Swap removes an entity from the chunk, updating the location of the moved
@@ -195,26 +215,64 @@ pub const Chunk = opaque {
         const pool = &es.chunk_pool;
         const index = pool.indexOf(self);
         const list = self.header().list.getMut(&es.chunk_lists);
-
-        // Check if we were full before the remove
         const was_full = self.header().len >= list.chunk_capacity;
 
-        // Pop the last entity
+        // Get the last entity
         const indices = self.entityIndicesMut(es);
-        self.headerMut().len -= 1;
-        const moved = indices[self.header().len];
+        const new_len = self.headerMut().len - 1;
+        const moved = indices[new_len];
 
         // Early out if we're popping the end of the list
-        if (@intFromEnum(index_in_chunk) == self.header().len) {
-            // If the chunk is now empty, return it to the chunk pool
-            if (self.header().len == 0) self.clear(es);
-            // Either way, early out
+        if (@intFromEnum(index_in_chunk) == new_len) {
+            // Clear the previous entity data
+            if (std.debug.runtime_safety) {
+                indices[@intFromEnum(index_in_chunk)] = undefined;
+                var it = self.header().arch(&es.chunk_lists).iterator();
+                while (it.next()) |flag| {
+                    const id = flag.getId();
+                    const comp_buffer = self.compsFromId(es, id).?;
+                    const comp_offset = new_len * id.size;
+                    const comp = comp_buffer[comp_offset..][0..id.size];
+                    @memset(comp, undefined);
+                }
+            }
+
+            // Update the chunk's length, possibly returning it to the chunk pool
+            if (new_len == 0) {
+                self.clear(es);
+            } else {
+                self.headerMut().len = new_len;
+            }
+
+            // Early out
             return;
         }
 
-        // Otherwise, overwrite the removed entity the popped entity, and then update the location
-        // of the moved entity in the handle table
+        // Overwrite the removed entity index with the popped entity index
         indices[@intFromEnum(index_in_chunk)] = moved;
+
+        // Move the moved entity's components
+        {
+            var move = self.header().arch(&es.chunk_lists).iterator();
+            while (move.next()) |flag| {
+                const id = flag.getId();
+
+                const comp_buffer = self.compsFromId(es, id).?;
+                const new_comp_offset = @intFromEnum(index_in_chunk) * id.size;
+                const new_comp = comp_buffer[new_comp_offset..][0..id.size];
+
+                const prev_comp_offset = new_len * id.size;
+                const prev_comp = comp_buffer[prev_comp_offset..][0..id.size];
+
+                @memcpy(new_comp, prev_comp);
+                @memset(prev_comp, undefined);
+            }
+        }
+
+        // Pop the last entity
+        self.headerMut().len = new_len;
+
+        // Update the location of the moved entity in the handle table
         const moved_loc = &es.handle_tab.values[moved];
         assert(moved_loc.chunk.? == self);
         moved_loc.index_in_chunk = index_in_chunk;
@@ -286,10 +344,10 @@ pub const ChunkList = struct {
     /// and `prev_avail` fields.
     avail: ChunkPool.Index,
     /// The offset to the entity index buffer.
-    index_buffer_offset: u16,
+    index_buf_offsets: u16,
     /// A map from component flags to the byte offset of their arrays. Components that aren't
     /// present or are zero sized have undefined offsets.
-    comp_buffer_offsets: std.enums.EnumArray(CompFlag, u16),
+    comp_buf_offsets: std.enums.EnumArray(CompFlag, u16),
     /// The number of entities that can be stored in a single chunk from this list.
     chunk_capacity: u16,
 
@@ -415,15 +473,17 @@ pub const ChunkList = struct {
 
         // Calculate the offsets for each component
         var offset: u16 = data_offset;
-        var comp_buffer_offsets: std.enums.EnumArray(CompFlag, u16) = .initUndefined();
-        var index_buffer_offset: u16 = 0;
+        var comp_buf_offsets: std.enums.EnumArray(CompFlag, u16) = .initFill(
+            if (runtime_safety) 0 else undefined,
+        );
+        var index_buf_offsets: u16 = 0;
         for (sorted.constSlice()) |comp| {
             const id = comp.getId();
 
             // If we haven't found a place for the index buffer, check if it can go here
-            if (index_buffer_offset == 0 and id.alignment <= @alignOf(EntityIndex)) {
+            if (index_buf_offsets == 0 and id.alignment <= @alignOf(EntityIndex)) {
                 assert(offset % @alignOf(EntityIndex) == 0);
-                index_buffer_offset = offset;
+                index_buf_offsets = offset;
                 const buf_size = math.mul(u16, @sizeOf(EntityIndex), chunk_capacity) catch
                     return error.ZcsChunkOverflow;
                 offset = math.add(u16, offset, buf_size) catch
@@ -432,7 +492,7 @@ pub const ChunkList = struct {
 
             // Store the offset to this component type
             assert(offset % id.alignment == 0);
-            comp_buffer_offsets.set(comp, offset);
+            comp_buf_offsets.set(comp, offset);
             const comp_size = math.cast(u16, id.size) orelse
                 return error.ZcsChunkOverflow;
             const buf_size = math.mul(u16, comp_size, chunk_capacity) catch
@@ -442,8 +502,8 @@ pub const ChunkList = struct {
         }
 
         // If we haven't found a place for the index buffer, place it at the end
-        if (index_buffer_offset == 0) {
-            index_buffer_offset = offset;
+        if (index_buf_offsets == 0) {
+            index_buf_offsets = offset;
             const buf_size = math.mul(u16, @sizeOf(EntityIndex), chunk_capacity) catch
                 return error.ZcsChunkOverflow;
             offset = math.add(u16, offset, buf_size) catch
@@ -456,8 +516,8 @@ pub const ChunkList = struct {
             .head = .none,
             .tail = .none,
             .avail = .none,
-            .comp_buffer_offsets = comp_buffer_offsets,
-            .index_buffer_offset = index_buffer_offset,
+            .comp_buf_offsets = comp_buf_offsets,
+            .index_buf_offsets = index_buf_offsets,
             .chunk_capacity = chunk_capacity,
         };
     }
@@ -526,7 +586,7 @@ pub const ChunkList = struct {
 
     // Validates head and tail are self consistent.
     fn checkAssertions(self: *const ChunkList, es: *const Entities) void {
-        if (!std.debug.runtime_safety) return;
+        if (!runtime_safety) return;
 
         const pool = &es.chunk_pool;
 
@@ -614,7 +674,15 @@ pub const ChunkPool = struct {
     buf: []u8,
     /// The number of unique chunks that have ever reserved
     reserved: u32,
-    /// The chunk size and alignment are both set to this value.
+    /// The chunk size and alignment are both set to this value. This is done for a couple reasons:
+    /// 1. It makes `Entity.from` slightly cheaper
+    /// 2. It reduces false sharing
+    /// 3. We need to be aligned by more than `TypeInfo.max_align` so that the place our allocation
+    ///    ends up doesn't change how much stuff can fit in it.
+    ///
+    /// If this becomes an issue, we stop doing this by giving up 1 as long as we set the alignment
+    /// to at least a cache line and assert 3. However seeing as it only adds padding before the
+    /// first chunk, this is unlikely to ever matter.
     size_align: Alignment,
     /// Freed chunks, connected by the `next` field. All other fields are undefined.
     free: Index = .none,
@@ -632,6 +700,7 @@ pub const ChunkPool = struct {
     pub fn init(gpa: Allocator, options: Options) Allocator.Error!ChunkPool {
         // The max size is reserved for invalid indices.
         assert(options.capacity < math.maxInt(u32));
+        assert(options.chunk_size >= zcs.TypeInfo.max_align);
 
         // Allocate the chunk data, aligned to the size of a chunk
         const alignment = Alignment.fromByteUnits(options.chunk_size);

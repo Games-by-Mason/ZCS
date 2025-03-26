@@ -20,6 +20,7 @@ const Entity = zcs.Entity;
 const Entities = zcs.Entities;
 const CmdBuf = zcs.CmdBuf;
 const Any = zcs.Any;
+const PointerLock = zcs.PointerLock;
 const Node = zcs.ext.Node;
 const Vec2 = zcs.ext.geom.Vec2;
 const Rotor2 = zcs.ext.geom.Rotor2;
@@ -133,7 +134,7 @@ pub fn getForward(self: @This()) Vec2 {
 /// Returns an iterator over the roots of the dirty subtrees. This will flip the root cache of each
 /// subtree from `.dirty` to `.dirty_subtreee` to prevent the results from overlapping, this means
 /// that you can use this method to synchronize subtrees on separate threads if desired.
-pub fn dirtySubtreeIterator(es: *const Entities) DirtySubtreeIterator {
+pub fn dirtySubtreeIterator(es: *Entities) DirtySubtreeIterator {
     return .{
         .events = es.viewIterator(DirtySubtreeIterator.EventView),
     };
@@ -161,6 +162,7 @@ pub const DirtySubtreeIterator = struct {
                 var root: Subtree = .{
                     .node = vw.node,
                     .transform = vw.transform,
+                    .pointer_lock = es.pointer_generation.lock(),
                 };
                 assert(vw.transform.cache == .dirty);
                 vw.transform.cache = .dirty_visited;
@@ -182,6 +184,7 @@ pub const DirtySubtreeIterator = struct {
                                     root = .{
                                         .transform = transform,
                                         .node = curr,
+                                        .pointer_lock = es.pointer_generation.lock(),
                                     };
                                     root.transform.cache = .dirty_visited;
                                 },
@@ -211,12 +214,15 @@ pub const DirtySubtreeIterator = struct {
 pub const Subtree = struct {
     transform: *Transform2D,
     node: ?*const Node,
+    pointer_lock: PointerLock,
 
     /// Returns a post order iterator over the subtree. This will visit parents before children.
     pub fn preOrderIterator(self: @This(), es: *const Entities) Iterator {
+        self.pointer_lock.check(es.pointer_generation);
         return .{
             .parent = self.transform,
             .children = if (self.node) |node| node.preOrderIterator(es) else .empty,
+            .pointer_lock = self.pointer_lock,
         };
     }
 
@@ -225,9 +231,12 @@ pub const Subtree = struct {
     pub const Iterator = struct {
         parent: ?*Transform2D,
         children: Node.PreOrderIterator,
+        pointer_lock: PointerLock,
 
         /// Returns the next transform.
         pub fn next(self: *@This(), es: *const Entities) ?*Transform2D {
+            self.pointer_lock.check(es.pointer_generation);
+
             if (self.parent) |parent| {
                 self.parent = null;
                 return parent;
@@ -252,6 +261,8 @@ pub const Subtree = struct {
 
 /// Immediately synchronize the world space position and orientation of all dirty entities and their
 /// children. Recycles all dirty events. For multithreaded sync, see `syncAllThreadPool`.
+///
+/// Invalidates pointers.
 pub fn syncAllImmediate(es: *Entities) void {
     // Iterate over the subtrees
     var subtrees = dirtySubtreeIterator(es);
@@ -269,8 +280,8 @@ pub fn syncAllImmediate(es: *Entities) void {
 
 /// Options for `syncAllThreadPool`.
 pub const SyncAllThreadPoolOptions = struct {
-    /// The max number of subtrees per chunk.
-    chunk_size: usize,
+    /// The max number of subtrees per batch.
+    batch_size: usize,
 };
 
 /// Spawns tasks to sync the dirty transforms in parallel on the given thread pool. Call
@@ -278,33 +289,45 @@ pub const SyncAllThreadPoolOptions = struct {
 ///
 /// May be used as a reference for implementing your own multithreaded sync if you're
 /// not using the standard library thread pool.
+///
+/// Does not invalidate pointers, but is not thread safe (as in may not be called on multiple
+/// threads simultaneously, the work submitted to the thread pools is of course thread safe.)
 pub fn syncAllThreadPool(
     es: *Entities,
     tp: *std.Thread.Pool,
     wg: *std.Thread.WaitGroup,
     comptime options: SyncAllThreadPoolOptions,
 ) void {
-    // Divide the dirty subtrees into chunks, and spawn a task for each chunk
-    var chunk: std.BoundedArray(Subtree, options.chunk_size) = .{};
+    const pointer_lock = es.pointer_generation.lock();
+    defer pointer_lock.check(es.pointer_generation);
+
+    // Divide the dirty subtrees into batches, and spawn a task for each batch
+    var batch: std.BoundedArray(Subtree, options.batch_size) = .{};
     var subtrees = dirtySubtreeIterator(es);
     var done = false;
     while (!done) {
-        // Fill the chunk
-        for (0..options.chunk_size) |_| {
-            chunk.appendAssumeCapacity(subtrees.next(es) orelse {
+        // Fill the batch
+        for (0..options.batch_size) |_| {
+            batch.appendAssumeCapacity(subtrees.next(es) orelse {
                 done = true;
                 break;
             });
         }
 
-        // Spawn a task to sync a copy of the chunk, then clear the chunk for the next iteration
-        tp.spawnWg(wg, syncChunkImmediate, .{ es, chunk });
-        chunk.clear();
+        // Spawn a task to sync a copy of the batch, then clear the batch for the next iteration
+        tp.spawnWg(wg, syncBatchImmediate, .{ es, batch });
+        batch.clear();
     }
 }
 
-/// Immediately sync a chunk, used by `syncAllThreadPool`.
-fn syncChunkImmediate(es: *Entities, subtrees: anytype) void {
+/// Immediately sync a batch, used by `syncAllThreadPool`.
+///
+/// Does not invalidate pointers. Is thread safe IFF the given subtree is not disturbed by other
+/// threads.
+fn syncBatchImmediate(es: *Entities, subtrees: anytype) void {
+    const pointer_lock = es.pointer_generation.lock();
+    defer pointer_lock.check(es.pointer_generation);
+
     for (subtrees.constSlice()) |subtree| {
         var transforms = subtree.preOrderIterator(es);
         while (transforms.next(es)) |transform| {
@@ -315,6 +338,8 @@ fn syncChunkImmediate(es: *Entities, subtrees: anytype) void {
 
 /// If implementing a custom sync, call this after it completes to clean up dirty events and check
 /// that all dirty entities were synced.
+///
+/// Invalidates pointers.
 pub fn finishSyncAllImmediate(es: *Entities) void {
     var it = es.viewIterator(DirtySubtreeIterator.EventView);
     while (it.next()) |vw| {
@@ -328,6 +353,8 @@ pub fn finishSyncAllImmediate(es: *Entities) void {
 }
 
 /// Immediately synchronize this entity using the given `world_from_model` matrix.
+///
+/// This does not invalidate pointers, but it is not thread safe.
 pub fn syncImmediate(self: *@This(), parent_world_from_model: Mat2x3) void {
     const translation: Mat2x3 = .translation(self.cached_local_pos);
     const rotation: Mat2x3 = .rotation(self.cached_local_orientation);
@@ -348,13 +375,12 @@ pub const exec = struct {
 
     /// Similar to `immediate`, but returns an error on failure instead of panicking. On error the
     /// commands are left partially evaluated.
-    pub fn immediateOrErr(es: *Entities, cb: CmdBuf) error{
-        ZcsCompOverflow,
-        ZcsEntityOverflow,
-        ZcsArchOverflow,
-        ZcsChunkOverflow,
-        ZcsChunkPoolOverflow,
-    }!void {
+    pub fn immediateOrErr(
+        es: *Entities,
+        cb: CmdBuf,
+    ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
+        es.pointer_generation.increment();
+
         var batches = cb.iterator();
         while (batches.next()) |batch| {
             switch (batch) {
@@ -418,7 +444,7 @@ pub const exec = struct {
     pub fn extImmediateOrErr(
         es: *Entities,
         payload: Any,
-    ) error{ ZcsCompOverflow, ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
+    ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
         try Node.exec.extImmediateOrErr(es, payload);
         if (payload.as(Node.SetParent)) |set_parent| {
             if (set_parent.child.get(es, Transform2D)) |transform| {
@@ -444,6 +470,8 @@ pub fn markDirty(self: *@This(), es: *const Entities, cb: *CmdBuf) void {
 
 /// Similar to `markDirty`, but immediately emits the event instead of adding it to a command
 /// buffer.
+///
+/// Invalidates pointers.
 pub fn markDirtyImmediate(self: *@This(), es: *Entities) void {
     assert(self.cache != .dirty_visited);
     if (self.cache == .dirty) return;
