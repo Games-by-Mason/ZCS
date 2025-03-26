@@ -256,47 +256,10 @@ pub fn ViewIterator(View: type) type {
                     if (field.type == Entity) {
                         @field(result, field.name) = entity;
                     } else {
-                        // Get the component type
                         const T = view.UnwrapField(field.type);
-
-                        // Get the handle value
-                        const entity_loc = self.entity_iter.es.handle_tab.values[entity.key.index];
-                        assert(entity_loc.chunk != null);
-
-                        // Check if we have the component or not
-                        const has_comp = if (@typeInfo(field.type) == .optional) b: {
-                            // If the component type isn't registered, we definitely don't have it
-                            const flag = typeId(T).comp_flag orelse break :b false;
-
-                            // If it has a flag, check if we have it
-                            const chunk_header = entity_loc.chunk.?.header();
-                            const arch = chunk_header.arch(&self.entity_iter.es.chunk_lists);
-                            break :b arch.contains(flag);
-                        } else b: {
-                            // If the component isn't optional, we can assume we have it
-                            break :b true;
-                        };
-
-                        // Set the field's comp pointer
-                        if (has_comp) {
-                            // We have the component, pass it to the caller
-                            const comp: *T = if (@sizeOf(T) == 0) b: {
-                                // See `Entity.fromAny`.
-                                const Key = @FieldType(Entity, "key");
-                                const Generation = @FieldType(Key, "generation");
-                                comptime assert(@intFromEnum(Generation.invalid) == 0);
-                                break :b @ptrFromInt(@as(u64, @bitCast(entity)));
-                            } else b: {
-                                const base = @intFromPtr(@field(self.base, field.name));
-                                const offset = entity.key.index * @sizeOf(T);
-                                break :b @ptrFromInt(base + offset);
-                            };
-                            @field(result, field.name) = comp;
-                        } else {
-                            // This component is optional and we don't have it, set our result to
-                            // null
-                            @field(result, field.name) = null;
-                        }
+                        const comp = entity.get(self.entity_iter.es, T);
+                        const is_opt = @typeInfo(field.type) == .optional;
+                        @field(result, field.name) = if (is_opt) comp else comp.?;
                     }
                 }
                 return result;
