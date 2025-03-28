@@ -101,13 +101,13 @@ pub const Entity = packed struct {
 
         // Get the corresponding chunk by rounding down to the chunk alignment. This works as chunks
         // are aligned to their size, in part to support this operation.
-        const chunk: *const Chunk = @ptrFromInt(pool.size_align.backward(@intFromPtr(comp.ptr)));
+        const chunk: *Chunk = @ptrFromInt(pool.size_align.backward(@intFromPtr(comp.ptr)));
 
         // Calculate the index in this chunk that this component is at
         const list: *const ChunkList = chunk.header().list.get(&es.chunk_lists);
         assert(chunk.header().arch(&es.chunk_lists).contains(flag));
         const comp_offset = @intFromPtr(comp.ptr) - @intFromPtr(chunk);
-        assert(comp_offset != 0); // Zero when missing in debug builds
+        assert(comp_offset != 0); // Zero when missing
         const comp_buf_offset = list.comp_buf_offsets.get(flag);
         const index_in_chunk = @divExact(comp_offset - comp_buf_offset, comp.id.size);
 
@@ -506,17 +506,14 @@ pub const Entity = packed struct {
     /// Initializes a `view`, returning `null` if this entity does not exist or is missing any
     /// required components.
     pub fn view(self: @This(), es: *const Entities, View: type) ?View {
-        // Check if entity has the required components
+        // Get the entity's location
         const entity_loc = es.handle_tab.get(self.key) orelse return null;
-        var view_arch: CompFlag.Set = .{};
-        inline for (@typeInfo(View).@"struct".fields) |field| {
-            if (field.type != Entity and @typeInfo(field.type) != .optional) {
-                const Unwrapped = zcs.view.UnwrapField(field.type);
-                const flag = typeId(Unwrapped).comp_flag orelse return null;
-                view_arch.insert(flag);
-            }
-        }
-        if (!entity_loc.arch(&es.chunk_lists).supersetOf(view_arch)) return null;
+        const chunk = entity_loc.chunk orelse return null;
+        const view_arch = zcs.view.requiredCompsFromStruct(View) orelse return null;
+
+        // Check if the entity has the requested components
+        const entity_arch = chunk.header().list.arch(&es.chunk_lists);
+        if (!entity_arch.supersetOf(view_arch)) return null;
 
         // Fill in the view and return it
         return self.viewAssumeArch(es, View);
@@ -572,7 +569,7 @@ pub const Entity = packed struct {
 
         // Fill in any uninitialized components and return the view
         inline for (@typeInfo(View).@"struct".fields) |field| {
-            const Unwrapped = zcs.view.UnwrapField(field.type);
+            const Unwrapped = zcs.view.UnwrapField(field.type, .one);
             if (@hasField(@TypeOf(comps), field.name) and
                 result.uninitialized.contains(typeId(Unwrapped).comp_flag.?))
             {
@@ -613,7 +610,7 @@ pub const Entity = packed struct {
         var view_arch: CompFlag.Set = .{};
         inline for (@typeInfo(View).@"struct".fields) |field| {
             if (field.type != Entity and @typeInfo(field.type) != .optional) {
-                const Unwrapped = zcs.view.UnwrapField(field.type);
+                const Unwrapped = zcs.view.UnwrapField(field.type, .one);
                 const flag = CompFlag.registerImmediate(typeId(Unwrapped));
                 view_arch.insert(flag);
             }
@@ -635,7 +632,7 @@ pub const Entity = packed struct {
     fn viewAssumeArch(self: @This(), es: *const Entities, View: type) View {
         var result: View = undefined;
         inline for (@typeInfo(View).@"struct".fields) |field| {
-            const Unwrapped = zcs.view.UnwrapField(field.type);
+            const Unwrapped = zcs.view.UnwrapField(field.type, .one);
             if (Unwrapped == Entity) {
                 @field(result, field.name) = self;
                 continue;

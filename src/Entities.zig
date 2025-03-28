@@ -21,6 +21,7 @@ const ChunkPool = zcs.storage.ChunkPool;
 const Chunk = zcs.storage.Chunk;
 const HandleTab = zcs.storage.HandleTab;
 const ChunkLists = zcs.storage.ChunkLists;
+const EntityIndex = zcs.storage.EntityIndex;
 const view = zcs.view;
 
 const Entities = @This();
@@ -112,11 +113,100 @@ pub fn reserved(self: *const @This()) usize {
     return self.reserved_entities;
 }
 
+/// Calls `updateEntity` on each compatible entity in an implementation defined order.
+/// See also `forEachChunk`.
+///
+/// `updateEntity` should take `ctx` as an argument, followed by any number of component pointers,
+/// optional component pointers, or `Entity`s.
+///
+/// Invalidating pointers from the update function results in safety checked illegal behavior.
+pub fn forEach(
+    self: *@This(),
+    updateEntity: anytype,
+    ctx: view.params(@TypeOf(updateEntity))[0],
+) void {
+    const params = view.params(@TypeOf(updateEntity));
+    var chunks = self.chunkIterator(view.requiredComps(params[1..]) orelse return);
+    while (chunks.next()) |chunk| {
+        const chunk_view = chunk.view(self, view.Slices(params[1..])).?;
+        for (0..chunk.header().len) |i| {
+            const entity_view = zcs.view.index(self, chunk_view, @intCast(i));
+            @call(.auto, updateEntity, .{ctx} ++ entity_view);
+        }
+    }
+}
+
+/// Prefer `forEach`. Calls `updateChunk` on each compatible chunk in an implementation
+/// defined order, may be useful for batch optimizations.
+///
+/// `updateChunk` should take `ctx` as an argument, followed by any number of component slices,
+/// optional component slices, or const slices of `EntityIndex`.
+///
+/// Invalidating pointers from the update function results in safety checked illegal behavior.
+pub fn forEachChunk(
+    self: *@This(),
+    updateChunk: anytype,
+    ctx: view.params(@TypeOf(updateChunk))[0],
+) void {
+    const params = view.params(@TypeOf(updateChunk));
+    var chunks = self.chunkIterator(view.requiredComps(params[1..]) orelse return);
+    while (chunks.next()) |chunk| {
+        const chunk_view = chunk.view(self, view.Tuple(params[1..])).?;
+        @call(.auto, updateChunk, .{ctx} ++ chunk_view);
+    }
+}
+
+/// Returns an iterator over all the chunks with at least the components in `required_comps` in
+/// an implementation defined order.
+///
+/// Invalidating pointers while iterating results in safety checked illegal behavior.
+pub fn chunkIterator(
+    self: *@This(),
+    required_comps: CompFlag.Set,
+) ChunkIterator {
+    var lists = self.chunk_lists.iterator(required_comps);
+    const chunks: ChunkList.Iterator = if (lists.next()) |list| list.iterator(self) else .empty;
+    return .{
+        .es = self,
+        .lists = lists,
+        .chunks = chunks,
+        .pointer_lock = self.pointer_generation.lock(),
+    };
+}
+
+/// See `chunkIterator`.
+pub const ChunkIterator = struct {
+    es: *const Entities,
+    lists: ChunkLists.Iterator,
+    chunks: ChunkList.Iterator,
+    pointer_lock: PointerLock,
+
+    /// Advances the iterator, returning the next entity.
+    pub fn next(self: *@This()) ?*Chunk {
+        self.pointer_lock.check(self.es.pointer_generation);
+
+        while (true) {
+            // Get the next chunk in this list
+            if (self.chunks.next(self.es)) |chunk| {
+                return chunk;
+            }
+
+            // If that fails, get the next list
+            if (self.lists.next()) |chunk_list| {
+                self.chunks = chunk_list.iterator(self.es);
+                continue;
+            }
+
+            // If that fails, return null
+            return null;
+        }
+    }
+};
+
 /// Returns an iterator over all entities that have at least the components in `required_comps` in
 /// an implementation defined order.
 ///
-/// `lockPointers` is called before starting, and `unlockPointers` is called the first time the
-/// iterator returns `null`. If you stop iterating early you must call `unlockPointers` manually.
+/// Invalidating pointers while iterating results in safety checked illegal behavior.
 pub fn iterator(
     self: *@This(),
     required_comps: CompFlag.Set,
@@ -176,10 +266,12 @@ pub const Iterator = struct {
 };
 
 /// Similar to `iterator`, but returns a `view` with pointers to the requested components.
+///
+/// Invalidating pointers while iterating results in safety checked illegal behavior.
 pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
     var required_comps: CompFlag.Set = .{};
     inline for (@typeInfo(view.Comps(View)).@"struct".fields) |field| {
-        const T = view.UnwrapField(field.type);
+        const T = view.UnwrapField(field.type, .one);
         if (@typeInfo(field.type) != .optional) {
             if (typeId(T).comp_flag) |flag| {
                 required_comps.insert(flag);
@@ -234,7 +326,7 @@ pub fn ViewIterator(View: type) type {
                     if (field.type == Entity) {
                         @field(result, field.name) = entity;
                     } else {
-                        const T = view.UnwrapField(field.type);
+                        const T = view.UnwrapField(field.type, .one);
                         const comp = entity.get(self.entity_iter.es, T);
                         const is_opt = @typeInfo(field.type) == .optional;
                         @field(result, field.name) = if (is_opt) comp else comp.?;

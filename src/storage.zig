@@ -27,6 +27,7 @@ const Allocator = std.mem.Allocator;
 /// For internal use. A handle table that associates persistent entity keys with values that point
 /// to their storage.
 pub const HandleTab = SlotMap(EntityLoc, .{});
+pub const EntityIndex = @FieldType(HandleTab.Key, "index");
 
 /// For internal use. Points to an entity's storage, the indirection allows entities to be relocated
 /// without invalidating their handles.
@@ -59,8 +60,6 @@ pub const IndexInChunk = enum(u16) { _ };
 
 /// For internal use. A chunk of entities that all have the same archetype.
 pub const Chunk = opaque {
-    const EntityIndex = @FieldType(HandleTab.Key, "index");
-
     /// For internal use. The header information for a chunk.
     pub const Header = struct {
         /// The index of the chunk list.
@@ -84,7 +83,7 @@ pub const Chunk = opaque {
 
     /// Checks for self consistency.
     fn checkAssertions(
-        self: *const Chunk,
+        self: *Chunk,
         es: *const Entities,
         mode: enum {
             /// By default, chunks may not be empty since if they were they'd have been returned to
@@ -139,13 +138,7 @@ pub const Chunk = opaque {
     }
 
     /// For internal use. Returns a pointer to the chunk header.
-    pub inline fn headerMut(self: *Chunk) *Header {
-        // This const cast is okay since it starts out mutable.
-        return @constCast(self.header());
-    }
-
-    /// For internal use. See `header`.
-    pub inline fn header(self: *const Chunk) *const Header {
+    pub inline fn header(self: *Chunk) *Header {
         return @alignCast(@ptrCast(self));
     }
 
@@ -154,7 +147,7 @@ pub const Chunk = opaque {
         // Get the header and chunk list
         const pool = &es.chunk_pool;
         const index = pool.indexOf(self);
-        const list = self.header().list.getMut(&es.chunk_lists);
+        const list = self.header().list.get(&es.chunk_lists);
 
         // Validate this chunk
         self.checkAssertions(es, .allow_empty);
@@ -165,14 +158,14 @@ pub const Chunk = opaque {
         if (list.avail == index) list.avail = self.header().next_avail;
 
         // Remove this chunk from the chunk list normal and available linked lists
-        if (self.header().prev.getMut(pool)) |prev| prev.headerMut().next = self.header().next;
-        if (self.header().next.getMut(pool)) |next| next.headerMut().prev = self.header().prev;
-        if (self.header().prev_avail.getMut(pool)) |prev| prev.headerMut().next_avail = self.header().next_avail;
-        if (self.header().next_avail.getMut(pool)) |next| next.headerMut().prev_avail = self.header().prev_avail;
+        if (self.header().prev.get(pool)) |prev| prev.header().next = self.header().next;
+        if (self.header().next.get(pool)) |next| next.header().prev = self.header().prev;
+        if (self.header().prev_avail.get(pool)) |prev| prev.header().next_avail = self.header().next_avail;
+        if (self.header().next_avail.get(pool)) |next| next.header().prev_avail = self.header().prev_avail;
 
         // Reset this chunk, and add it to the pool's free list
-        self.headerMut().* = undefined;
-        self.headerMut().next = es.chunk_pool.free;
+        self.header().* = undefined;
+        self.header().next = es.chunk_pool.free;
         es.chunk_pool.free = index;
 
         // Validate the chunk list
@@ -186,7 +179,7 @@ pub const Chunk = opaque {
     }
 
     /// For internal use. See `entityIndices`.
-    pub fn entityIndices(self: *const Chunk, es: *const Entities) []const EntityIndex {
+    pub fn entityIndices(self: *Chunk, es: *const Entities) []const EntityIndex {
         const list = self.header().list.get(&es.chunk_lists);
         const ptr: [*]EntityIndex = @ptrFromInt(@intFromPtr(self) + list.index_buf_offsets);
         return ptr[0..self.header().len];
@@ -196,9 +189,8 @@ pub const Chunk = opaque {
     pub fn compsFromId(self: *Chunk, es: *const Entities, id: TypeId) ?[]u8 {
         const list = self.header().list.get(&es.chunk_lists);
         const flag = id.comp_flag orelse return null;
-        if (!self.header().arch(&es.chunk_lists).contains(flag)) return null;
         const offset = list.comp_buf_offsets.get(flag);
-        assert(offset != 0); // Zero when missing in debug mode
+        if (offset == 0) return null;
         const ptr: [*]u8 = @ptrFromInt(@intFromPtr(self) + offset);
         return ptr[0 .. self.header().len * id.size];
     }
@@ -206,7 +198,22 @@ pub const Chunk = opaque {
     /// For internal use. Returns a slice of component data for the given type, or `null` if this
     /// chunk doesn't contain the given component type.
     pub fn comps(self: *Chunk, es: *const Entities, T: type) ?[]T {
-        return @ptrCast(self.compsId(es, typeId(T)));
+        return @ptrCast(@alignCast(self.compsFromId(es, typeId(T))));
+    }
+
+    pub fn view(self: *@This(), es: *const Entities, View: type) ?View {
+        var result: View = undefined;
+        inline for (&result) |*field| {
+            const As = zcs.view.UnwrapField(@TypeOf(field.*), .slice);
+            if (As == EntityIndex) {
+                field.* = self.entityIndices(es);
+            } else if (@typeInfo(@TypeOf(field.*)) == .optional) {
+                field.* = self.comps(es, As);
+            } else {
+                field.* = self.comps(es, As).?;
+            }
+        }
+        return result;
     }
 
     /// For internal use. Swap removes an entity from the chunk, updating the location of the moved
@@ -214,12 +221,12 @@ pub const Chunk = opaque {
     pub fn swapRemove(self: *@This(), es: *Entities, index_in_chunk: IndexInChunk) void {
         const pool = &es.chunk_pool;
         const index = pool.indexOf(self);
-        const list = self.header().list.getMut(&es.chunk_lists);
+        const list = self.header().list.get(&es.chunk_lists);
         const was_full = self.header().len >= list.chunk_capacity;
 
         // Get the last entity
         const indices = self.entityIndicesMut(es);
-        const new_len = self.headerMut().len - 1;
+        const new_len = self.header().len - 1;
         const moved = indices[new_len];
 
         // Early out if we're popping the end of the list
@@ -241,7 +248,7 @@ pub const Chunk = opaque {
             if (new_len == 0) {
                 self.clear(es);
             } else {
-                self.headerMut().len = new_len;
+                self.header().len = new_len;
             }
 
             // Early out
@@ -270,7 +277,7 @@ pub const Chunk = opaque {
         }
 
         // Pop the last entity
-        self.headerMut().len = new_len;
+        self.header().len = new_len;
 
         // Update the location of the moved entity in the handle table
         const moved_loc = &es.handle_tab.values[moved];
@@ -279,15 +286,15 @@ pub const Chunk = opaque {
 
         // If this chunk was previously full, add it to this chunk list's available list
         if (was_full) {
-            if (list.avail.getMut(pool)) |head| {
+            if (list.avail.get(pool)) |head| {
                 // Don't disturb the front of the available list if there is one, this decreases
                 // fragmentation by guaranteeing that we fill one chunk at a time.
-                self.headerMut().next_avail = head.header().next_avail;
-                if (self.header().next_avail.getMut(pool)) |next_avail| {
-                    next_avail.headerMut().prev_avail = index;
+                self.header().next_avail = head.header().next_avail;
+                if (self.header().next_avail.get(pool)) |next_avail| {
+                    next_avail.header().prev_avail = index;
                 }
-                self.headerMut().prev_avail = list.avail;
-                head.headerMut().next_avail = index;
+                self.header().prev_avail = list.avail;
+                head.header().next_avail = index;
             } else {
                 // If the available list is empty, set it to this chunk
                 list.avail = index;
@@ -299,7 +306,7 @@ pub const Chunk = opaque {
     }
 
     /// Returns an iterator over this chunk's entities.
-    pub fn iterator(self: *const @This()) Iterator {
+    pub fn iterator(self: *@This()) Iterator {
         return .{
             .chunk = self,
             .index_in_chunk = @enumFromInt(0),
@@ -309,16 +316,18 @@ pub const Chunk = opaque {
     /// An iterator over a chunk's entities.
     pub const Iterator = struct {
         pub const empty: @This() = .{
-            .chunk = @ptrCast(&Header{
+            // This const cast is acceptable only because we'll never attempt to write to this empty
+            // header.
+            .chunk = @constCast(@ptrCast(&Header{
                 .list = @enumFromInt(
                     math.maxInt(@typeInfo(@FieldType(Header, "list")).@"enum".tag_type),
                 ),
                 .len = 0,
-            }),
+            })),
             .index_in_chunk = @enumFromInt(0),
         };
 
-        chunk: *const Chunk,
+        chunk: *Chunk,
         index_in_chunk: IndexInChunk,
 
         pub fn next(self: *@This(), es: *const Entities) ?Entity {
@@ -442,7 +451,6 @@ pub const ChunkList = struct {
         const sorted = sortCompsByAlignment(arch);
 
         // Get the max alignment required by any component or entity index
-        const EntityIndex = @FieldType(HandleTab.Key, "index");
         var max_align: u16 = @alignOf(EntityIndex);
         if (sorted.len > 0) max_align = @max(max_align, sorted.get(0).getId().alignment);
 
@@ -473,9 +481,7 @@ pub const ChunkList = struct {
 
         // Calculate the offsets for each component
         var offset: u16 = data_offset;
-        var comp_buf_offsets: std.enums.EnumArray(CompFlag, u16) = .initFill(
-            if (runtime_safety) 0 else undefined,
-        );
+        var comp_buf_offsets: std.enums.EnumArray(CompFlag, u16) = .initFill(0);
         var index_buf_offsets: u16 = 0;
         for (sorted.constSlice()) |comp| {
             const id = comp.getId();
@@ -541,9 +547,9 @@ pub const ChunkList = struct {
             self.avail = new_index;
 
             // Add the new chunk to the end of the chunk list
-            if (self.tail.getMut(pool)) |tail| {
-                new.headerMut().prev = self.tail;
-                tail.headerMut().next = new_index;
+            if (self.tail.get(pool)) |tail| {
+                new.header().prev = self.tail;
+                tail.header().next = new_index;
                 self.tail = new_index;
             } else {
                 self.head = new_index;
@@ -552,8 +558,8 @@ pub const ChunkList = struct {
         }
 
         // Get the next chunk with space available
-        const chunk = self.avail.getMut(pool).?;
-        const header = chunk.headerMut();
+        const chunk = self.avail.get(pool).?;
+        const header = chunk.header();
         assert(header.len < self.chunk_capacity);
         chunk.checkAssertions(es, .allow_empty);
 
@@ -568,8 +574,8 @@ pub const ChunkList = struct {
             assert(self.avail.get(pool) == chunk);
             self.avail = chunk.header().next_avail;
             header.next_avail = .none;
-            if (self.avail.getMut(pool)) |avail| {
-                const available_header = avail.headerMut();
+            if (self.avail.get(pool)) |avail| {
+                const available_header = avail.header();
                 assert(available_header.prev_avail.get(pool) == chunk);
                 available_header.prev_avail = .none;
             }
@@ -631,9 +637,9 @@ pub const ChunkList = struct {
     pub const Iterator = struct {
         pub const empty: @This() = .{ .chunk = null };
 
-        chunk: ?*const Chunk,
+        chunk: ?*Chunk,
 
-        pub fn next(self: *@This(), es: *const Entities) ?*const Chunk {
+        pub fn next(self: *@This(), es: *const Entities) ?*Chunk {
             const chunk = self.chunk orelse return null;
             chunk.checkAssertions(es, .default);
             const header = chunk.header();
@@ -650,20 +656,14 @@ pub const ChunkPool = struct {
         none = math.maxInt(u32),
         _,
 
-        /// See `get`.
-        pub fn getMut(self: Index, pool: *ChunkPool) ?*Chunk {
-            // Const cast is okay since it started out mutable.
-            return @constCast(self.get(pool));
-        }
-
         /// Gets a chunk from the chunk ID.
-        pub fn get(self: Index, pool: *const ChunkPool) ?*const Chunk {
+        pub fn get(self: Index, pool: *const ChunkPool) ?*Chunk {
             if (self == .none) return null;
             const byte_idx = @shlExact(
                 @intFromEnum(self),
                 @intCast(@intFromEnum(pool.size_align)),
             );
-            const result: *const Chunk = @ptrCast(&pool.buf[byte_idx]);
+            const result: *Chunk = @ptrCast(&pool.buf[byte_idx]);
             assert(@intFromEnum(self) < pool.reserved);
             assert(pool.indexOf(result) == self);
             return result;
@@ -732,7 +732,7 @@ pub const ChunkPool = struct {
     ) error{ZcsChunkPoolOverflow}!*Chunk {
         // Get a free chunk. Try the free list first, then fall back to bump allocation from the
         // preallocated buffer.
-        const chunk = if (self.free.getMut(self)) |free| b: {
+        const chunk = if (self.free.get(self)) |free| b: {
             // Pop the next chunk from the free list
             self.free = free.header().next;
             break :b free;
@@ -750,7 +750,7 @@ pub const ChunkPool = struct {
         assert(self.size_align.check(@intFromPtr(chunk)));
 
         // Initialize the chunk and return it
-        const header = chunk.headerMut();
+        const header = chunk.header();
         header.* = .{
             .list = list,
             .len = 0,
@@ -773,14 +773,8 @@ pub const ChunkLists = struct {
     /// The index of a chunk list.
     pub const Index = enum(u32) {
         /// Gets a chunk list from a chunk list ID.
-        pub fn get(self: @This(), lists: *const ChunkLists) *const ChunkList {
+        pub fn get(self: @This(), lists: *const ChunkLists) *ChunkList {
             return &lists.arches.values()[@intFromEnum(self)];
-        }
-
-        /// See `get`.
-        pub fn getMut(self: @This(), lists: *ChunkLists) *ChunkList {
-            // This const cast is okay since it starts out mutable.
-            return @constCast(self.get(lists));
         }
 
         /// Gets the archetype for a chunk list.
