@@ -120,6 +120,9 @@ pub fn reserved(self: *const @This()) usize {
 /// optional component pointers, or `Entity`s.
 ///
 /// Invalidating pointers from the update function results in safety checked illegal behavior.
+///
+/// Note that the implementation only relies on ZCS's public interface. If you have a use case that
+/// isn't served well by `forEach`, you can fork it into your code base and modify it as needed.
 pub fn forEach(
     self: *@This(),
     updateEntity: anytype,

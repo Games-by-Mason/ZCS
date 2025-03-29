@@ -198,7 +198,14 @@ pub const Chunk = opaque {
     /// For internal use. Returns a slice of component data for the given type, or `null` if this
     /// chunk doesn't contain the given component type.
     pub fn comps(self: *Chunk, es: *const Entities, T: type) ?[]T {
-        return @ptrCast(@alignCast(self.compsFromId(es, typeId(T))));
+        // We do this manually instead of using `@ptrCast` so that we can support zero sized types
+        // whose length can't be inferred from the number of bytes since it's always zero, this is
+        // useful in generic code such as systems.
+        const untyped = self.compsFromId(es, typeId(T)) orelse return null;
+        var result: []T = undefined;
+        result.ptr = @ptrCast(@alignCast(untyped.ptr));
+        result.len = self.header().len;
+        return result;
     }
 
     pub fn view(self: *@This(), es: *const Entities, View: type) ?View {
