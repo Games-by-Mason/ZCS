@@ -316,10 +316,10 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
         });
 
         // Check for entities the oracle is missing
-        var iter = fz.es.iterator(.{});
-        while (iter.next()) |e| {
-            if (!o.entities.contains(e)) {
-                std.debug.print("oracle missing {}\n", .{e});
+        var iter = fz.es.iterator(struct { e: Entity });
+        while (iter.next(&fz.es)) |vw| {
+            if (!o.entities.contains(vw.e)) {
+                std.debug.print("oracle missing {}\n", .{vw.e});
             }
         }
 

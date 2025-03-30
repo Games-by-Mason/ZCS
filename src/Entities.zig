@@ -80,11 +80,11 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
 /// Invalidates pointers.
 pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
     self.pointer_generation.increment();
-    var chunk_lists_iter = self.chunk_lists.iterator(arch);
-    while (chunk_lists_iter.next()) |chunk_list| {
+    var chunk_lists_iter = self.chunk_lists.iterator(self, arch);
+    while (chunk_lists_iter.next(self)) |chunk_list| {
         var chunk_list_iter = chunk_list.iterator(self);
         while (chunk_list_iter.next(self)) |chunk| {
-            var chunk_iter = chunk.iterator();
+            var chunk_iter = chunk.iterator(self);
             while (chunk_iter.next(self)) |entity| {
                 self.handle_tab.recycle(entity.key);
             }
@@ -129,13 +129,10 @@ pub fn forEach(
     ctx: view.params(@TypeOf(updateEntity))[0],
 ) void {
     const params = view.params(@TypeOf(updateEntity));
-    var chunks = self.chunkIterator(view.requiredComps(params[1..]) orelse return);
-    while (chunks.next()) |chunk| {
-        const chunk_view = chunk.view(self, view.Slices(params[1..])).?;
-        for (0..chunk.header().len) |i| {
-            const entity_view = zcs.view.index(self, chunk_view, @intCast(i));
-            @call(.auto, updateEntity, .{ctx} ++ entity_view);
-        }
+    const View = view.Tuple(params[1..]);
+    var iter = self.iterator(View);
+    while (iter.next(self)) |vw| {
+        @call(.auto, updateEntity, .{ctx} ++ vw);
     }
 }
 
@@ -152,8 +149,9 @@ pub fn forEachChunk(
     ctx: view.params(@TypeOf(updateChunk))[0],
 ) void {
     const params = view.params(@TypeOf(updateChunk));
-    var chunks = self.chunkIterator(view.requiredComps(params[1..]) orelse return);
-    while (chunks.next()) |chunk| {
+    const required_comps = view.comps(view.Tuple(params[1..]), .slice) orelse return;
+    var chunks = self.chunkIterator(required_comps);
+    while (chunks.next(self)) |chunk| {
         const chunk_view = chunk.view(self, view.Tuple(params[1..])).?;
         @call(.auto, updateChunk, .{ctx} ++ chunk_view);
     }
@@ -164,181 +162,138 @@ pub fn forEachChunk(
 ///
 /// Invalidating pointers while iterating results in safety checked illegal behavior.
 pub fn chunkIterator(
-    self: *@This(),
+    self: *const @This(),
     required_comps: CompFlag.Set,
 ) ChunkIterator {
-    var lists = self.chunk_lists.iterator(required_comps);
-    const chunks: ChunkList.Iterator = if (lists.next()) |list| list.iterator(self) else .empty;
-    return .{
-        .es = self,
+    var lists = self.chunk_lists.iterator(self, required_comps);
+    const chunks: ChunkList.Iterator = if (lists.next(self)) |l| l.iterator(self) else .empty(self);
+    var result: ChunkIterator = .{
         .lists = lists,
         .chunks = chunks,
-        .pointer_lock = self.pointer_generation.lock(),
     };
+    result.catchUp(self);
+    return result;
 }
 
 /// See `chunkIterator`.
 pub const ChunkIterator = struct {
-    es: *const Entities,
     lists: ChunkLists.Iterator,
     chunks: ChunkList.Iterator,
-    pointer_lock: PointerLock,
+
+    /// Returns the pointer lock.
+    pub fn pointerLock(self: *const ChunkIterator) PointerLock {
+        return self.lists.pointer_lock;
+    }
+
+    /// Returns an empty iterator.
+    pub fn empty(es: *const Entities) @This() {
+        return .{
+            .lists = .empty(es),
+            .chunks = .empty(es),
+        };
+    }
+
+    /// Advance the internal state so that `peek` is in sync.
+    fn catchUp(self: *@This(), es: *const Entities) void {
+        while (self.chunks.chunk == null) {
+            if (self.lists.next(es)) |chunk_list| {
+                self.chunks = chunk_list.iterator(es);
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Returns the current chunk without advancing.
+    pub fn peek(self: *const @This(), es: *const Entities) ?*Chunk {
+        return self.chunks.peek(es);
+    }
 
     /// Advances the iterator, returning the next entity.
-    pub fn next(self: *@This()) ?*Chunk {
-        self.pointer_lock.check(self.es.pointer_generation);
+    pub fn next(self: *@This(), es: *const Entities) ?*Chunk {
+        self.pointerLock().check(es.pointer_generation);
 
-        while (true) {
+        // We need to loop here because while chunks can't be empty, chunk lists can
+        const chunk = while (true) {
             // Get the next chunk in this list
-            if (self.chunks.next(self.es)) |chunk| {
-                return chunk;
-            }
+            if (self.chunks.next(es)) |chunk| break chunk;
 
-            // If that fails, get the next list
-            if (self.lists.next()) |chunk_list| {
-                self.chunks = chunk_list.iterator(self.es);
+            // If that fails, get the next list and try again
+            if (self.lists.next(es)) |chunk_list| {
+                self.chunks = chunk_list.iterator(es);
                 continue;
             }
 
             // If that fails, return null
             return null;
-        }
+        };
+
+        // Catch up the peek state.
+        self.catchUp(es);
+
+        return chunk;
     }
 };
 
 /// Returns an iterator over all entities that have at least the components in `required_comps` in
-/// an implementation defined order.
+/// an implementation defined order. The results are of type `View` which is a struct where each
+/// field is either a pointer to a component, an optional pointer to a component, or `Entity`.
 ///
 /// Invalidating pointers while iterating results in safety checked illegal behavior.
-pub fn iterator(
-    self: *@This(),
-    required_comps: CompFlag.Set,
-) Iterator {
-    var arch_iter = self.chunk_lists.iterator(required_comps);
-    var chunk_list_iter: ChunkList.Iterator = if (arch_iter.next()) |chunk_list|
-        chunk_list.iterator(self)
-    else
-        .empty;
-    const chunk_iter: Chunk.Iterator = if (chunk_list_iter.next(self)) |chunk|
-        chunk.iterator()
-    else
-        .empty;
+pub fn iterator(self: *const @This(), View: type) Iterator(View) {
+    const required_comps: CompFlag.Set = view.comps(View, .one) orelse
+        return .empty(self);
+    const chunks = self.chunkIterator(required_comps);
+    const slices = if (chunks.peek(self)) |c| c.view(self, view.Slice(View)).? else undefined;
     return .{
-        .es = self,
-        .pointer_lock = self.pointer_generation.lock(),
-        .arch_iter = arch_iter,
-        .chunk_list_iter = chunk_list_iter,
-        .chunk_iter = chunk_iter,
+        .chunks = chunks,
+        .slices = slices,
+        .index_in_chunk = 0,
     };
 }
 
-/// See `iterator`.
-pub const Iterator = struct {
-    es: *const Entities,
-    arch_iter: ChunkLists.Iterator,
-    chunk_list_iter: ChunkList.Iterator,
-    chunk_iter: Chunk.Iterator,
-    pointer_lock: PointerLock,
-
-    /// Advances the iterator, returning the next entity.
-    pub fn next(self: *@This()) ?Entity {
-        self.pointer_lock.check(self.es.pointer_generation);
-
-        while (true) {
-            // Get the next entity in this chunk
-            if (self.chunk_iter.next(self.es)) |entity| {
-                return entity;
-            }
-
-            // If that fails, get the next chunk in this chunk list
-            if (self.chunk_list_iter.next(self.es)) |chunk| {
-                self.chunk_iter = chunk.iterator();
-                continue;
-            }
-
-            // If that fails, get the next chunk list in this archetype
-            if (self.arch_iter.next()) |chunk_list| {
-                self.chunk_list_iter = chunk_list.iterator(self.es);
-                continue;
-            }
-
-            // If that fails, return null
-            return null;
-        }
-    }
-};
-
-/// Similar to `iterator`, but returns a `view` with pointers to the requested components.
-///
-/// Invalidating pointers while iterating results in safety checked illegal behavior.
-pub fn viewIterator(self: *const @This(), View: type) ViewIterator(View) {
-    var required_comps: CompFlag.Set = .{};
-    inline for (@typeInfo(view.Comps(View)).@"struct".fields) |field| {
-        const T = view.UnwrapField(field.type, .one);
-        if (@typeInfo(field.type) != .optional) {
-            if (typeId(T).comp_flag) |flag| {
-                required_comps.insert(flag);
-            } else {
-                return .empty(self);
-            }
-        }
-    }
-
-    var arch_iter = self.chunk_lists.iterator(required_comps);
-    var chunk_list_iter: ChunkList.Iterator = if (arch_iter.next()) |chunk_list|
-        chunk_list.iterator(self)
-    else
-        .empty;
-    const chunk_iter: Chunk.Iterator = if (chunk_list_iter.next(self)) |chunk|
-        chunk.iterator()
-    else
-        .empty;
-    return .{
-        .entity_iter = .{
-            .es = self,
-            .pointer_lock = self.pointer_generation.lock(),
-            .arch_iter = arch_iter,
-            .chunk_list_iter = chunk_list_iter,
-            .chunk_iter = chunk_iter,
-        },
-    };
-}
-
-/// See `Entities.viewIterator`.
-pub fn ViewIterator(View: type) type {
+/// See `Entities.iterator`.
+pub fn Iterator(View: type) type {
     return struct {
-        entity_iter: Iterator,
+        const Slices = view.Slice(View);
 
+        chunks: ChunkIterator,
+        slices: Slices,
+        index_in_chunk: u16,
+
+        /// Returns an empty iterator.
         pub fn empty(es: *const Entities) @This() {
             return .{
-                .entity_iter = .{
-                    .es = es,
-                    .arch_iter = .empty,
-                    .chunk_list_iter = .empty,
-                    .chunk_iter = .empty,
-                    .pointer_lock = es.pointer_generation.lock(),
-                },
+                .chunks = .empty(es),
+                .slices = undefined,
+                .index_in_chunk = 0,
             };
         }
 
         /// Advances the iterator, returning the next view.
-        pub fn next(self: *@This()) ?View {
-            while (self.entity_iter.next()) |entity| {
-                var result: View = undefined;
-                inline for (@typeInfo(View).@"struct".fields) |field| {
-                    if (field.type == Entity) {
-                        @field(result, field.name) = entity;
-                    } else {
-                        const T = view.UnwrapField(field.type, .one);
-                        const comp = entity.get(self.entity_iter.es, T);
-                        const is_opt = @typeInfo(field.type) == .optional;
-                        @field(result, field.name) = if (is_opt) comp else comp.?;
-                    }
-                }
-                return result;
+        pub fn next(self: *@This(), es: *const Entities) ?View {
+            // Check for pointer invalidation
+            self.chunks.pointerLock().check(es.pointer_generation);
+
+            // Get the current chunk
+            var chunk = self.chunks.peek(es) orelse return null;
+            assert(chunk.header().len > 0); // Free chunks are returned to the chunk pool
+
+            // If we're done with the current chunk, advance to the next one
+            if (self.index_in_chunk >= chunk.header().len) {
+                _ = self.chunks.next(es).?;
+                chunk = self.chunks.peek(es) orelse return null;
+                self.index_in_chunk = 0;
+                assert(chunk.header().len > 0); // Free chunks are returned to the chunk pool
+                self.slices = chunk.view(es, Slices).?;
             }
 
-            return null;
+            // Get the entity and advance the index, this can't overflow the counter since we can't
+            // have as many entities as bytes in a chunk since the space would be used up by the
+            // entity indices
+            const result = view.index(View, es, self.slices, self.index_in_chunk);
+            self.index_in_chunk += 1;
+            return result;
         }
     };
 }

@@ -94,13 +94,10 @@ fn countEntities(count: *usize) void {
 
 fn countEntitiesChunkedWithHandles(
     self: *@This(),
-    entity_indices: []const zcs.storage.EntityIndex,
+    entity_indices: []const Entity.Index,
 ) void {
-    for (entity_indices) |index| {
-        const entity: Entity = .{ .key = .{
-            .index = index,
-            .generation = self.es.handle_tab.generations[index],
-        } };
+    for (entity_indices) |entity_index| {
+        const entity = entity_index.toEntity(&self.es);
         assert(entity.exists(&self.es));
         assert(entity.committed(&self.es));
         self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
@@ -154,13 +151,10 @@ fn checkRigidBodiesChunked(
 fn checkRigidBodiesChunkedWithHandles(
     self: *@This(),
     rbs: []const RigidBody,
-    entity_indices: []const zcs.storage.EntityIndex,
+    entity_indices: []const Entity.Index,
 ) void {
     for (rbs, entity_indices) |*rb, entity_index| {
-        const entity: Entity = .{ .key = .{
-            .index = entity_index,
-            .generation = self.es.handle_tab.generations[entity_index],
-        } };
+        const entity = entity_index.toEntity(&self.es);
         assert(entity == Entity.from(&self.es, rb));
         assert(entity.get(&self.es, RigidBody).? == rb);
         self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
@@ -289,13 +283,10 @@ fn checkSomeOptionalChunkedWithHandles(
     tags: ?[]Tag,
     rbs: []const RigidBody,
     models: []Model,
-    entity_indices: []const zcs.storage.EntityIndex,
+    entity_indices: []const Entity.Index,
 ) void {
     for (rbs, models, entity_indices, 0..) |*rb, *model, entity_index, i| {
-        const entity: Entity = .{ .key = .{
-            .index = entity_index,
-            .generation = self.es.handle_tab.generations[entity_index],
-        } };
+        const entity = entity_index.toEntity(&self.es);
         assert(entity == Entity.from(&self.es, rb));
         assert(entity == Entity.from(&self.es, model));
         assert(rb == entity.get(&self.es, RigidBody));

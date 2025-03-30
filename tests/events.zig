@@ -61,17 +61,17 @@ test "events" {
     {
         try expectEqual(2, es.count());
 
-        var events = es.viewIterator(struct { entity: Entity, event: *const Event });
+        var events = es.iterator(struct { entity: Entity, event: *const Event });
 
-        const recv_0 = events.next().?;
+        const recv_0 = events.next(&es).?;
         try expectEqualEntity(e0, recv_0.entity);
         try expectEqual('a', recv_0.event.payload);
 
-        const recv_1 = events.next().?;
+        const recv_1 = events.next(&es).?;
         try expectEqualEntity(e1, recv_1.entity);
         try expectEqual('b', recv_1.event.payload);
 
-        try expectEqual(null, events.next());
+        try expectEqual(null, events.next(&es));
     }
 
     // Recycle the entities, and then clear the command buffer, reserving the same entities again
@@ -89,16 +89,16 @@ test "events" {
     {
         try expectEqual(2, es.count());
 
-        var events = es.viewIterator(struct { entity: Entity, event: *const Event });
-        const recv_0 = events.next().?;
+        var events = es.iterator(struct { entity: Entity, event: *const Event });
+        const recv_0 = events.next(&es).?;
         try expectEqualEntity(e0, recv_0.entity);
         try expectEqual('c', recv_0.event.payload);
 
-        const recv_1 = events.next().?;
+        const recv_1 = events.next(&es).?;
         try expectEqualEntity(e1, recv_1.entity);
         try expectEqual('d', recv_1.event.payload);
 
-        try expectEqual(null, events.next());
+        try expectEqual(null, events.next(&es));
     }
 
     // Recycle the entities, and then clear the command buffer, reserving the same entities again

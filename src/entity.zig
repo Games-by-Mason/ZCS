@@ -29,6 +29,24 @@ const ChunkList = zcs.storage.ChunkList;
 /// discouraged as they are not valid while iterating unless otherwise noted and are not thread
 /// safe.
 pub const Entity = packed struct {
+    /// An entity without its generation. Used by some lower level APIs to save space where the
+    /// safety of the generation is not needed, should not be stored long term outside of the ECS.
+    pub const Index = enum(@FieldType(HandleTab.Key, "index")) {
+        _,
+
+        /// Converts the entity index to an `Entity` with the corresponding generation. Assumes that
+        /// the index is not dangling, this cannot be reliably enforced without the generation.
+        pub fn toEntity(self: @This(), es: *const Entities) Entity {
+            const result: Entity = .{ .key = .{
+                .index = @intFromEnum(self),
+                .generation = es.handle_tab.generations[@intFromEnum(self)],
+            } };
+            assert(result.key.generation != .invalid);
+            assert(result.key.index < es.handle_tab.next_index);
+            return result;
+        }
+    };
+
     pub const Optional = packed struct {
         pub const none: @This() = .{ .key = .none };
 
@@ -114,11 +132,8 @@ pub const Entity = packed struct {
         // Get the entity index from the chunk
         const indices = chunk.entityIndices(es);
         const entity_index = indices[index_in_chunk];
-        assert(entity_index < es.handle_tab.next_index);
-        const entity: Entity = .{ .key = .{
-            .index = @intCast(entity_index),
-            .generation = es.handle_tab.generations[entity_index],
-        } };
+        assert(@intFromEnum(entity_index) < es.handle_tab.next_index);
+        const entity = entity_index.toEntity(es);
 
         // Assert that the entity has been committed and return it
         assert(entity.committed(es));
@@ -509,7 +524,7 @@ pub const Entity = packed struct {
         // Get the entity's location
         const entity_loc = es.handle_tab.get(self.key) orelse return null;
         const chunk = entity_loc.chunk orelse return null;
-        const view_arch = zcs.view.requiredCompsFromStruct(View) orelse return null;
+        const view_arch = zcs.view.comps(View, .one) orelse return null;
 
         // Check if the entity has the requested components
         const entity_arch = chunk.header().list.arch(&es.chunk_lists);

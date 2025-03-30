@@ -37,7 +37,7 @@ Games often feature behavior that is conditional on the runtime properties of ob
 Archetype based iteration allows you to conveniently process only entities that match a given query.
 
 ```zig
-var iter = es.viewIterator(struct {
+var iter = es.iterator(struct {
     mesh: *const Mesh,
     transform: *const Transform,
     effects: ?*const Effects,

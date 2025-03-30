@@ -136,19 +136,19 @@ pub fn getForward(self: @This()) Vec2 {
 /// that you can use this method to synchronize subtrees on separate threads if desired.
 pub fn dirtySubtreeIterator(es: *Entities) DirtySubtreeIterator {
     return .{
-        .events = es.viewIterator(DirtySubtreeIterator.EventView),
+        .events = es.iterator(DirtySubtreeIterator.EventView),
     };
 }
 
 /// An iterator over the roots of the dirty subtrees.
 pub const DirtySubtreeIterator = struct {
     const EventView = struct { dirty: *const Dirty };
-    events: Entities.ViewIterator(EventView),
+    events: Entities.Iterator(EventView),
 
     /// Returns the next transform.
     pub fn next(self: *@This(), es: *const Entities) ?Subtree {
         // Iterate over the dirty events
-        ev: while (self.events.next()) |event| {
+        ev: while (self.events.next(es)) |event| {
             if (event.dirty.entity.view(es, struct {
                 transform: *Transform2D,
                 node: ?*const Node,
@@ -324,11 +324,11 @@ pub fn syncAllThreadPool(
 ///
 /// Does not invalidate pointers. Is thread safe IFF the given subtree is not disturbed by other
 /// threads.
-fn syncBatchImmediate(es: *Entities, subtrees: anytype) void {
+fn syncBatchImmediate(es: *Entities, batch: anytype) void {
     const pointer_lock = es.pointer_generation.lock();
     defer pointer_lock.check(es.pointer_generation);
 
-    for (subtrees.constSlice()) |subtree| {
+    for (batch.constSlice()) |subtree| {
         var transforms = subtree.preOrderIterator(es);
         while (transforms.next(es)) |transform| {
             transform.syncImmediate(transform.getRelativeWorldFromModel(es));
@@ -341,8 +341,8 @@ fn syncBatchImmediate(es: *Entities, subtrees: anytype) void {
 ///
 /// Invalidates pointers.
 pub fn finishSyncAllImmediate(es: *Entities) void {
-    var it = es.viewIterator(DirtySubtreeIterator.EventView);
-    while (it.next()) |vw| {
+    var it = es.iterator(DirtySubtreeIterator.EventView);
+    while (it.next(es)) |vw| {
         if (vw.dirty.entity.get(es, Transform2D)) |transform| {
             transform.cache = .clean;
         }

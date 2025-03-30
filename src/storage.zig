@@ -27,7 +27,6 @@ const Allocator = std.mem.Allocator;
 /// For internal use. A handle table that associates persistent entity keys with values that point
 /// to their storage.
 pub const HandleTab = SlotMap(EntityLoc, .{});
-pub const EntityIndex = @FieldType(HandleTab.Key, "index");
 
 /// For internal use. Points to an entity's storage, the indirection allows entities to be relocated
 /// without invalidating their handles.
@@ -173,15 +172,15 @@ pub const Chunk = opaque {
     }
 
     /// For internal use. Gets the index buffer. This includes uninitialized indices.
-    fn entityIndicesMut(self: *Chunk, es: *const Entities) []EntityIndex {
+    fn entityIndicesMut(self: *Chunk, es: *const Entities) []Entity.Index {
         // This const cast is okay since it starts out mutable.
         return @constCast(self.entityIndices(es));
     }
 
     /// For internal use. See `entityIndices`.
-    pub fn entityIndices(self: *Chunk, es: *const Entities) []const EntityIndex {
+    pub fn entityIndices(self: *Chunk, es: *const Entities) []const Entity.Index {
         const list = self.header().list.get(&es.chunk_lists);
-        const ptr: [*]EntityIndex = @ptrFromInt(@intFromPtr(self) + list.index_buf_offsets);
+        const ptr: [*]Entity.Index = @ptrFromInt(@intFromPtr(self) + list.index_buf_offsets);
         return ptr[0..self.header().len];
     }
 
@@ -210,14 +209,14 @@ pub const Chunk = opaque {
 
     pub fn view(self: *@This(), es: *const Entities, View: type) ?View {
         var result: View = undefined;
-        inline for (&result) |*field| {
-            const As = zcs.view.UnwrapField(@TypeOf(field.*), .slice);
-            if (As == EntityIndex) {
-                field.* = self.entityIndices(es);
-            } else if (@typeInfo(@TypeOf(field.*)) == .optional) {
-                field.* = self.comps(es, As);
+        inline for (@typeInfo(View).@"struct".fields) |field| {
+            const As = zcs.view.UnwrapField(field.type, .slice);
+            if (As == Entity.Index) {
+                @field(result, field.name) = self.entityIndices(es);
+            } else if (@typeInfo(field.type) == .optional) {
+                @field(result, field.name) = self.comps(es, As);
             } else {
-                field.* = self.comps(es, As).?;
+                @field(result, field.name) = self.comps(es, As).?;
             }
         }
         return result;
@@ -287,7 +286,7 @@ pub const Chunk = opaque {
         self.header().len = new_len;
 
         // Update the location of the moved entity in the handle table
-        const moved_loc = &es.handle_tab.values[moved];
+        const moved_loc = &es.handle_tab.values[@intFromEnum(moved)];
         assert(moved_loc.chunk.? == self);
         moved_loc.index_in_chunk = index_in_chunk;
 
@@ -313,39 +312,29 @@ pub const Chunk = opaque {
     }
 
     /// Returns an iterator over this chunk's entities.
-    pub fn iterator(self: *@This()) Iterator {
+    ///
+    /// Invalidating pointers while iterating results in safety checked illegal behavior.
+    pub fn iterator(self: *@This(), es: *const Entities) Iterator {
         return .{
             .chunk = self,
             .index_in_chunk = @enumFromInt(0),
+            .pointer_lock = es.pointer_generation.lock(),
         };
     }
 
     /// An iterator over a chunk's entities.
     pub const Iterator = struct {
-        pub const empty: @This() = .{
-            // This const cast is acceptable only because we'll never attempt to write to this empty
-            // header.
-            .chunk = @constCast(@ptrCast(&Header{
-                .list = @enumFromInt(
-                    math.maxInt(@typeInfo(@FieldType(Header, "list")).@"enum".tag_type),
-                ),
-                .len = 0,
-            })),
-            .index_in_chunk = @enumFromInt(0),
-        };
-
         chunk: *Chunk,
         index_in_chunk: IndexInChunk,
+        pointer_lock: PointerLock,
 
         pub fn next(self: *@This(), es: *const Entities) ?Entity {
+            self.pointer_lock.check(es.pointer_generation);
             if (@intFromEnum(self.index_in_chunk) >= self.chunk.header().len) return null;
             const indices = self.chunk.entityIndices(es);
             const entity_index = indices[@intFromEnum(self.index_in_chunk)];
             self.index_in_chunk = @enumFromInt(@intFromEnum(self.index_in_chunk) + 1);
-            return .{ .key = .{
-                .index = entity_index,
-                .generation = es.handle_tab.generations[entity_index],
-            } };
+            return entity_index.toEntity(es);
         }
     };
 };
@@ -458,7 +447,7 @@ pub const ChunkList = struct {
         const sorted = sortCompsByAlignment(arch);
 
         // Get the max alignment required by any component or entity index
-        var max_align: u16 = @alignOf(EntityIndex);
+        var max_align: u16 = @alignOf(Entity.Index);
         if (sorted.len > 0) max_align = @max(max_align, sorted.get(0).getId().alignment);
 
         // Initialize the offset to the start of the data
@@ -472,7 +461,7 @@ pub const ChunkList = struct {
         ) catch return error.ZcsChunkOverflow;
 
         // Calculate how much space one entity takes
-        var entity_size: u16 = @sizeOf(EntityIndex);
+        var entity_size: u16 = @sizeOf(Entity.Index);
         for (sorted.constSlice()) |comp| {
             const comp_size = math.cast(u16, comp.getId().size) orelse
                 return error.ZcsChunkOverflow;
@@ -494,10 +483,10 @@ pub const ChunkList = struct {
             const id = comp.getId();
 
             // If we haven't found a place for the index buffer, check if it can go here
-            if (index_buf_offsets == 0 and id.alignment <= @alignOf(EntityIndex)) {
-                assert(offset % @alignOf(EntityIndex) == 0);
+            if (index_buf_offsets == 0 and id.alignment <= @alignOf(Entity.Index)) {
+                assert(offset % @alignOf(Entity.Index) == 0);
                 index_buf_offsets = offset;
-                const buf_size = math.mul(u16, @sizeOf(EntityIndex), chunk_capacity) catch
+                const buf_size = math.mul(u16, @sizeOf(Entity.Index), chunk_capacity) catch
                     return error.ZcsChunkOverflow;
                 offset = math.add(u16, offset, buf_size) catch
                     return error.ZcsChunkOverflow;
@@ -517,7 +506,7 @@ pub const ChunkList = struct {
         // If we haven't found a place for the index buffer, place it at the end
         if (index_buf_offsets == 0) {
             index_buf_offsets = offset;
-            const buf_size = math.mul(u16, @sizeOf(EntityIndex), chunk_capacity) catch
+            const buf_size = math.mul(u16, @sizeOf(Entity.Index), chunk_capacity) catch
                 return error.ZcsChunkOverflow;
             offset = math.add(u16, offset, buf_size) catch
                 return error.ZcsChunkOverflow;
@@ -574,7 +563,7 @@ pub const ChunkList = struct {
         const index_in_chunk: IndexInChunk = @enumFromInt(header.len);
         header.len += 1;
         const index_buf = chunk.entityIndicesMut(es);
-        index_buf[@intFromEnum(index_in_chunk)] = e.key.index;
+        index_buf[@intFromEnum(index_in_chunk)] = @enumFromInt(e.key.index);
 
         // If the chunk is now full, remove it from the available list
         if (header.len == self.chunk_capacity) {
@@ -623,9 +612,14 @@ pub const ChunkList = struct {
     }
 
     /// Returns an iterator over this chunk list's chunks.
+    ///
+    /// Invalidating pointers while iterating results in safety checked illegal behavior.
     pub fn iterator(self: *const ChunkList, es: *const Entities) Iterator {
         self.checkAssertions(es);
-        return .{ .chunk = self.head.get(&es.chunk_pool) };
+        return .{
+            .chunk = self.head.get(&es.chunk_pool),
+            .pointer_lock = es.pointer_generation.lock(),
+        };
     }
 
     /// Gets the index of a chunk.
@@ -642,16 +636,29 @@ pub const ChunkList = struct {
 
     /// An iterator over a chunk list's chunks.
     pub const Iterator = struct {
-        pub const empty: @This() = .{ .chunk = null };
+        /// Returns an empty iterator.
+        pub fn empty(es: *const Entities) @This() {
+            return .{
+                .chunk = null,
+                .pointer_lock = es.pointer_generation.lock(),
+            };
+        }
 
         chunk: ?*Chunk,
+        pointer_lock: PointerLock,
 
         pub fn next(self: *@This(), es: *const Entities) ?*Chunk {
+            self.pointer_lock.check(es.pointer_generation);
             const chunk = self.chunk orelse return null;
             chunk.checkAssertions(es, .default);
             const header = chunk.header();
             self.chunk = header.next.get(&es.chunk_pool);
             return chunk;
+        }
+
+        pub fn peek(self: @This(), es: *const Entities) ?*Chunk {
+            self.pointer_lock.check(es.pointer_generation);
+            return self.chunk;
         }
     };
 };
@@ -847,10 +854,13 @@ pub const ChunkLists = struct {
     }
 
     /// Returns an iterator over the chunk lists that have the given components.
-    pub fn iterator(self: @This(), required_comps: CompFlag.Set) Iterator {
+    ///
+    /// Invalidating pointers while iterating results in safety checked illegal behavior.
+    pub fn iterator(self: @This(), es: *const Entities, required_comps: CompFlag.Set) Iterator {
         return .{
             .required_comps = required_comps,
             .all = self.arches.iterator(),
+            .pointer_lock = es.pointer_generation.lock(),
         };
     }
 
@@ -858,16 +868,22 @@ pub const ChunkLists = struct {
     pub const Iterator = struct {
         required_comps: CompFlag.Set,
         all: @FieldType(ChunkLists, "arches").Iterator,
+        pointer_lock: PointerLock,
 
-        pub const empty: @This() = .{
-            .required_comps = .{},
-            .all = b: {
-                const map: std.AutoArrayHashMapUnmanaged(CompFlag.Set, ChunkList) = .{};
-                break :b map.iterator();
-            },
-        };
+        /// Returns an empty iterator.
+        pub fn empty(es: *const Entities) @This() {
+            return .{
+                .required_comps = .{},
+                .all = b: {
+                    const map: std.AutoArrayHashMapUnmanaged(CompFlag.Set, ChunkList) = .{};
+                    break :b map.iterator();
+                },
+                .pointer_lock = es.pointer_generation.lock(),
+            };
+        }
 
-        pub fn next(self: *@This()) ?*const ChunkList {
+        pub fn next(self: *@This(), es: *const Entities) ?*const ChunkList {
+            self.pointer_lock.check(es.pointer_generation);
             while (self.all.next()) |item| {
                 if (item.key_ptr.*.supersetOf(self.required_comps)) {
                     return item.value_ptr;

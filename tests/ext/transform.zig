@@ -138,9 +138,9 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
         // Get a list of all the entities
         {
             all.clearRetainingCapacity();
-            var iter = es.iterator(.{});
-            while (iter.next()) |e| {
-                try all.append(gpa, e);
+            var iter = es.iterator(struct { e: Entity });
+            while (iter.next(&es)) |vw| {
+                try all.append(gpa, vw.e);
             }
         }
 
@@ -308,17 +308,17 @@ fn checkOracle(es: *const Entities) !void {
     if (log) std.debug.print("check oracle\n", .{});
 
     // All dirty events should have been cleared by now
-    var dirty_events = es.viewIterator(struct { dirty: *const Transform.Dirty });
-    try std.testing.expectEqual(null, dirty_events.next());
+    var dirty_events = es.iterator(struct { dirty: *const Transform.Dirty });
+    try std.testing.expectEqual(null, dirty_events.next(es));
 
     var path: std.ArrayListUnmanaged(*const Transform) = .{};
     defer path.deinit(gpa);
 
-    var iter = es.viewIterator(struct {
+    var iter = es.iterator(struct {
         node: ?*const Node,
         transform: *const Transform,
     });
-    while (iter.next()) |vw| {
+    while (iter.next(es)) |vw| {
         // The cache should be clean
         try std.testing.expectEqual(.clean, vw.transform.cache);
 

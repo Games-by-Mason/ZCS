@@ -77,24 +77,24 @@ test "cb execImmediate" {
     try expectEqual(3, es.count());
     cb.clear(&es);
 
-    var iter = es.iterator(.{});
+    var iter = es.iterator(struct { e: Entity });
 
-    try expect(iter.next().? == e0);
+    try expect(iter.next(&es).?.e == e0);
     try expectEqual(null, e0.get(&es, RigidBody));
     try expectEqual(null, e0.get(&es, Model));
     try expectEqual(null, e0.get(&es, Tag));
 
-    try expect(e1 == iter.next().?);
+    try expect(e1 == iter.next(&es).?.e);
     try expectEqual(null, e1.get(&es, RigidBody));
     try expectEqual(null, e1.get(&es, Model));
     try expectEqual(null, e1.get(&es, Tag));
 
-    try expect(e2 == iter.next().?);
+    try expect(e2 == iter.next(&es).?.e);
     try expectEqual(rb, e2.get(&es, RigidBody).?.*);
     try expectEqual(null, e2.get(&es, Model));
     try expectEqual(null, e2.get(&es, Tag));
 
-    try expectEqual(null, iter.next());
+    try expectEqual(null, iter.next(&es));
 
     // We don't check eql anywhere else, quickly check it here. The details are tested more
     // extensively on slot map.
@@ -982,8 +982,8 @@ test "chunk pool overflow" {
         try expectEqual(n + 1, es.count());
     }
     var count: usize = 0;
-    var iter = es.iterator(.{});
-    while (iter.next()) |_| count += 1;
+    var iter = es.iterator(struct { e: Entity });
+    while (iter.next(&es)) |_| count += 1;
     try expectEqual(es.count(), count);
 
     // Recycle all the entities we created
@@ -1018,8 +1018,8 @@ test "chunk pool overflow" {
             .avg_cmd_bytes = @sizeOf(Entity),
         });
         defer cb.deinit(gpa, &es);
-        var it = es.iterator(.{});
-        while (it.next()) |e| e.destroy(&cb);
+        var it = es.iterator(struct { e: Entity });
+        while (it.next(&es)) |vw| vw.e.destroy(&cb);
         cb.execImmediate(&es);
         try expectEqual(0, es.count());
     }
@@ -1053,8 +1053,8 @@ test "chunk pool overflow" {
             .avg_cmd_bytes = @sizeOf(Entity),
         });
         defer cb.deinit(gpa, &es);
-        var it = es.iterator(.{});
-        while (it.next()) |e| e.destroy(&cb);
+        var it = es.iterator(struct { e: Entity });
+        while (it.next(&es)) |vw| vw.e.destroy(&cb);
         cb.execImmediate(&es);
         try expectEqual(0, es.count());
     }
