@@ -4,20 +4,21 @@ const assert = std.debug.assert;
 
 const PointerLock = @This();
 
+const enabled = std.debug.runtime_safety;
+
 /// The current pointer generation.
-pub const Generation = enum(if (std.debug.runtime_safety) u64 else u0) {
-    init = 0,
-    _,
+pub const Generation = struct {
+    n: if (enabled) u64 else u0 = 0,
 
     /// Increments the pointer generation.
-    pub fn increment(self: *@This()) void {
-        if (std.debug.runtime_safety) {
-            self.* = @enumFromInt(@intFromEnum(self.*) +% 1);
+    pub inline fn increment(self: *@This()) void {
+        if (enabled) {
+            self.n +%= 1;
         }
     }
 
     /// Returns a pointer lock with the current generation.
-    pub fn lock(self: @This()) PointerLock {
+    pub inline fn lock(self: @This()) PointerLock {
         return .{ .generation = self };
     }
 };
@@ -27,7 +28,7 @@ generation: Generation,
 
 /// Asserts that pointers have not been invalidated since this lock was created.
 pub fn check(self: @This(), generation: Generation) void {
-    if (self.generation != generation) {
+    if (self.generation.n != generation.n) {
         @panic("pointers invalidated");
     }
 }

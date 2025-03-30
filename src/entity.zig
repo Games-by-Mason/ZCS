@@ -16,6 +16,7 @@ const CmdBuf = zcs.CmdBuf;
 const TypeId = zcs.TypeId;
 const HandleTab = zcs.storage.HandleTab;
 const Chunk = zcs.storage.Chunk;
+const ChunkPool = zcs.storage.ChunkPool;
 const ChunkList = zcs.storage.ChunkList;
 
 /// An entity.
@@ -39,11 +40,41 @@ pub const Entity = packed struct {
         pub fn toEntity(self: @This(), es: *const Entities) Entity {
             const result: Entity = .{ .key = .{
                 .index = @intFromEnum(self),
-                .generation = es.handle_tab.generations[@intFromEnum(self)],
+                .generation = es.handle_tab.slots[@intFromEnum(self)].generation,
             } };
             assert(result.key.generation != .invalid);
             assert(result.key.index < es.handle_tab.next_index);
             return result;
+        }
+    };
+
+    /// The location an entity is stored.
+    ///
+    /// This indirection allows entities to be relocated without invalidating their handles.
+    pub const Location = struct {
+        /// The index of an entity in a chunk.
+        pub const IndexInChunk = enum(u32) { _ };
+
+        /// A handle that's been reserved but not committed.
+        pub const reserved: @This() = .{
+            .chunk = .none,
+            .index_in_chunk = if (std.debug.runtime_safety)
+                @enumFromInt(std.math.maxInt(@typeInfo(IndexInChunk).@"enum".tag_type))
+            else
+                undefined,
+        };
+
+        /// The chunk where this entity is stored, or `null` if it hasn't been committed.
+        chunk: ChunkPool.Index = .none,
+        /// The entity's index in the chunk, value is unspecified if not committed.
+        index_in_chunk: IndexInChunk,
+
+        /// Returns the archetype for this entity, or the empty archetype if it hasn't been
+        /// committed.
+        pub fn arch(self: @This(), es: *const Entities) CompFlag.Set {
+            const chunk = self.chunk.get(&es.chunk_pool) orelse return .{};
+            const header = chunk.header();
+            return header.arch(&es.chunk_lists);
         }
     };
 
@@ -122,15 +153,15 @@ pub const Entity = packed struct {
         const chunk: *Chunk = @ptrFromInt(pool.size_align.backward(@intFromPtr(comp.ptr)));
 
         // Calculate the index in this chunk that this component is at
-        const list: *const ChunkList = chunk.header().list.get(&es.chunk_lists);
         assert(chunk.header().arch(&es.chunk_lists).contains(flag));
         const comp_offset = @intFromPtr(comp.ptr) - @intFromPtr(chunk);
         assert(comp_offset != 0); // Zero when missing
-        const comp_buf_offset = list.comp_buf_offsets.get(flag);
+        // https://github.com/Games-by-Mason/ZCS/issues/24
+        const comp_buf_offset = chunk.header().comp_buf_offsets.values[@intFromEnum(flag)];
         const index_in_chunk = @divExact(comp_offset - comp_buf_offset, comp.id.size);
 
         // Get the entity index from the chunk
-        const indices = chunk.entityIndices(es);
+        const indices = chunk.view(es, struct { indices: []const Entity.Index }).?.indices;
         const entity_index = indices[index_in_chunk];
         assert(@intFromEnum(entity_index) < es.handle_tab.next_index);
         const entity = entity_index.toEntity(es);
@@ -190,11 +221,11 @@ pub const Entity = packed struct {
     }
 
     /// Similar to `destroy`, but returns `error.ZcsCmdBufOverflow` on failure instead of
-    /// panicking.
+    /// panicking. The command buffer is left in an undefined state on error.
     pub fn destroyOrErr(self: @This(), cb: *CmdBuf) error{ZcsCmdBufOverflow}!void {
-        // Restore the state on failure
-        const restore = cb.*;
-        errdefer cb.* = restore;
+        errdefer if (std.debug.runtime_safety) {
+            cb.invalid = true;
+        };
         try Subcmd.encode(cb, .{ .bind_entity = self });
         try Subcmd.encode(cb, .destroy);
     }
@@ -205,7 +236,7 @@ pub const Entity = packed struct {
     pub fn destroyImmediate(self: @This(), es: *Entities) bool {
         es.pointer_generation.increment();
         if (es.handle_tab.get(self.key)) |entity_loc| {
-            if (entity_loc.chunk) |chunk| {
+            if (entity_loc.chunk.get(&es.chunk_pool)) |chunk| {
                 chunk.swapRemove(es, entity_loc.index_in_chunk);
             } else {
                 es.reserved_entities -= 1;
@@ -244,7 +275,7 @@ pub const Entity = packed struct {
     /// Returns true if the entity exists and has been committed, otherwise returns false.
     pub fn committed(self: @This(), es: *const Entities) bool {
         const entity_loc = es.handle_tab.get(self.key) orelse return false;
-        return entity_loc.chunk != null;
+        return entity_loc.chunk != .none;
     }
 
     /// Returns true if the entity has the given component type, false otherwise or if the entity
@@ -262,14 +293,23 @@ pub const Entity = packed struct {
     /// Retrieves the given component type. Returns null if the entity does not have this component
     /// or has been destroyed.
     pub fn get(self: @This(), es: *const Entities, T: type) ?*T {
-        const untyped = self.getId(es, typeId(T)) orelse return null;
-        return @alignCast(@ptrCast(untyped));
+        // We could use `compsFromId` here, but we a measurable performance improvement in
+        // benchmarks by calculating the result directly
+        const entity_loc = es.handle_tab.get(self.key) orelse return null;
+        const chunk = entity_loc.chunk.get(&es.chunk_pool) orelse return null;
+        const flag = typeId(T).comp_flag orelse return null;
+        // https://github.com/Games-by-Mason/ZCS/issues/24
+        const offset = chunk.header().comp_buf_offsets.values[@intFromEnum(flag)];
+        if (offset == 0) return null;
+        const comps_addr = @intFromPtr(chunk) + offset;
+        const comp_addr = comps_addr + @sizeOf(T) * @intFromEnum(entity_loc.index_in_chunk);
+        return @ptrFromInt(comp_addr);
     }
 
     /// Similar to `get`, but operates on component IDs instead of types.
     pub fn getId(self: @This(), es: *const Entities, id: TypeId) ?[]u8 {
         const entity_loc = es.handle_tab.get(self.key) orelse return null;
-        const chunk = entity_loc.chunk orelse return null;
+        const chunk = entity_loc.chunk.get(&es.chunk_pool) orelse return null;
         const comps = chunk.compsFromId(es, id) orelse return null;
         return comps[@intFromEnum(entity_loc.index_in_chunk) * id.size ..][0..id.size];
     }
@@ -290,7 +330,8 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
 
-    /// Similar to `add`, but returns an error on failure instead of panicking.
+    /// Similar to `add`, but returns an error on failure instead of panicking. The command buffer
+    /// is left in an undefined state on error.
     pub inline fn addOrErr(
         self: @This(),
         cb: *CmdBuf,
@@ -312,11 +353,9 @@ pub const Entity = packed struct {
     /// Similar to `addOrErr`, but doesn't require compile time types and forces the component to be
     /// copied by value to the command buffer. Prefer `add`.
     pub fn addAnyVal(self: @This(), cb: *CmdBuf, comp: Any) error{ZcsCmdBufOverflow}!void {
-        // Restore the state on failure
-        const restore = cb.*;
-        errdefer cb.* = restore;
-
-        // Issue the commands
+        errdefer if (std.debug.runtime_safety) {
+            cb.invalid = true;
+        };
         try Subcmd.encode(cb, .{ .bind_entity = self });
         try Subcmd.encode(cb, .{ .add_val = comp });
     }
@@ -324,11 +363,9 @@ pub const Entity = packed struct {
     /// Similar to `addOrErr`, but doesn't require compile time types and forces the component to be
     /// copied by pointer to the command buffer. Prefer `add`.
     pub fn addAnyPtr(self: @This(), cb: *CmdBuf, comp: Any) error{ZcsCmdBufOverflow}!void {
-        // Restore the state on failure
-        const restore = cb.*;
-        errdefer cb.* = restore;
-
-        // Issue the commands
+        errdefer if (std.debug.runtime_safety) {
+            cb.invalid = true;
+        };
         try Subcmd.encode(cb, .{ .bind_entity = self });
         try Subcmd.encode(cb, .{ .add_ptr = comp });
     }
@@ -343,13 +380,11 @@ pub const Entity = packed struct {
     }
 
     /// Similar to `remove`, but doesn't require compile time types and returns an error on failure
-    /// instead of panicking on failure.
+    /// instead of panicking on failure. The command buffer is left in an undefined state on error.
     pub fn removeId(self: @This(), cb: *CmdBuf, id: TypeId) error{ZcsCmdBufOverflow}!void {
-        // Restore the state on failure
-        const restore = cb.*;
-        errdefer cb.* = restore;
-
-        // Issue the commands
+        errdefer if (std.debug.runtime_safety) {
+            cb.invalid = true;
+        };
         try Subcmd.encode(cb, .{ .bind_entity = self });
         try Subcmd.encode(cb, .{ .remove = id });
     }
@@ -361,13 +396,11 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
     /// Similar to `commit`, but returns `error.ZcsCmdBufOverflow` on failure instead of
-    /// panicking.
+    /// panicking. The command buffer is left in an undefined state on error.
     pub fn commitOrErr(self: @This(), cb: *CmdBuf) error{ZcsCmdBufOverflow}!void {
-        // Restore the state on failure
-        const restore = cb.*;
-        errdefer cb.* = restore;
-
-        // Issue the subcommand
+        errdefer if (std.debug.runtime_safety) {
+            cb.invalid = true;
+        };
         try Subcmd.encode(cb, .{ .bind_entity = self });
     }
 
@@ -451,15 +484,17 @@ pub const Entity = packed struct {
 
         // Get the handle value and figure out the new arch
         const entity_loc = es.handle_tab.get(self.key) orelse return false;
-        const prev_arch = entity_loc.arch(&es.chunk_lists);
+        const old_chunk = entity_loc.chunk.get(&es.chunk_pool);
+        const prev_arch = entity_loc.arch(es);
         var new_arch = prev_arch;
         new_arch = new_arch.unionWith(options.add);
         new_arch = new_arch.differenceWith(options.remove);
 
         // If the entity is committed and the arch hasn't changed, early out
-        if (entity_loc.chunk) |chunk| {
+        if (old_chunk) |chunk| {
             const chunk_header = chunk.header();
             if (chunk_header.arch(&es.chunk_lists).eql(new_arch)) {
+                @branchHint(.unlikely);
                 return true;
             }
         }
@@ -468,7 +503,7 @@ pub const Entity = packed struct {
         // creating a new chunk list but not be able to allocate any chunks for it.
         const chunk_list = try es.chunk_lists.getOrPut(&es.chunk_pool, new_arch);
         const new_loc = try chunk_list.append(es, self);
-        const new_chunk = new_loc.chunk.?;
+        const new_chunk = new_loc.chunk.get(&es.chunk_pool).?;
         errdefer comptime unreachable;
 
         // Initialize the new components to undefined
@@ -484,7 +519,7 @@ pub const Entity = packed struct {
         }
 
         // Copy components that aren't being overwritten from the old arch to the new one
-        if (entity_loc.chunk) |prev_chunk| {
+        if (old_chunk) |prev_chunk| {
             var move = prev_arch.differenceWith(options.remove)
                 .differenceWith(options.add).iterator();
             while (move.next()) |flag| {
@@ -503,7 +538,7 @@ pub const Entity = packed struct {
         }
 
         // Commit the entity to the new location
-        if (entity_loc.chunk) |chunk| {
+        if (old_chunk) |chunk| {
             chunk.swapRemove(es, entity_loc.index_in_chunk);
         } else {
             es.reserved_entities -= 1;
@@ -521,17 +556,37 @@ pub const Entity = packed struct {
     /// Initializes a `view`, returning `null` if this entity does not exist or is missing any
     /// required components.
     pub fn view(self: @This(), es: *const Entities, View: type) ?View {
-        // Get the entity's location
+        // Check if the entity has the requested components. If the number of components in the view
+        // is very large, this measurably improves performance. The cost of the check when not
+        // necessary doesn't appear to be measurable.
         const entity_loc = es.handle_tab.get(self.key) orelse return null;
-        const chunk = entity_loc.chunk orelse return null;
+        const chunk = entity_loc.chunk.get(&es.chunk_pool) orelse return null;
         const view_arch = zcs.view.comps(View, .one) orelse return null;
-
-        // Check if the entity has the requested components
         const entity_arch = chunk.header().list.arch(&es.chunk_lists);
         if (!entity_arch.supersetOf(view_arch)) return null;
 
         // Fill in the view and return it
-        return self.viewAssumeArch(es, View);
+        var result: View = undefined;
+        inline for (@typeInfo(View).@"struct".fields) |field| {
+            const Unwrapped = zcs.view.UnwrapField(field.type, .one);
+            if (Unwrapped == Entity) {
+                @field(result, field.name) = self;
+            } else {
+                const flag = typeId(Unwrapped).comp_flag.?; // Archetype already checked
+                // https://github.com/Games-by-Mason/ZCS/issues/24
+                const offset = chunk.header().comp_buf_offsets.values[@intFromEnum(flag)];
+                if (@typeInfo(field.type) == .optional and offset == 0) {
+                    @field(result, field.name) = null;
+                } else {
+                    assert(offset != 0); // Archetype already checked
+                    const comps_addr = @intFromPtr(chunk) + offset;
+                    const comp_addr = comps_addr +
+                        @intFromEnum(entity_loc.index_in_chunk) * @sizeOf(Unwrapped);
+                    @field(result, field.name) = @ptrFromInt(comp_addr);
+                }
+            }
+        }
+        return result;
     }
 
     /// Similar to `viewOrAddImmediate`, but for a single component.
@@ -630,7 +685,7 @@ pub const Entity = packed struct {
                 view_arch.insert(flag);
             }
         }
-        const curr_arch = entity_loc.arch(&es.chunk_lists);
+        const curr_arch = entity_loc.arch(es);
         const uninitialized = view_arch.differenceWith(curr_arch);
         if (!curr_arch.supersetOf(view_arch)) {
             assert(try self.changeArchUninitImmediateOrErr(es, .{ .add = uninitialized }));
@@ -638,29 +693,9 @@ pub const Entity = packed struct {
 
         // Create and return the view
         return .{
-            .view = self.viewAssumeArch(es, View),
+            .view = self.view(es, View).?,
             .uninitialized = uninitialized,
         };
-    }
-
-    /// Returns a view, asserts that the archetype is compatible.
-    fn viewAssumeArch(self: @This(), es: *const Entities, View: type) View {
-        var result: View = undefined;
-        inline for (@typeInfo(View).@"struct".fields) |field| {
-            const Unwrapped = zcs.view.UnwrapField(field.type, .one);
-            if (Unwrapped == Entity) {
-                @field(result, field.name) = self;
-                continue;
-            }
-
-            const comp = self.get(es, Unwrapped);
-            if (@typeInfo(field.type) == .optional) {
-                @field(result, field.name) = comp;
-            } else {
-                @field(result, field.name) = comp.?;
-            }
-        }
-        return result;
     }
 
     /// Default formatting.
@@ -677,6 +712,6 @@ pub const Entity = packed struct {
     /// empty archetype will be returned.
     pub fn arch(self: @This(), es: *const Entities) CompFlag.Set {
         const entity_loc = es.handle_tab.get(self.key) orelse return .{};
-        return entity_loc.arch(&es.chunk_lists);
+        return entity_loc.arch(es);
     }
 };

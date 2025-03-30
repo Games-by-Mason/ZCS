@@ -48,7 +48,7 @@ pub fn UnwrapField(T: type, size: std.builtin.Type.Pointer.Size) type {
 }
 
 /// Indexes an entity slice view, returning an entity view.
-pub fn index(View: type, es: *const Entities, slices: anytype, i: u16) View {
+pub fn index(View: type, es: *const Entities, slices: anytype, i: u32) View {
     var view: View = undefined;
     inline for (@typeInfo(View).@"struct".fields, slices) |field, slice| {
         if (UnwrapField(@TypeOf(slice), .slice) == Entity.Index) {

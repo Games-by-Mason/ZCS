@@ -12,12 +12,15 @@
 //! own exec function, you should call this yourself.
 
 const std = @import("std");
+const tracy = @import("tracy");
+const meta = @import("meta.zig");
+const zcs = @import("root.zig");
+
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
-const meta = @import("meta.zig");
+const Zone = tracy.Zone;
 
-const zcs = @import("root.zig");
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const Any = zcs.Any;
@@ -38,6 +41,7 @@ args: std.ArrayListUnmanaged(u64),
 any_bytes: std.ArrayListAlignedUnmanaged(u8, zcs.TypeInfo.max_align),
 binding: Binding = .{ .entity = .none },
 reserved: std.ArrayListUnmanaged(Entity),
+invalid: if (std.debug.runtime_safety) bool else void,
 
 /// Initializes a command buffer.
 pub fn init(
@@ -54,31 +58,42 @@ pub fn initGranularCapacity(
     es: *Entities,
     capacity: GranularCapacity,
 ) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
+    const zone = Zone.begin(.{ .src = @src() });
+    defer zone.end();
     comptime assert(CompFlag.max < std.math.maxInt(u64));
 
+    const tags_zone = Zone.begin(.{ .name = "tags", .src = @src() });
     var tags: std.ArrayListUnmanaged(Subcmd.Tag) = try .initCapacity(gpa, capacity.tags);
     errdefer tags.deinit(gpa);
+    tags_zone.end();
 
+    const args_zone = Zone.begin(.{ .name = "args", .src = @src() });
     var args: std.ArrayListUnmanaged(u64) = try .initCapacity(gpa, capacity.args);
     errdefer args.deinit(gpa);
+    args_zone.end();
 
+    const any_bytes_zone = Zone.begin(.{ .name = "any bytes", .src = @src() });
     var any_bytes: std.ArrayListAlignedUnmanaged(u8, zcs.TypeInfo.max_align) = try .initCapacity(
         gpa,
         capacity.any_bytes,
     );
     errdefer any_bytes.deinit(gpa);
+    any_bytes_zone.end();
 
+    const reserved_zone = Zone.begin(.{ .name = "reserved", .src = @src() });
     var reserved: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacity.reserved);
     errdefer reserved.deinit(gpa);
     for (0..reserved.capacity) |_| {
         reserved.appendAssumeCapacity(try Entity.reserveImmediateOrErr(es));
     }
+    reserved_zone.end();
 
     return .{
         .reserved = reserved,
         .tags = tags,
         .args = args,
         .any_bytes = any_bytes,
+        .invalid = if (std.debug.runtime_safety) false else {},
     };
 }
 
@@ -137,6 +152,8 @@ pub fn clear(self: *@This(), es: *Entities) void {
 /// Similar to `clear`, but returns `error.ZcsEntityOverflow` when failing to refill the reserved
 /// entity list instead of panicking.
 pub fn clearOrErr(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
+    const zone = Zone.begin(.{ .src = @src() });
+    defer zone.end();
     self.any_bytes.clearRetainingCapacity();
     self.args.clearRetainingCapacity();
     self.tags.clearRetainingCapacity();
@@ -170,6 +187,7 @@ fn usage(list: anytype) f32 {
 
 /// Returns an iterator over the encoded commands.
 pub fn iterator(self: *const @This()) Iterator {
+    if (std.debug.runtime_safety) assert(!self.invalid);
     return .{ .decoder = .{ .cb = self } };
 }
 
@@ -187,6 +205,8 @@ pub fn execImmediateOrErr(
     self: *@This(),
     es: *Entities,
 ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
+    const zone = Zone.begin(.{ .src = @src() });
+    defer zone.end();
     es.pointer_generation.increment();
     var iter = self.iterator();
     while (iter.next()) |batch| {
@@ -221,7 +241,7 @@ pub const GranularCapacity = struct {
         _ = Subcmd.rename_when_changing_encoding;
 
         // Each command can have at most one component's worth of component data.
-        const cmd_bytes_cap = (cap.avg_cmd_bytes + zcs.TypeInfo.max_align) * cap.cmds;
+        const cmd_bytes_cap = (cap.avg_cmd_bytes + zcs.TypeInfo.max_align - 1) * cap.cmds;
 
         // Each command can have at most two tags
         const tags_cap = cap.cmds * 2;
@@ -256,7 +276,7 @@ pub const Batch = union(enum) {
             destroy: bool = false,
 
             /// Updates the delta for a given operation.
-            pub fn updateImmediate(self: *@This(), op: Op) void {
+            pub inline fn updateImmediate(self: *@This(), op: Op) void {
                 switch (op) {
                     .add => |comp| {
                         const flag = CompFlag.registerImmediate(comp.id);
@@ -278,7 +298,7 @@ pub const Batch = union(enum) {
         decoder: Subcmd.Decoder,
 
         /// Returns the delta over all archetype change operations.
-        pub fn deltaImmediate(self: @This()) Delta {
+        pub inline fn deltaImmediate(self: @This()) Delta {
             var delta: Delta = .{};
             var ops = self.iterator();
             while (ops.next()) |op| delta.updateImmediate(op);
@@ -286,7 +306,7 @@ pub const Batch = union(enum) {
         }
 
         /// An iterator over this batch's commands.
-        pub fn iterator(self: @This()) @This().Iterator {
+        pub inline fn iterator(self: @This()) @This().Iterator {
             return .{
                 .decoder = self.decoder,
             };
@@ -302,7 +322,7 @@ pub const Batch = union(enum) {
         }
 
         /// Similar to `execImmediate`, but returns an error on overflow instead of panicking.
-        pub fn execImmediateOrErr(
+        pub inline fn execImmediateOrErr(
             self: @This(),
             es: *Entities,
             delta: Delta,
@@ -352,7 +372,7 @@ pub const Batch = union(enum) {
             decoder: Subcmd.Decoder,
 
             /// Returns the next operation, or `null` if there are none.
-            pub fn next(self: *@This()) ?Op {
+            pub inline fn next(self: *@This()) ?Op {
                 while (self.decoder.peekTag()) |tag| {
                     const op: Op = switch (tag) {
                         .add_val => .{ .add = self.decoder.next().?.add_val },
@@ -379,7 +399,7 @@ pub const Iterator = struct {
     decoder: Subcmd.Decoder,
 
     /// Returns the next command batch, or `null` if there is none.
-    pub fn next(self: *@This()) ?Batch {
+    pub inline fn next(self: *@This()) ?Batch {
         _ = Subcmd.rename_when_changing_encoding;
 
         // We just return bind operations here, `Subcmd` handles the add/remove commands.

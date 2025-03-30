@@ -337,7 +337,7 @@ pub const exec = struct {
     }
 
     /// Executes an extension command.
-    pub fn extImmediateOrErr(
+    pub inline fn extImmediateOrErr(
         es: *Entities,
         payload: Any,
     ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {

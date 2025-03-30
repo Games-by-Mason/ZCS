@@ -26,6 +26,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const tracy = b.dependency("tracy", .{ .optimize = optimize, .target = target });
+
     const zcs = b.addModule("zcs", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -33,6 +35,7 @@ pub fn build(b: *std.Build) void {
     });
     zcs.addImport("slot_map", slot_map.module("slot_map"));
     zcs.addImport("geom", geom.module("geom"));
+    zcs.addImport("tracy", tracy.module("tracy"));
 
     const test_step = b.step("test", "Run unit tests");
 
@@ -55,6 +58,21 @@ pub fn build(b: *std.Build) void {
     const zcs_tests = b.addRunArtifact(zcs_tests_exe);
     test_step.dependOn(&zcs_tests.step);
 
+    const bench_step = b.step("bench", "Run benchmarks");
+    const bench_exe = b.addExecutable(.{
+        .name = "bench",
+        .root_source_file = b.path("bench/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .use_llvm = !no_llvm,
+    });
+    bench_exe.root_module.addImport("zcs", zcs);
+    bench_exe.root_module.addImport("tracy", tracy.module("tracy"));
+    bench_exe.root_module.addImport("tracy_impl", tracy.module("tracy_impl_enabled"));
+    const bench_run = b.addRunArtifact(bench_exe);
+    bench_step.dependOn(&bench_run.step);
+    test_step.dependOn(&bench_exe.step);
+
     const docs = zcs_tests_exe.getEmittedDocs();
     const install_docs = b.addInstallDirectory(.{
         .source_dir = docs,
@@ -67,4 +85,5 @@ pub fn build(b: *std.Build) void {
     const check_step = b.step("check", "Check the build");
     check_step.dependOn(&external_tests_exe.step);
     check_step.dependOn(&zcs_tests_exe.step);
+    check_step.dependOn(&bench_exe.step);
 }

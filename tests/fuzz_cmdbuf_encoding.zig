@@ -28,7 +28,6 @@ const expectEqual = std.testing.expectEqual;
 const assert = std.debug.assert;
 
 const max_entities = 100000;
-const comp_bytes = 100000;
 const cmds_capacity = 4096;
 const change_cap = 16;
 
@@ -157,9 +156,9 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
 
     var es: Entities = try .init(gpa, .{
         .max_entities = max_entities,
-        .comp_bytes = comp_bytes,
         .max_archetypes = 8,
         .max_chunks = 8,
+        .chunk_size = 65536,
     });
     defer es.deinit(gpa);
 

@@ -28,7 +28,6 @@ const log = false;
 
 const cmds_capacity = 100;
 const max_entities = 100000;
-const comp_bytes = 1000000;
 
 // Smoke test to verify that the transform exec does actually call the node exec
 test "exec" {
@@ -36,7 +35,6 @@ test "exec" {
 
     var es: Entities = try .init(gpa, .{
         .max_entities = 128,
-        .comp_bytes = 256,
         .max_archetypes = 8,
         .max_chunks = 8,
     });
@@ -113,7 +111,6 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
 
     var es: Entities = try .init(gpa, .{
         .max_entities = max_entities,
-        .comp_bytes = comp_bytes,
         .max_archetypes = 8,
         .max_chunks = 1024,
     });

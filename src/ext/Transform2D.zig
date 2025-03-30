@@ -409,7 +409,7 @@ pub const exec = struct {
     }
 
     /// Call this after executing a command.
-    pub fn afterArchChangeImmediate(
+    pub inline fn afterArchChangeImmediate(
         es: *Entities,
         batch: CmdBuf.Batch.ArchChange,
         op: CmdBuf.Batch.ArchChange.Op,
@@ -441,7 +441,7 @@ pub const exec = struct {
         }
     }
 
-    pub fn extImmediateOrErr(
+    pub inline fn extImmediateOrErr(
         es: *Entities,
         payload: Any,
     ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {

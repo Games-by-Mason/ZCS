@@ -7,8 +7,11 @@
 
 const std = @import("std");
 const assert = std.debug.assert;
+const tracy = @import("tracy");
 
 const Allocator = std.mem.Allocator;
+
+const Zone = tracy.Zone;
 
 const zcs = @import("root.zig");
 const typeId = zcs.typeId;
@@ -28,26 +31,27 @@ const Entities = @This();
 
 handle_tab: HandleTab,
 chunk_lists: ChunkLists,
-pointer_generation: PointerLock.Generation = .init,
+pointer_generation: PointerLock.Generation = .{},
 reserved_entities: usize = 0,
 chunk_pool: ChunkPool,
 
 /// Options for `init`.
 pub const Options = struct {
     /// The max number of entities.
-    max_entities: u32,
-    /// The number of bytes per component type array.
-    comp_bytes: usize,
+    max_entities: u32 = 1000000,
     /// The max number of archetypes.
-    max_archetypes: u16,
+    max_archetypes: u32 = 64,
     /// The number of chunks to allocate.
-    max_chunks: u32,
+    max_chunks: u16 = 4096,
     /// The size of each chunk.
-    chunk_size: u16 = 16 << 10,
+    chunk_size: u32 = 65536,
 };
 
 /// Initializes the entity storage with the given capacity.
 pub fn init(gpa: Allocator, options: Options) Allocator.Error!@This() {
+    const zone = Zone.begin(.{ .src = @src() });
+    defer zone.end();
+
     var handle_tab: HandleTab = try .init(gpa, options.max_entities);
     errdefer handle_tab.deinit(gpa);
 
@@ -220,6 +224,7 @@ pub const ChunkIterator = struct {
 
             // If that fails, get the next list and try again
             if (self.lists.next(es)) |chunk_list| {
+                @branchHint(.likely);
                 self.chunks = chunk_list.iterator(es);
                 continue;
             }
@@ -259,7 +264,7 @@ pub fn Iterator(View: type) type {
 
         chunks: ChunkIterator,
         slices: Slices,
-        index_in_chunk: u16,
+        index_in_chunk: u32,
 
         /// Returns an empty iterator.
         pub fn empty(es: *const Entities) @This() {
@@ -276,13 +281,19 @@ pub fn Iterator(View: type) type {
             self.chunks.pointerLock().check(es.pointer_generation);
 
             // Get the current chunk
-            var chunk = self.chunks.peek(es) orelse return null;
+            var chunk = self.chunks.peek(es) orelse {
+                @branchHint(.unlikely);
+                return null;
+            };
             assert(chunk.header().len > 0); // Free chunks are returned to the chunk pool
 
             // If we're done with the current chunk, advance to the next one
             if (self.index_in_chunk >= chunk.header().len) {
                 _ = self.chunks.next(es).?;
-                chunk = self.chunks.peek(es) orelse return null;
+                chunk = self.chunks.peek(es) orelse {
+                    @branchHint(.unlikely);
+                    return null;
+                };
                 self.index_in_chunk = 0;
                 assert(chunk.header().len > 0); // Free chunks are returned to the chunk pool
                 self.slices = chunk.view(es, Slices).?;

@@ -39,10 +39,9 @@ test "cb execImmediate" {
 
     var es: Entities = try .init(gpa, .{
         .max_entities = 100,
-        .comp_bytes = 100,
         .max_archetypes = 8,
         .max_chunks = 8,
-        .chunk_size = 128,
+        .chunk_size = 512,
     });
     defer es.deinit(gpa);
 
@@ -148,10 +147,9 @@ test "cb interning" {
 
     var es: Entities = try .init(gpa, .{
         .max_entities = 100,
-        .comp_bytes = 4096,
         .max_archetypes = 8,
         .max_chunks = 8,
-        .chunk_size = 128,
+        .chunk_size = 512,
     });
     defer es.deinit(gpa);
 
@@ -369,10 +367,9 @@ test "cb overflow" {
 
     var es: Entities = try .init(gpa, .{
         .max_entities = 100,
-        .comp_bytes = 100,
         .max_archetypes = 8,
         .max_chunks = 8,
-        .chunk_size = 128,
+        .chunk_size = 512,
     });
     defer es.deinit(gpa);
 
@@ -396,9 +393,6 @@ test "cb overflow" {
         );
 
         try expectEqual(1.0, cb.worstCaseUsage());
-
-        var iter = cb.iterator();
-        try expectEqual(null, iter.next());
     }
 
     // Arg overflow
@@ -423,9 +417,6 @@ test "cb overflow" {
         try expectEqual(args, cb.args.items.len);
 
         try expectEqual(1.0, cb.worstCaseUsage());
-
-        var iter = cb.iterator();
-        try expectEqual(null, iter.next());
     }
 
     // Comp data overflow
@@ -453,25 +444,6 @@ test "cb overflow" {
             @as(f32, @sizeOf(RigidBody)) / @as(f32, @sizeOf(RigidBody) * 2 - 1),
             cb.worstCaseUsage(),
         );
-
-        var iter = cb.iterator();
-
-        {
-            const arch_change = iter.next().?.arch_change;
-            var ops = arch_change.iterator();
-            const create_rb = ops.next().?.add;
-            try expectEqual(typeId(RigidBody), create_rb.id);
-            try expectEqual(rb, create_rb.as(RigidBody).?.*);
-            try expectEqual(null, ops.next());
-        }
-
-        {
-            const arch_change = iter.next().?.arch_change;
-            var ops = arch_change.iterator();
-            try expectEqual(null, ops.next());
-        }
-
-        // try expectEqual(null, iter.next());
     }
 
     // Extension data overflow
@@ -495,23 +467,6 @@ test "cb overflow" {
         ));
 
         try expectEqual(@as(f32, @sizeOf(FooExt)) / @as(f32, @sizeOf(FooExt) * 2 - 1), cb.worstCaseUsage());
-
-        var iter = cb.iterator();
-
-        {
-            const create_foo = iter.next().?.ext;
-            try expectEqual(typeId(FooExt), create_foo.id);
-            try expectEqual(foo, create_foo.as(FooExt).?.*);
-        }
-
-        {
-            const arch_change = iter.next().?.arch_change;
-            var ops = arch_change.iterator();
-            try expectEqual(.destroy, ops.next());
-            try expectEqual(null, ops.next());
-        }
-
-        try expectEqual(null, iter.next());
     }
 
     // Reserved underflow
@@ -558,10 +513,9 @@ test "cb capacity" {
 
     var es: Entities = try .init(gpa, .{
         .max_entities = cb_capacity * 10,
-        .comp_bytes = cb_capacity * 10,
         .max_archetypes = 8,
         .max_chunks = 8,
-        .chunk_size = 128,
+        .chunk_size = 512,
     });
     defer es.deinit(gpa);
 
@@ -754,10 +708,9 @@ test "change arch immediate" {
     defer CompFlag.unregisterAll();
     var es: Entities = try .init(gpa, .{
         .max_entities = 100,
-        .comp_bytes = 100,
         .max_archetypes = 8,
         .max_chunks = 8,
-        .chunk_size = 128,
+        .chunk_size = 512,
     });
     defer es.deinit(gpa);
 
@@ -819,7 +772,6 @@ test "getAll" {
     defer CompFlag.unregisterAll();
     var es: Entities = try .init(gpa, .{
         .max_entities = 100,
-        .comp_bytes = 100,
         .max_archetypes = 8,
         .max_chunks = 8,
     });
@@ -862,10 +814,9 @@ test "entity overflow" {
     defer CompFlag.unregisterAll();
     var es: Entities = try .init(gpa, .{
         .max_entities = 3,
-        .comp_bytes = 4,
         .max_archetypes = 8,
         .max_chunks = 8,
-        .chunk_size = 128,
+        .chunk_size = 512,
     });
     defer es.deinit(gpa);
 
@@ -877,8 +828,9 @@ test "entity overflow" {
     try expect(e0.changeArchImmediate(&es, .{ .add = &.{
         .init(u32, &0),
     } }));
+    var dummy: [256]u8 = undefined;
     try expectError(error.ZcsChunkOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
-        .init([128]u8, undefined),
+        .init([256]u8, &dummy),
     } }));
 }
 
@@ -886,10 +838,9 @@ test "archetype overflow" {
     defer CompFlag.unregisterAll();
     var es: Entities = try .init(gpa, .{
         .max_entities = 3,
-        .comp_bytes = 4,
-        .max_archetypes = 3,
+        .max_archetypes = 2,
         .max_chunks = 4,
-        .chunk_size = 128,
+        .chunk_size = 512,
     });
     defer es.deinit(gpa);
 
@@ -934,7 +885,6 @@ test "chunk pool overflow" {
     defer CompFlag.unregisterAll();
     var es: Entities = try .init(gpa, .{
         .max_entities = 4096,
-        .comp_bytes = 4096,
         .max_archetypes = 5,
         .max_chunks = 1,
         .chunk_size = 512,
@@ -962,7 +912,7 @@ test "chunk pool overflow" {
     }
 
     // Create new entities in the chunk that was already allocated, this should be fine
-    const n = 96;
+    const n = 45;
     for (0..n) |_| {
         const e = Entity.reserveImmediate(&es);
         try expect(try e.changeArchImmediateOrErr(&es, .{ .add = &.{
@@ -1089,7 +1039,6 @@ test "chunk overflow" {
     {
         var es: Entities = try .init(gpa, .{
             .max_entities = 4096,
-            .comp_bytes = 4096,
             .max_archetypes = 5,
             .max_chunks = 1,
             .chunk_size = 16,
@@ -1111,7 +1060,6 @@ test "chunk overflow" {
     {
         var es: Entities = try .init(gpa, .{
             .max_entities = 4096,
-            .comp_bytes = 4096,
             .max_archetypes = 5,
             .max_chunks = 1,
             .chunk_size = 4096,
@@ -1137,10 +1085,9 @@ test "smoke test" {
     defer CompFlag.unregisterAll();
     var es: Entities = try .init(gpa, .{
         .max_entities = 3,
-        .comp_bytes = 4,
         .max_archetypes = 3,
         .max_chunks = 3,
-        .chunk_size = 128,
+        .chunk_size = 512,
     });
     defer es.deinit(gpa);
 

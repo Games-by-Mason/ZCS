@@ -31,10 +31,9 @@ test "immediate" {
 
     var es: Entities = try .init(gpa, .{
         .max_entities = 128,
-        .comp_bytes = 256,
         .max_archetypes = 8,
         .max_chunks = 8,
-        .chunk_size = 128,
+        .chunk_size = 512,
     });
     defer es.deinit(gpa);
 

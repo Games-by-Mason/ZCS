@@ -79,7 +79,7 @@ fn run(input: []const u8, saturated: bool) !void {
         const Key = @FieldType(Entities, "handle_tab").Key;
         const Generation = @FieldType(Key, "generation");
         const invalid = @intFromEnum(Generation.invalid);
-        fz.es.handle_tab.generations[e.key.index] = @enumFromInt(invalid -% 1);
+        fz.es.handle_tab.slots[e.key.index].generation = @enumFromInt(invalid -% 1);
         const e2 = Entity.reserveImmediate(&fz.es);
         try expect(e2.destroyImmediate(&fz.es));
         try expect(!e.exists(&fz.es));
@@ -120,7 +120,7 @@ fn run(input: []const u8, saturated: bool) !void {
 
     try expect(fz.es.handle_tab.saturated >= saturated_count);
     for (0..saturated_count) |i| {
-        try expectEqual(.invalid, fz.es.handle_tab.generations[i + cb.reserved.capacity]);
+        try expectEqual(.invalid, fz.es.handle_tab.slots[i + cb.reserved.capacity].generation);
     }
 }
 
@@ -148,6 +148,29 @@ fn checkOracle(fz: *Fuzzer, cb: *const CmdBuf) !void {
         try expectEqual(expected.rb, if (entity.get(&fz.es, RigidBody)) |v| v.* else null);
         try expectEqual(expected.model, if (entity.get(&fz.es, Model)) |v| v.* else null);
         try expectEqual(expected.tag, if (entity.get(&fz.es, Tag)) |v| v.* else null);
+
+        // Test entity views
+        const vw = entity.view(&fz.es, struct {
+            rb: ?*RigidBody,
+            model: ?*Model,
+            tag: ?*Tag,
+        }).?;
+        try expectEqual(expected.rb, if (vw.rb) |v| v.* else null);
+        try expectEqual(expected.model, if (vw.model) |v| v.* else null);
+        try expectEqual(expected.tag, if (vw.tag) |v| v.* else null);
+        try expectEqual(null, entity.view(&fz.es, struct { unique: *struct { unique: void } }));
+        const view_all = entity.view(&fz.es, struct {
+            rb: *const RigidBody,
+            model: *const Model,
+            tag: *const Tag,
+        });
+        if (view_all) |vwa| {
+            try expectEqual(expected.rb, vwa.rb.*);
+            try expectEqual(expected.model, vwa.model.*);
+            try expectEqual(expected.tag, vwa.tag.*);
+        } else {
+            try expect(expected.rb == null or expected.model == null or expected.tag == null);
+        }
     }
 
     // Check the tracked deleted entities

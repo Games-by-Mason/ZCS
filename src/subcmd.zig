@@ -54,6 +54,7 @@ pub const Subcmd = union(enum) {
                         return .{ .bind_entity = entity };
                     },
                     inline .add_val, .ext_val => |add| {
+                        @setEvalBranchQuota(2000);
                         const id: TypeId = @ptrFromInt(self.nextArg().?);
                         const ptr = self.nextAny(id);
                         const any: Any = .{
@@ -98,6 +99,7 @@ pub const Subcmd = union(enum) {
             if (self.tag_index < self.cb.tags.items.len) {
                 return self.cb.tags.items[self.tag_index];
             } else {
+                @branchHint(.unlikely);
                 return null;
             }
         }

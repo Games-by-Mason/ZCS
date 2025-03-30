@@ -24,7 +24,10 @@ pub fn init(T: type, ptr: *const T) @This() {
 
 /// Returns the component as the given type if it matches its ID, or null otherwise.
 pub fn as(self: @This(), T: anytype) ?*const T {
-    if (self.id != typeId(T)) return null;
+    if (self.id != typeId(T)) {
+        @branchHint(.unlikely);
+        return null;
+    }
     return @alignCast(@ptrCast(self.ptr));
 }
 

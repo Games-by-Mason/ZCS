@@ -29,7 +29,6 @@ pub const ExpectedEntity = struct {
 
 /// Tests random command buffers against an oracle.
 pub const max_entities = 100000;
-pub const comp_bytes = 1000000;
 
 es: Entities,
 smith: Smith,
@@ -43,11 +42,10 @@ found_buf: std.AutoArrayHashMapUnmanaged(Entity, void),
 pub fn init(input: []const u8) !@This() {
     var es: Entities = try .init(gpa, .{
         .max_entities = max_entities,
-        .comp_bytes = comp_bytes,
         .max_archetypes = 32,
-        .max_chunks = 1024,
+        .max_chunks = 2048,
         // We set a fairly small chunk size for better test coverage
-        .chunk_size = 128,
+        .chunk_size = 512,
     });
     errdefer es.deinit(gpa);
 

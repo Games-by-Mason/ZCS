@@ -1,16 +1,10 @@
 # ZCS
 
-An entity component system written in Zig.
+An archetype based entity component system written in Zig.
 
 # Status
 
-Functional, but not yet performant. Check back soon.
-
-Components are currently stored as a struct of arrays. This is simple, and allows me to validate the interface and test suite.
-
-I'm currently migrating [2Pew](https://github.com/masonRemaley/2pew). If I'm still happy with the API when this is done, I'll replace the simple SoA backend with a memory layout that indexes on archetype.
-
-Indexing on archetype will allow iterating scenes with millions of entities, and skipping everything that doesn't match the given archetype query for free. Once this is implemented, I'll remove the "not yet performant" warning.
+ZCS is beta software. Once I've shipped a commercial game using ZCS, I'll start to stabilize the API and no longer consider it a beta.
 
 # Key Features
 
@@ -164,6 +158,20 @@ Sync all will only visit dirty entities and their children. This is possible by 
 Similarly to `Node`, `Transform2D` integrates with the command buffer to automatically handle parents changing, etc.
 
 `Transform2D` depends on [geom](https://github.com/games-by-Mason/geom) for math.
+
+# Performance & Memory Layout
+
+ZCS is archetype based.
+
+An "archetype" is a unique set of component types--for example, all entities that have both a `RigidBody` and a `Mesh` component share an archetype, whereas an entity that contains a `RigidBody` a `Mesh` and a `MonsterAi` has a different archetype.
+
+Archetypes are packed tightly in memory with their components laid out `AAABBBCCC` to minimize padding, and an acceleration structure makes finding all entities matching a given archetype.
+
+Comparing performance with something like `MultiArrayList`:
+* Iterating over all data results in nearly identical performance
+* Iterating over only data that contains supersets of a given archetype is nearly equivalent to iterating a `MultiArrayList` that only contains the desired data
+* Inserting and removing are slightly more expensive as more bookkeeping is involved, but both operations are still O(1)
+    * This book keeping allows for the aforementioned acceleration, and also for persistent handles
 
 # Examples & Documentation
 
