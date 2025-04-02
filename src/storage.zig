@@ -178,9 +178,11 @@ pub const Chunk = opaque {
                 const sized = unsized[0..self.header().len];
                 @field(result, field.name) = sized;
             } else {
-                const flag = typeId(As).comp_flag.?; // Arch checked above
                 // https://github.com/Games-by-Mason/ZCS/issues/24
-                const offset = list.comp_buf_offsets.values[@intFromEnum(flag)];
+                const offset = if (typeId(As).comp_flag) |flag|
+                    list.comp_buf_offsets.values[@intFromEnum(flag)]
+                else
+                    0;
                 if (@typeInfo(field.type) == .optional and offset == 0) {
                     @field(result, field.name) = null;
                 } else {

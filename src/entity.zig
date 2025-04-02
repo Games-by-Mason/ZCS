@@ -572,9 +572,11 @@ pub const Entity = packed struct {
             if (Unwrapped == Entity) {
                 @field(result, field.name) = self;
             } else {
-                const flag = typeId(Unwrapped).comp_flag.?; // Archetype already checked
                 // https://github.com/Games-by-Mason/ZCS/issues/24
-                const offset = chunk.header().comp_buf_offsets.values[@intFromEnum(flag)];
+                const offset = if (typeId(Unwrapped).comp_flag) |flag|
+                    chunk.header().comp_buf_offsets.values[@intFromEnum(flag)]
+                else
+                    0;
                 if (@typeInfo(field.type) == .optional and offset == 0) {
                     @field(result, field.name) = null;
                 } else {

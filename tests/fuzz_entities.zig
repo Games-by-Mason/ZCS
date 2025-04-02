@@ -65,6 +65,8 @@ fn run(input: []const u8, saturated: bool) !void {
     var fz: Fuzzer = try .init(input);
     defer fz.deinit();
 
+    try fz.checkIterators();
+
     var cb: CmdBuf = try .init(gpa, &fz.es, .{
         .cmds = cmds_capacity,
         .avg_cmd_bytes = @sizeOf(RigidBody),

@@ -436,6 +436,16 @@ pub fn checkIterators(self: *@This()) !void {
             );
         }
     }
+
+    // Regression test, optional unregistered components
+    {
+        const Unregistered = struct { foo: u8 };
+        var iter = self.es.iterator(struct { foo: ?*Unregistered, e: Entity });
+        if (iter.next(&self.es)) |vw| {
+            _ = vw.e.view(&self.es, struct { foo: ?*Unregistered });
+        }
+        try expectEqual(null, typeId(Unregistered).comp_flag);
+    }
 }
 
 pub const Arch = packed struct {
