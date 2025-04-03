@@ -164,7 +164,7 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
 
     var cb: CmdBuf = try .init(gpa, &es, .{
         .cmds = cmds_capacity,
-        .avg_cmd_bytes = @sizeOf(RigidBody),
+        .data = .{ .bytes_per_cmd = @sizeOf(RigidBody) },
     });
     defer cb.deinit(gpa, &es);
 
@@ -204,27 +204,24 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                             const ac = appendArchChange(&oracle, e);
                             const val = try gpa.create(RigidBody);
                             val.* = smith.next(RigidBody);
-                            const comp: Any = .init(RigidBody, val);
-                            try e.addAnyVal(&cb, comp);
-                            try ac.cb.append(gpa, .{ .add = comp });
+                            try e.addVal(&cb, RigidBody, val.*);
+                            try ac.cb.append(gpa, .{ .add = .init(RigidBody, val) });
                         },
                         .model => {
                             if (log) std.debug.print("{}: add val model val\n", .{e});
                             const ac = appendArchChange(&oracle, e);
                             const val = try gpa.create(Model);
                             val.* = smith.next(Model);
-                            const comp: Any = .init(Model, val);
-                            try e.addAnyVal(&cb, comp);
-                            try ac.cb.append(gpa, .{ .add = comp });
+                            try e.addVal(&cb, Model, val.*);
+                            try ac.cb.append(gpa, .{ .add = .init(Model, val) });
                         },
                         .tag => {
                             if (log) std.debug.print("{}: add val tag val\n", .{e});
                             const ac = appendArchChange(&oracle, e);
                             const val = try gpa.create(Tag);
                             val.* = smith.next(Tag);
-                            const comp: Any = .init(Tag, val);
-                            try e.addAnyVal(&cb, comp);
-                            try ac.cb.append(gpa, .{ .add = comp });
+                            try e.addVal(&cb, Tag, val.*);
+                            try ac.cb.append(gpa, .{ .add = .init(Tag, val) });
                         },
                     },
                     .add_comp_ptr => switch (smith.next(enum { rb, model, tag })) {
@@ -233,27 +230,24 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                             const ac = appendArchChange(&oracle, e);
                             const val = try gpa.create(RigidBody);
                             val.* = RigidBody.interned[smith.nextLessThan(u8, RigidBody.interned.len)];
-                            const comp: Any = .init(RigidBody, val);
-                            try e.addAnyPtr(&cb, comp);
-                            try ac.cb.append(gpa, .{ .add = comp });
+                            try e.addPtr(&cb, RigidBody, val);
+                            try ac.cb.append(gpa, .{ .add = .init(RigidBody, val) });
                         },
                         .model => {
                             if (log) std.debug.print("{}: add model ptr\n", .{e});
                             const ac = appendArchChange(&oracle, e);
                             const val = try gpa.create(Model);
                             val.* = Model.interned[smith.nextLessThan(u8, Model.interned.len)];
-                            const comp: Any = .init(Model, val);
-                            try e.addAnyPtr(&cb, comp);
-                            try ac.cb.append(gpa, .{ .add = comp });
+                            try e.addPtr(&cb, Model, val);
+                            try ac.cb.append(gpa, .{ .add = .init(Model, val) });
                         },
                         .tag => {
                             if (log) std.debug.print("{}: add tag ptr\n", .{e});
                             const ac = appendArchChange(&oracle, e);
                             const val = try gpa.create(Tag);
                             val.* = Tag.interned[smith.nextLessThan(u8, Tag.interned.len)];
-                            const comp: Any = .init(Tag, val);
-                            try e.addAnyPtr(&cb, comp);
-                            try ac.cb.append(gpa, .{ .add = comp });
+                            try e.addPtr(&cb, Tag, val);
+                            try ac.cb.append(gpa, .{ .add = .init(Tag, val) });
                         },
                     },
                     .commit => {
@@ -292,25 +286,22 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                             if (log) std.debug.print("ext val foo\n", .{});
                             const val = try gpa.create(FooExt);
                             val.* = smith.next(FooExt);
-                            const ext: Any = .init(FooExt, val);
-                            try cb.extAnyVal(ext);
-                            oracle.appendAssumeCapacity(.{ .ext = ext });
+                            try cb.extVal(FooExt, val.*);
+                            oracle.appendAssumeCapacity(.{ .ext = .init(FooExt, val) });
                         },
                         .bar => {
                             if (log) std.debug.print("ext val bar\n", .{});
                             const val = try gpa.create(BarExt);
                             val.* = smith.next(BarExt);
-                            const ext: Any = .init(BarExt, val);
-                            try cb.extAnyVal(ext);
-                            oracle.appendAssumeCapacity(.{ .ext = ext });
+                            try cb.extVal(BarExt, val.*);
+                            oracle.appendAssumeCapacity(.{ .ext = .init(BarExt, val) });
                         },
                         .baz => {
                             if (log) std.debug.print("ext val baz\n", .{});
                             const val = try gpa.create(BazExt);
                             val.* = smith.next(BazExt);
-                            const ext: Any = .init(BazExt, val);
-                            try cb.extAnyVal(ext);
-                            oracle.appendAssumeCapacity(.{ .ext = ext });
+                            try cb.extVal(BazExt, val.*);
+                            oracle.appendAssumeCapacity(.{ .ext = .init(BazExt, val) });
                         },
                     },
                     .ext_ptr => switch (smith.next(enum { foo, bar, baz })) {
@@ -318,25 +309,22 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                             if (log) std.debug.print("ext ptr foo\n", .{});
                             const val = try gpa.create(FooExt);
                             val.* = FooExt.interned[smith.nextLessThan(u8, FooExt.interned.len)];
-                            const comp: Any = .init(FooExt, val);
-                            try cb.extAnyPtr(comp);
-                            oracle.appendAssumeCapacity(.{ .ext = comp });
+                            try cb.extPtr(FooExt, val);
+                            oracle.appendAssumeCapacity(.{ .ext = .init(FooExt, val) });
                         },
                         .bar => {
                             if (log) std.debug.print("ext ptr bar\n", .{});
                             const val = try gpa.create(BarExt);
                             val.* = BarExt.interned[smith.nextLessThan(u8, BarExt.interned.len)];
-                            const comp: Any = .init(BarExt, val);
-                            try cb.extAnyPtr(comp);
-                            oracle.appendAssumeCapacity(.{ .ext = comp });
+                            try cb.extPtr(BarExt, val);
+                            oracle.appendAssumeCapacity(.{ .ext = .init(BarExt, val) });
                         },
                         .baz => {
                             if (log) std.debug.print("ext ptr baz\n", .{});
                             const val = try gpa.create(BazExt);
                             val.* = BazExt.interned[smith.nextLessThan(u8, BazExt.interned.len)];
-                            const comp: Any = .init(BazExt, val);
-                            try cb.extAnyPtr(comp);
-                            oracle.appendAssumeCapacity(.{ .ext = comp });
+                            try cb.extPtr(BazExt, val);
+                            oracle.appendAssumeCapacity(.{ .ext = .init(BazExt, val) });
                         },
                     },
                 }

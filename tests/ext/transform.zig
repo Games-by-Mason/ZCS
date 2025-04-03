@@ -42,7 +42,7 @@ test "exec" {
 
     var cb: CmdBuf = try .init(gpa, &es, .{
         .cmds = 2,
-        .avg_cmd_bytes = @sizeOf(SetParent),
+        .data = .{ .bytes_per_cmd = @sizeOf(SetParent) },
     });
     defer cb.deinit(gpa, &es);
 
@@ -118,7 +118,7 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
 
     var cb: CmdBuf = try .init(gpa, &es, .{
         .cmds = cmds_capacity,
-        .avg_cmd_bytes = @sizeOf(Node),
+        .data = .{ .bytes_per_cmd = @sizeOf(Node) },
     });
     defer cb.deinit(gpa, &es);
 

@@ -49,12 +49,11 @@ test "cb execImmediate" {
     try expect(Entity.Optional.none == Entity.Optional.none);
     try expectEqual(null, Entity.Optional.none.unwrap());
 
-    var capacity: CmdBuf.GranularCapacity = .init(.{
+    var cb: CmdBuf = try .init(gpa, &es, .{
         .cmds = 4,
-        .avg_cmd_bytes = @sizeOf(RigidBody),
+        .data = .{ .bytes_per_cmd = @sizeOf(RigidBody) },
+        .reserved_entities = 0,
     });
-    capacity.reserved = 0;
-    var cb = try CmdBuf.initGranularCapacity(gpa, &es, capacity);
     defer cb.deinit(gpa, &es);
 
     try expectEqual(0, es.count());
@@ -153,7 +152,7 @@ test "cb interning" {
     });
     defer es.deinit(gpa);
 
-    var cb = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .avg_cmd_bytes = @sizeOf(RigidBody) });
+    var cb: CmdBuf = try .init(gpa, &es, .{ .cmds = 24 });
     defer cb.deinit(gpa, &es);
 
     const rb_interned: RigidBody = .{
@@ -192,15 +191,15 @@ test "cb interning" {
     cb.ext(FooExt, foo_ev_value);
 
     // Explicit by value
-    try e0.addAnyVal(&cb, .init(Model, &model_value));
-    try e0.addAnyVal(&cb, .init(RigidBody, &rb_interned));
-    try cb.extAnyVal(.init(BarExt, &bar_ev_value));
-    try cb.extAnyVal(.init(FooExt, &foo_ev_interned));
+    try e0.addVal(&cb, Model, model_value);
+    try e0.addVal(&cb, RigidBody, rb_interned);
+    try cb.extVal(BarExt, bar_ev_value);
+    try cb.extVal(FooExt, foo_ev_interned);
 
-    try e1.addAnyVal(&cb, .init(Model, &model_interned));
-    try e1.addAnyVal(&cb, .init(RigidBody, &rb_value));
-    try cb.extAnyVal(.init(BarExt, &bar_ev_interned));
-    try cb.extAnyVal(.init(FooExt, &foo_ev_value));
+    try e1.addVal(&cb, Model, model_interned);
+    try e1.addVal(&cb, RigidBody, rb_value);
+    try cb.extVal(BarExt, bar_ev_interned);
+    try cb.extVal(FooExt, foo_ev_value);
 
     // Throw in a destroy for good measure, verify the components end up in the remove flags
     try expect(e2.changeArchImmediate(&es, .{
@@ -210,18 +209,18 @@ test "cb interning" {
     e2.destroy(&cb);
 
     // Explicit interning
-    try e0.addAnyPtr(&cb, .init(RigidBody, &rb_interned));
-    try e0.addAnyPtr(&cb, .init(Model, &model_interned));
-    try cb.extAnyPtr(.init(BarExt, &bar_ev_interned));
-    try cb.extAnyPtr(.init(FooExt, &foo_ev_interned));
+    try e0.addPtr(&cb, RigidBody, &rb_interned);
+    try e0.addPtr(&cb, Model, &model_interned);
+    try cb.extPtr(BarExt, &bar_ev_interned);
+    try cb.extPtr(FooExt, &foo_ev_interned);
 
     // Zero sized types
     e1.add(&cb, Tag, .{});
-    try e1.addAnyVal(&cb, .init(Tag, &.{}));
-    try e1.addAnyPtr(&cb, .init(Tag, &.{}));
+    try e1.addVal(&cb, Tag, .{});
+    try e1.addPtr(&cb, Tag, &.{});
     cb.ext(BazExt, .{});
-    try cb.extAnyVal(.init(BazExt, &.{}));
-    try cb.extAnyPtr(.init(BazExt, &.{}));
+    try cb.extVal(BazExt, .{});
+    try cb.extPtr(BazExt, &.{});
 
     // Test the results
     var iter = cb.iterator();
@@ -373,13 +372,12 @@ test "cb overflow" {
     });
     defer es.deinit(gpa);
 
-    // Tag overflow
+    // Cmd overflow
     {
-        var cb = try CmdBuf.initGranularCapacity(gpa, &es, .{
-            .tags = 0,
-            .args = 100,
-            .any_bytes = 100,
-            .reserved = 0,
+        var cb: CmdBuf = try .init(gpa, &es, .{
+            .cmds = 0,
+            .data = .{ .bytes = 100 },
+            .reserved_entities = 0,
         });
         defer cb.deinit(gpa, &es);
 
@@ -395,37 +393,12 @@ test "cb overflow" {
         try expectEqual(1.0, cb.worstCaseUsage());
     }
 
-    // Arg overflow
-    {
-        var cb = try CmdBuf.initGranularCapacity(gpa, &es, .{
-            .tags = 100,
-            .args = 0,
-            .any_bytes = 100,
-            .reserved = 0,
-        });
-        defer cb.deinit(gpa, &es);
-
-        try expectError(
-            error.ZcsCmdBufOverflow,
-            Entity.reserveImmediate(&es).commitOrErr(&cb),
-        );
-        const e = Entity.reserveImmediate(&es);
-        const tags = cb.tags.items.len;
-        const args = cb.args.items.len;
-        try expectError(error.ZcsCmdBufOverflow, e.destroyOrErr(&cb));
-        try expectEqual(tags, cb.tags.items.len);
-        try expectEqual(args, cb.args.items.len);
-
-        try expectEqual(1.0, cb.worstCaseUsage());
-    }
-
     // Comp data overflow
     {
-        var cb = try CmdBuf.initGranularCapacity(gpa, &es, .{
-            .tags = 100,
-            .args = 100,
-            .any_bytes = @sizeOf(RigidBody) * 2 - 1,
-            .reserved = 0,
+        var cb: CmdBuf = try .init(gpa, &es, .{
+            .cmds = 50,
+            .data = .{ .bytes = @sizeOf(RigidBody) * 2 - 1 },
+            .reserved_entities = 0,
         });
         defer cb.deinit(gpa, &es);
 
@@ -448,11 +421,10 @@ test "cb overflow" {
 
     // Extension data overflow
     {
-        var cb = try CmdBuf.initGranularCapacity(gpa, &es, .{
-            .tags = 100,
-            .args = 100,
-            .any_bytes = @sizeOf(FooExt) * 2 - 1,
-            .reserved = 0,
+        var cb: CmdBuf = try .init(gpa, &es, .{
+            .cmds = 50,
+            .data = .{ .bytes = @sizeOf(FooExt) * 2 - 1 },
+            .reserved_entities = 0,
         });
         defer cb.deinit(gpa, &es);
 
@@ -471,11 +443,10 @@ test "cb overflow" {
 
     // Reserved underflow
     {
-        var cb = try CmdBuf.initGranularCapacity(gpa, &es, .{
-            .tags = 100,
-            .args = 100,
-            .any_bytes = @sizeOf(RigidBody) * 2 - 1,
-            .reserved = 2,
+        var cb: CmdBuf = try .init(gpa, &es, .{
+            .cmds = 50,
+            .data = .{ .bytes = @sizeOf(RigidBody) * 2 - 1 },
+            .reserved_entities = 2,
         });
         defer cb.deinit(gpa, &es);
 
@@ -485,17 +456,16 @@ test "cb overflow" {
     }
 
     // Calling some things just to make sure they compile that we don't test elsewhere
-    var cb = try CmdBuf.initGranularCapacity(gpa, &es, .{
-        .tags = 100,
-        .args = 100,
-        .any_bytes = @sizeOf(RigidBody) * 2 - 1,
-        .reserved = 0,
+    var cb: CmdBuf = try .init(gpa, &es, .{
+        .cmds = 50,
+        .data = .{ .bytes = @sizeOf(RigidBody) * 2 - 1 },
+        .reserved_entities = 0,
     });
     defer cb.deinit(gpa, &es);
     const e = Entity.reserveImmediate(&es);
     try expect(e.changeArchImmediate(&es, .{}));
-    try e.addAnyVal(&cb, .init(RigidBody, &.{}));
-    try e.addAnyPtr(&cb, .init(RigidBody, &.{}));
+    try e.addVal(&cb, RigidBody, .{});
+    try e.addPtr(&cb, RigidBody, &.{});
     try expect(!e.has(&es, Model));
     _ = Entity.reserveImmediate(&es);
     try expect(es.count() > 0);
@@ -519,7 +489,10 @@ test "cb capacity" {
     });
     defer es.deinit(gpa);
 
-    var cb = try CmdBuf.init(gpa, &es, .{ .cmds = cb_capacity, .avg_cmd_bytes = 22 });
+    var cb: CmdBuf = try .init(gpa, &es, .{
+        .cmds = cb_capacity,
+        .data = .{ .bytes_per_cmd = 22 },
+    });
     defer cb.deinit(gpa, &es);
 
     // Change archetype
@@ -529,24 +502,24 @@ test "cb capacity" {
         const e1 = Entity.reserveImmediate(&es);
 
         for (0..cb_capacity / 12) |_| {
-            try e0.addAnyVal(&cb, .init(u0, &0));
-            try e1.addAnyVal(&cb, .init(u8, &0));
-            try e0.addAnyVal(&cb, .init(u16, &0));
-            try e1.addAnyVal(&cb, .init(u32, &0));
-            try e0.addAnyVal(&cb, .init(u64, &0));
-            try e1.addAnyVal(&cb, .init(u128, &0));
+            try e0.addVal(&cb, u0, 0);
+            try e1.addVal(&cb, u8, 0);
+            try e0.addVal(&cb, u16, 0);
+            try e1.addVal(&cb, u32, 0);
+            try e0.addVal(&cb, u64, 0);
+            try e1.addVal(&cb, u128, 0);
         }
 
         try expect(cb.worstCaseUsage() < 1.0);
         cb.clear(&es);
 
         for (0..cb_capacity / 6) |_| {
-            try e0.addAnyVal(&cb, .init(u0, &0));
-            try e1.addAnyVal(&cb, .init(u8, &0));
-            try e0.addAnyVal(&cb, .init(u16, &0));
-            try e1.addAnyVal(&cb, .init(u32, &0));
-            try e0.addAnyVal(&cb, .init(u64, &0));
-            try e1.addAnyVal(&cb, .init(u128, &0));
+            try e0.addVal(&cb, u0, 0);
+            try e1.addVal(&cb, u8, 0);
+            try e0.addVal(&cb, u16, 0);
+            try e1.addVal(&cb, u32, 0);
+            try e0.addVal(&cb, u64, 0);
+            try e1.addVal(&cb, u128, 0);
         }
 
         try expectEqual(1.0, cb.worstCaseUsage());
@@ -554,24 +527,24 @@ test "cb capacity" {
 
         // Add ptr
         for (0..cb_capacity / 12) |_| {
-            try e0.addAnyPtr(&cb, .init(u0, &0));
-            try e1.addAnyPtr(&cb, .init(u8, &0));
-            try e0.addAnyPtr(&cb, .init(u16, &0));
-            try e1.addAnyPtr(&cb, .init(u32, &0));
-            try e0.addAnyPtr(&cb, .init(u64, &0));
-            try e1.addAnyPtr(&cb, .init(u128, &0));
+            try e0.addPtr(&cb, u0, &0);
+            try e1.addPtr(&cb, u8, &0);
+            try e0.addPtr(&cb, u16, &0);
+            try e1.addPtr(&cb, u32, &0);
+            try e0.addPtr(&cb, u64, &0);
+            try e1.addPtr(&cb, u128, &0);
         }
 
         try expect(cb.worstCaseUsage() < 1.0);
         cb.clear(&es);
 
         for (0..cb_capacity / 6) |_| {
-            try e0.addAnyPtr(&cb, .init(u0, &0));
-            try e1.addAnyPtr(&cb, .init(u8, &0));
-            try e0.addAnyPtr(&cb, .init(u16, &0));
-            try e1.addAnyPtr(&cb, .init(u32, &0));
-            try e0.addAnyPtr(&cb, .init(u64, &0));
-            try e1.addAnyPtr(&cb, .init(u128, &0));
+            try e0.addPtr(&cb, u0, &0);
+            try e1.addPtr(&cb, u8, &0);
+            try e0.addPtr(&cb, u16, &0);
+            try e1.addPtr(&cb, u32, &0);
+            try e0.addPtr(&cb, u64, &0);
+            try e1.addPtr(&cb, u128, &0);
         }
 
         try expectEqual(1.0, cb.worstCaseUsage());
@@ -607,49 +580,49 @@ test "cb capacity" {
     {
         // Extension val
         for (0..cb_capacity / 4) |_| {
-            try cb.extAnyVal(.init(u0, &0));
-            try cb.extAnyVal(.init(u8, &0));
-            try cb.extAnyVal(.init(u16, &0));
-            try cb.extAnyVal(.init(u32, &0));
-            try cb.extAnyVal(.init(u64, &0));
-            try cb.extAnyVal(.init(u128, &0));
+            try cb.extVal(u0, 0);
+            try cb.extVal(u8, 0);
+            try cb.extVal(u16, 0);
+            try cb.extVal(u32, 0);
+            try cb.extVal(u64, 0);
+            try cb.extVal(u128, 0);
         }
 
         try expect(cb.worstCaseUsage() < 1.0);
         cb.clear(&es);
 
         for (0..cb_capacity / 3) |_| {
-            try cb.extAnyVal(.init(u0, &0));
-            try cb.extAnyVal(.init(u8, &0));
-            try cb.extAnyVal(.init(u16, &0));
-            try cb.extAnyVal(.init(u32, &0));
-            try cb.extAnyVal(.init(u64, &0));
-            try cb.extAnyVal(.init(u128, &0));
+            try cb.extVal(u0, 0);
+            try cb.extVal(u8, 0);
+            try cb.extVal(u16, 0);
+            try cb.extVal(u32, 0);
+            try cb.extVal(u64, 0);
+            try cb.extVal(u128, 0);
         }
 
         try expectEqual(1.0, cb.worstCaseUsage());
         cb.clear(&es);
 
         // Extension ptr
-        for (0..cb_capacity / 5) |_| {
-            try cb.extAnyPtr(.init(u0, &0));
-            try cb.extAnyPtr(.init(u8, &0));
-            try cb.extAnyPtr(.init(u16, &0));
-            try cb.extAnyPtr(.init(u32, &0));
-            try cb.extAnyPtr(.init(u64, &0));
-            try cb.extAnyPtr(.init(u128, &0));
+        for (0..cb_capacity / 4) |_| {
+            try cb.extPtr(u0, &0);
+            try cb.extPtr(u8, &0);
+            try cb.extPtr(u16, &0);
+            try cb.extPtr(u32, &0);
+            try cb.extPtr(u64, &0);
+            try cb.extPtr(u128, &0);
         }
 
         try expect(cb.worstCaseUsage() < 1.0);
         cb.clear(&es);
 
-        for (0..cb_capacity / 4) |_| {
-            try cb.extAnyPtr(.init(u0, &0));
-            try cb.extAnyPtr(.init(u8, &0));
-            try cb.extAnyPtr(.init(u16, &0));
-            try cb.extAnyPtr(.init(u32, &0));
-            try cb.extAnyPtr(.init(u64, &0));
-            try cb.extAnyPtr(.init(u128, &0));
+        for (0..cb_capacity / 3) |_| {
+            try cb.extPtr(u0, &0);
+            try cb.extPtr(u8, &0);
+            try cb.extPtr(u16, &0);
+            try cb.extPtr(u32, &0);
+            try cb.extPtr(u64, &0);
+            try cb.extPtr(u128, &0);
         }
 
         try expectEqual(1.0, cb.worstCaseUsage());
@@ -784,7 +757,7 @@ test "getAll" {
     } }));
     // Should not result in a registration
     _ = typeId(i32);
-    var cb = try CmdBuf.init(gpa, &es, .{ .cmds = 24, .avg_cmd_bytes = @sizeOf(RigidBody) });
+    var cb: CmdBuf = try .init(gpa, &es, .{ .cmds = 24 });
     defer cb.deinit(gpa, &es);
     cb.ext(BarExt, .{ .bar = 1 });
     cb.execImmediate(&es);
@@ -963,10 +936,7 @@ test "chunk pool overflow" {
 
     // Destroy all the entities we created
     {
-        var cb: CmdBuf = try .init(gpa, &es, .{
-            .cmds = n + 1,
-            .avg_cmd_bytes = @sizeOf(Entity),
-        });
+        var cb: CmdBuf = try .init(gpa, &es, .{ .cmds = n + 1 });
         defer cb.deinit(gpa, &es);
         var it = es.iterator(struct { e: Entity });
         while (it.next(&es)) |vw| vw.e.destroy(&cb);
@@ -998,10 +968,7 @@ test "chunk pool overflow" {
 
     // Destroy all the entities we created
     {
-        var cb: CmdBuf = try .init(gpa, &es, .{
-            .cmds = n + 1,
-            .avg_cmd_bytes = @sizeOf(Entity),
-        });
+        var cb: CmdBuf = try .init(gpa, &es, .{ .cmds = n + 1 });
         defer cb.deinit(gpa, &es);
         var it = es.iterator(struct { e: Entity });
         while (it.next(&es)) |vw| vw.e.destroy(&cb);

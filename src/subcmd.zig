@@ -4,6 +4,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const zcs = @import("root.zig");
+const typeId = zcs.typeId;
 const Entity = zcs.Entity;
 const Any = zcs.Any;
 const TypeId = zcs.TypeId;
@@ -137,68 +138,108 @@ pub const Subcmd = union(enum) {
         }
     };
 
-    /// Encodes a command.
-    pub fn encode(cb: *CmdBuf, subcmd: Subcmd) error{ZcsCmdBufOverflow}!void {
-        _ = Subcmd.rename_when_changing_encoding;
+    /// Encode adding a component to an entity by value.
+    pub fn encodeAddVal(cb: *CmdBuf, entity: Entity, T: type, comp: T) error{ZcsCmdBufOverflow}!void {
+        try Subcmd.encodeBind(cb, entity);
+        try Subcmd.encodeVal(cb, .add_val, T, comp);
+    }
 
-        // Decide whether or not to keep the bound entity
-        switch (subcmd) {
-            // We're in an archetype change, keep it
-            .destroy, .bind_entity, .add_val, .add_ptr, .remove => {},
-            // We're in an extension command, clear it. Archetype changes must start with a bind so we
-            // don't want it to be cached across other commands.
-            .ext_ptr, .ext_val => cb.binding = .none,
+    /// Encode adding a component to an entity by pointer.
+    pub fn encodeAddPtr(cb: *CmdBuf, entity: Entity, T: type, comp: *const T) error{ZcsCmdBufOverflow}!void {
+        try Subcmd.encodeBind(cb, entity);
+        try Subcmd.encodePtr(cb, .add_ptr, T, comp);
+    }
+
+    /// Encode an extension command by value.
+    pub fn encodeExtVal(cb: *CmdBuf, T: type, payload: T) error{ZcsCmdBufOverflow}!void {
+        // Clear the binding. Archetype changes must start with a bind so we don't want it to be
+        // cached across other commands.
+        cb.binding = .none;
+        try Subcmd.encodeVal(cb, .ext_val, T, payload);
+    }
+
+    /// Encode an extension command by pointer.
+    pub fn encodeExtPtr(cb: *CmdBuf, T: type, payload: *const T) error{ZcsCmdBufOverflow}!void {
+        // Clear the binding. Archetype changes must start with a bind so we don't want it to be
+        // cached across other commands.
+        cb.binding = .none;
+        try Subcmd.encodePtr(cb, .ext_ptr, T, payload);
+    }
+
+    /// Encode removing a component from an entity.
+    pub fn encodeRemove(cb: *CmdBuf, entity: Entity, id: TypeId) error{ZcsCmdBufOverflow}!void {
+        errdefer if (std.debug.runtime_safety) {
+            cb.invalid = true;
+        };
+        try Subcmd.encodeBind(cb, entity);
+        if (cb.binding.destroyed) return;
+        if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
+        if (cb.args.items.len >= cb.args.capacity) return error.ZcsCmdBufOverflow;
+        cb.tags.appendAssumeCapacity(.remove);
+        cb.args.appendAssumeCapacity(@intFromPtr(id));
+    }
+
+    /// Encode committing an entity.
+    pub fn encodeCommit(cb: *CmdBuf, entity: Entity) error{ZcsCmdBufOverflow}!void {
+        try encodeBind(cb, entity);
+    }
+
+    /// Encode destroying an entity.
+    pub fn encodeDestroy(cb: *CmdBuf, entity: Entity) error{ZcsCmdBufOverflow}!void {
+        errdefer if (std.debug.runtime_safety) {
+            cb.invalid = true;
+        };
+        try Subcmd.encodeBind(cb, entity);
+        if (cb.binding.destroyed) return;
+        if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
+        cb.tags.appendAssumeCapacity(.destroy);
+        cb.binding.destroyed = true;
+    }
+
+    /// Encode binding an entity as part of a subcommand.
+    fn encodeBind(cb: *CmdBuf, entity: Entity) error{ZcsCmdBufOverflow}!void {
+        errdefer if (std.debug.runtime_safety) {
+            cb.invalid = true;
+        };
+        if (cb.binding.entity != entity.toOptional()) {
+            if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
+            cb.binding = .{ .entity = entity.toOptional() };
+            cb.tags.appendAssumeCapacity(.bind_entity);
+            cb.args.appendAssumeCapacity(@bitCast(entity));
         }
+    }
 
-        switch (subcmd) {
-            .bind_entity => |entity| {
-                if (cb.binding.entity == entity.toOptional()) return;
-                if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
-                if (cb.args.items.len >= cb.args.capacity) return error.ZcsCmdBufOverflow;
-                cb.binding = .{ .entity = entity.toOptional() };
-                cb.tags.appendAssumeCapacity(.bind_entity);
-                cb.args.appendAssumeCapacity(@bitCast(entity));
-            },
-            .destroy => {
-                if (cb.binding.destroyed) return;
-                if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
-                cb.tags.appendAssumeCapacity(.destroy);
-                cb.binding.destroyed = true;
-            },
-            inline .add_val, .ext_val => |comp| {
-                if (cb.binding.destroyed) return;
-                const aligned = std.mem.alignForward(
-                    usize,
-                    cb.any_bytes.items.len,
-                    comp.id.alignment,
-                );
-                if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
-                if (cb.args.items.len + 1 > cb.args.capacity) return error.ZcsCmdBufOverflow;
-                if (aligned + comp.id.size > cb.any_bytes.capacity) {
-                    return error.ZcsCmdBufOverflow;
-                }
+    /// Encode a value as part of a subcommand.
+    fn encodeVal(cb: *CmdBuf, tag: Tag, T: type, val: T) error{ZcsCmdBufOverflow}!void {
+        errdefer if (std.debug.runtime_safety) {
+            cb.invalid = true;
+        };
 
-                cb.tags.appendAssumeCapacity(subcmd);
-                cb.args.appendAssumeCapacity(@intFromPtr(comp.id));
-                cb.any_bytes.items.len = aligned;
-                cb.any_bytes.appendSliceAssumeCapacity(comp.constSlice());
-            },
-            inline .add_ptr, .ext_ptr => |comp| {
-                if (cb.binding.destroyed) return;
-                if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
-                if (cb.args.items.len + 2 > cb.args.capacity) return error.ZcsCmdBufOverflow;
+        if (cb.binding.destroyed) return;
 
-                cb.tags.appendAssumeCapacity(subcmd);
-                cb.args.appendAssumeCapacity(@intFromPtr(comp.id));
-                cb.args.appendAssumeCapacity(@intFromPtr(comp.ptr));
-            },
-            .remove => |id| {
-                if (cb.binding.destroyed) return;
-                if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
-                if (cb.args.items.len >= cb.args.capacity) return error.ZcsCmdBufOverflow;
-                cb.tags.appendAssumeCapacity(.remove);
-                cb.args.appendAssumeCapacity(@intFromPtr(id));
-            },
-        }
+        const aligned = std.mem.alignForward(usize, cb.any_bytes.items.len, @alignOf(T));
+        if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
+        if (aligned + @sizeOf(T) > cb.any_bytes.capacity) return error.ZcsCmdBufOverflow;
+        cb.tags.appendAssumeCapacity(tag);
+        cb.args.appendAssumeCapacity(@intFromPtr(typeId(T)));
+
+        cb.any_bytes.items.len = aligned;
+        cb.any_bytes.appendSliceAssumeCapacity(std.mem.asBytes(&val));
+    }
+
+    /// Encode a pointer as part of a subcommand.
+    fn encodePtr(cb: *CmdBuf, tag: Tag, T: type, ptr: *const T) error{ZcsCmdBufOverflow}!void {
+        errdefer if (std.debug.runtime_safety) {
+            cb.invalid = true;
+        };
+
+        if (cb.binding.destroyed) return;
+
+        if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
+        if (cb.args.items.len + 2 > cb.args.capacity) return error.ZcsCmdBufOverflow;
+
+        cb.tags.appendAssumeCapacity(tag);
+        cb.args.appendAssumeCapacity(@intFromPtr(typeId(T)));
+        cb.args.appendAssumeCapacity(@intFromPtr(ptr));
     }
 };

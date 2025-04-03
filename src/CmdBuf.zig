@@ -49,39 +49,41 @@ pub fn init(
     es: *Entities,
     capacity: Capacity,
 ) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
-    return initGranularCapacity(gpa, es, .init(capacity));
-}
-
-/// Similar to `init`, but allows you to specify capacity with more granularity. Prefer `init`.
-pub fn initGranularCapacity(
-    gpa: Allocator,
-    es: *Entities,
-    capacity: GranularCapacity,
-) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
     comptime assert(CompFlag.max < std.math.maxInt(u64));
 
+    // Each command can have at most two tags
+    _ = Subcmd.rename_when_changing_encoding;
+    const cmds_cap = capacity.cmds * 2;
     const tags_zone = Zone.begin(.{ .name = "tags", .src = @src() });
-    var tags: std.ArrayListUnmanaged(Subcmd.Tag) = try .initCapacity(gpa, capacity.tags);
+    var tags: std.ArrayListUnmanaged(Subcmd.Tag) = try .initCapacity(gpa, cmds_cap);
     errdefer tags.deinit(gpa);
     tags_zone.end();
 
+    // Each command can have at most 3 args (the add ptr subcommand does a bind which has one
+    // arg if it's not skipped, and then it also passes the component ID and pointer as args as
+    // well.
+    _ = Subcmd.rename_when_changing_encoding;
     const args_zone = Zone.begin(.{ .name = "args", .src = @src() });
-    var args: std.ArrayListUnmanaged(u64) = try .initCapacity(gpa, capacity.args);
+    const args_cap = cmds_cap * 3;
+    var args: std.ArrayListUnmanaged(u64) = try .initCapacity(gpa, args_cap);
     errdefer args.deinit(gpa);
     args_zone.end();
 
     const any_bytes_zone = Zone.begin(.{ .name = "any bytes", .src = @src() });
     var any_bytes: std.ArrayListAlignedUnmanaged(u8, zcs.TypeInfo.max_align) = try .initCapacity(
         gpa,
-        capacity.any_bytes,
+        capacity.dataBytes(),
     );
     errdefer any_bytes.deinit(gpa);
     any_bytes_zone.end();
 
     const reserved_zone = Zone.begin(.{ .name = "reserved", .src = @src() });
-    var reserved: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, capacity.reserved);
+    var reserved: std.ArrayListUnmanaged(Entity) = try .initCapacity(
+        gpa,
+        capacity.reservedEntities(),
+    );
     errdefer reserved.deinit(gpa);
     for (0..reserved.capacity) |_| {
         reserved.appendAssumeCapacity(try Entity.reserveImmediateOrErr(es));
@@ -125,22 +127,22 @@ pub inline fn extOrErr(self: *@This(), T: type, payload: T) error{ZcsCmdBufOverf
         const Interned = struct {
             const value = payload;
         };
-        try self.extAnyPtr(.init(T, comptime &Interned.value));
+        try self.extPtr(T, comptime &Interned.value);
     } else {
-        try self.extAnyVal(.init(T, &payload));
+        try self.extVal(T, payload);
     }
 }
 
-/// Similar to `extOrErr`, but doesn't require compile time types and forces the command to be
-/// copied by value to the command buffer. Prefer `ext`.
-pub fn extAnyVal(self: *@This(), payload: Any) error{ZcsCmdBufOverflow}!void {
-    try Subcmd.encode(self, .{ .ext_val = payload });
+/// Similar to `extOrErr`, but forces the command to be copied by value to the command buffer.
+/// Prefer `ext`.
+pub fn extVal(self: *@This(), T: type, payload: T) error{ZcsCmdBufOverflow}!void {
+    try Subcmd.encodeExtVal(self, T, payload);
 }
 
-/// Similar to `extOrErr`, but doesn't require compile time types and forces the command to be
-/// copied by pointer to the command buffer. Prefer `ext`.
-pub fn extAnyPtr(self: *@This(), payload: Any) error{ZcsCmdBufOverflow}!void {
-    try Subcmd.encode(self, .{ .ext_ptr = payload });
+/// Similar to `extOrErr`, but forces the command to be copied by pointer to the command buffer.
+/// Prefer `ext`.
+pub fn extPtr(self: *@This(), T: type, payload: *const T) error{ZcsCmdBufOverflow}!void {
+    try Subcmd.encodeExtPtr(self, T, payload);
 }
 
 /// Clears the command buffer for reuse. Refills the reserved entity list to capacity.
@@ -224,42 +226,26 @@ pub fn execImmediateOrErr(
 pub const Capacity = struct {
     /// Space for at least this many commands will be reserved.
     cmds: usize,
-    /// Space for an average of at least this many bytes of extra data per command will be reserved.
-    /// This is used for components and custom event payloads.
-    avg_cmd_bytes: usize,
-};
+    /// Space for at least this much command data will be reserved. Keep in mind that padding may
+    /// vary per platform.
+    data: union(enum) {
+        bytes: usize,
+        bytes_per_cmd: u32,
+    } = .{ .bytes_per_cmd = 2 * 16 * @sizeOf(f32) },
+    /// Sets the number of entities to reserve up front. If `null`, `cmds` entities are reserved.
+    reserved_entities: ?usize = null,
 
-/// Per buffer capacity. Prefer `Capacity`.
-pub const GranularCapacity = struct {
-    tags: usize,
-    args: usize,
-    any_bytes: usize,
-    reserved: usize,
-
-    /// Estimates the granular capacity from worst case capacity.
-    pub fn init(cap: Capacity) @This() {
-        _ = Subcmd.rename_when_changing_encoding;
-
-        // Each command can have at most one component's worth of component data.
-        const cmd_bytes_cap = (cap.avg_cmd_bytes + zcs.TypeInfo.max_align - 1) * cap.cmds;
-
-        // Each command can have at most two tags
-        const tags_cap = cap.cmds * 2;
-
-        // Each command can have at most 3 args (the add ptr subcommand does a bind which has one
-        // arg if it's not skipped, and then it also passes the component ID and pointer as args as
-        // well.
-        const args_cap = cap.cmds * 3;
-
-        // The most creates we could do is the number of commands.
-        const reserved_cap = cap.cmds;
-
-        return .{
-            .tags = tags_cap,
-            .args = args_cap,
-            .any_bytes = cmd_bytes_cap,
-            .reserved = reserved_cap,
+    /// Returns the number of data bytes requested.
+    fn dataBytes(self: @This()) usize {
+        return switch (self.data) {
+            .bytes => |bytes| bytes,
+            .bytes_per_cmd => |bytes_per_cmd| self.cmds * bytes_per_cmd,
         };
+    }
+
+    /// Returns the number of reserved entities requested.
+    fn reservedEntities(self: @This()) usize {
+        return self.reserved_entities orelse self.cmds;
     }
 };
 

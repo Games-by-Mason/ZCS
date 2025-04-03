@@ -223,11 +223,7 @@ pub const Entity = packed struct {
     /// Similar to `destroy`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking. The command buffer is left in an undefined state on error.
     pub fn destroyOrErr(self: @This(), cb: *CmdBuf) error{ZcsCmdBufOverflow}!void {
-        errdefer if (std.debug.runtime_safety) {
-            cb.invalid = true;
-        };
-        try Subcmd.encode(cb, .{ .bind_entity = self });
-        try Subcmd.encode(cb, .destroy);
+        try Subcmd.encodeDestroy(cb, self);
     }
 
     /// Similar to `destroy`, but destroys the entity immediately. Prefer `destroy`.
@@ -344,30 +340,27 @@ pub const Entity = packed struct {
             const Interned = struct {
                 const value = comp;
             };
-            try self.addAnyPtr(cb, .init(T, comptime &Interned.value));
+            try self.addPtr(cb, T, comptime &Interned.value);
         } else {
-            try self.addAnyVal(cb, .init(T, &comp));
+            try self.addVal(cb, T, comp);
         }
     }
 
-    /// Similar to `addOrErr`, but doesn't require compile time types and forces the component to be
-    /// copied by value to the command buffer. Prefer `add`.
-    pub fn addAnyVal(self: @This(), cb: *CmdBuf, comp: Any) error{ZcsCmdBufOverflow}!void {
-        errdefer if (std.debug.runtime_safety) {
-            cb.invalid = true;
-        };
-        try Subcmd.encode(cb, .{ .bind_entity = self });
-        try Subcmd.encode(cb, .{ .add_val = comp });
+    /// Similar to `addOrErr`, but forces the component to be copied by value to the command buffer.
+    /// Prefer `add`.
+    pub fn addVal(self: @This(), cb: *CmdBuf, T: type, comp: T) error{ZcsCmdBufOverflow}!void {
+        try Subcmd.encodeAddVal(cb, self, T, comp);
     }
 
-    /// Similar to `addOrErr`, but doesn't require compile time types and forces the component to be
-    /// copied by pointer to the command buffer. Prefer `add`.
-    pub fn addAnyPtr(self: @This(), cb: *CmdBuf, comp: Any) error{ZcsCmdBufOverflow}!void {
-        errdefer if (std.debug.runtime_safety) {
-            cb.invalid = true;
-        };
-        try Subcmd.encode(cb, .{ .bind_entity = self });
-        try Subcmd.encode(cb, .{ .add_ptr = comp });
+    /// Similar to `addOrErr`, forces the component to be copied by pointer to the command buffer.
+    /// Prefer `add`.
+    pub fn addPtr(
+        self: @This(),
+        cb: *CmdBuf,
+        T: type,
+        comp: *const T,
+    ) error{ZcsCmdBufOverflow}!void {
+        try Subcmd.encodeAddPtr(cb, self, T, comp);
     }
 
     /// Queues the given component to be removed. Has no effect if the component is not present, or
@@ -382,11 +375,7 @@ pub const Entity = packed struct {
     /// Similar to `remove`, but doesn't require compile time types and returns an error on failure
     /// instead of panicking on failure. The command buffer is left in an undefined state on error.
     pub fn removeId(self: @This(), cb: *CmdBuf, id: TypeId) error{ZcsCmdBufOverflow}!void {
-        errdefer if (std.debug.runtime_safety) {
-            cb.invalid = true;
-        };
-        try Subcmd.encode(cb, .{ .bind_entity = self });
-        try Subcmd.encode(cb, .{ .remove = id });
+        try Subcmd.encodeRemove(cb, self, id);
     }
 
     /// Queues the entity to be committed. Has no effect if it has already been committed, called
@@ -398,12 +387,10 @@ pub const Entity = packed struct {
     /// Similar to `commit`, but returns `error.ZcsCmdBufOverflow` on failure instead of
     /// panicking. The command buffer is left in an undefined state on error.
     pub fn commitOrErr(self: @This(), cb: *CmdBuf) error{ZcsCmdBufOverflow}!void {
-        errdefer if (std.debug.runtime_safety) {
-            cb.invalid = true;
-        };
-        try Subcmd.encode(cb, .{ .bind_entity = self });
+        try Subcmd.encodeCommit(cb, self);
     }
 
+    /// Options for `changeArchImmediate`.
     pub const ChangeArchImmediateOptions = struct {
         add: []const Any = &.{},
         remove: CompFlag.Set = .initEmpty(),

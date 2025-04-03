@@ -69,7 +69,7 @@ fn run(input: []const u8, saturated: bool) !void {
 
     var cb: CmdBuf = try .init(gpa, &fz.es, .{
         .cmds = cmds_capacity,
-        .avg_cmd_bytes = @sizeOf(RigidBody),
+        .data = .{ .bytes_per_cmd = @sizeOf(RigidBody) },
     });
     defer cb.deinit(gpa, &fz.es);
 
@@ -297,7 +297,7 @@ fn addRandomComp(fz: *Fuzzer, cb: *CmdBuf, e: Entity, T: type) !T {
         switch (i % T.interned.len) {
             inline 0...(T.interned.len - 1) => |n| {
                 const val = T.interned[n];
-                try e.addAnyPtr(cb, .init(T, &val));
+                try e.addPtr(cb, T, &val);
                 return val;
             },
             else => unreachable,

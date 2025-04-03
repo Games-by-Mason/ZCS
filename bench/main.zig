@@ -59,6 +59,97 @@ pub fn main() !void {
     }
 
     for (0..iterations) |_| {
+        var tags: std.ArrayListUnmanaged(u8) = try .initCapacity(allocator, max_entities * 4);
+        defer tags.deinit(allocator);
+        var args: std.ArrayListUnmanaged(u64) = try .initCapacity(allocator, max_entities * 4);
+        defer args.deinit(allocator);
+        var bytes: std.ArrayListUnmanaged(u8) = try .initCapacity(allocator, max_entities * @sizeOf(C) * 3);
+        defer bytes.deinit(allocator);
+
+        {
+            var last: ?usize = null;
+            const fill_zone = Zone.begin(.{ .name = "baseline fill separate", .src = @src() });
+            for (0..max_entities) |i| {
+                const a: A = @intCast(i);
+                const b: B = @intCast(i);
+                const c: C = @intCast(i);
+
+                if (i != last) {
+                    // assert(args.items.len < args.capacity) implied by tags check
+                    if (tags.items.len >= tags.capacity) @panic("OOB");
+                    last = i;
+                    tags.appendAssumeCapacity(10);
+                    args.appendAssumeCapacity(i);
+                }
+
+                if (tags.items.len >= tags.capacity) @panic("OOB");
+                tags.appendAssumeCapacity(0);
+                // if (args.items.len >= args.capacity) @panic("OOB"); // Implied by tags check
+                args.appendAssumeCapacity(@intFromPtr(zcs.typeId(A)));
+                bytes.items.len = std.mem.alignForward(
+                    usize,
+                    bytes.items.len,
+                    @alignOf(A),
+                );
+                if (bytes.items.len + @sizeOf(A) > bytes.capacity) @panic("OOB");
+                bytes.appendSliceAssumeCapacity(std.mem.asBytes(&a));
+
+                if (tags.items.len >= tags.capacity) @panic("OOB");
+                tags.appendAssumeCapacity(0);
+                // if (args.items.len >= args.capacity) @panic("OOB"); // Implied by tags check
+                args.appendAssumeCapacity(@intFromPtr(zcs.typeId(B)));
+                bytes.items.len = std.mem.alignForward(
+                    usize,
+                    bytes.items.len,
+                    @alignOf(B),
+                );
+                if (bytes.items.len + @sizeOf(B) > bytes.capacity) @panic("OOB");
+                bytes.appendSliceAssumeCapacity(std.mem.asBytes(&b));
+
+                if (tags.items.len >= tags.capacity) @panic("OOB");
+                tags.appendAssumeCapacity(0);
+                // if (args.items.len >= args.capacity) @panic("OOB"); // Implied by tags check
+                args.appendAssumeCapacity(@intFromPtr(zcs.typeId(C)));
+                bytes.items.len = std.mem.alignForward(
+                    usize,
+                    bytes.items.len,
+                    @alignOf(C),
+                );
+                if (bytes.items.len + @sizeOf(C) > bytes.capacity) @panic("OOB");
+                bytes.appendSliceAssumeCapacity(std.mem.asBytes(&c));
+            }
+            fill_zone.end();
+        }
+    }
+
+    for (0..iterations) |_| {
+        var es: Entities = try .init(allocator, .{
+            .max_entities = max_entities,
+            .max_archetypes = 64,
+            .max_chunks = 4096,
+            .chunk_size = 65536,
+        });
+        defer es.deinit(allocator);
+
+        var cb: CmdBuf = try .init(allocator, &es, .{
+            .cmds = max_entities * 3,
+            .reserved_entities = max_entities,
+        });
+        defer cb.deinit(allocator, &es);
+
+        {
+            const fill_fast_zone = Zone.begin(.{ .name = "fill fast", .src = @src() });
+            defer fill_fast_zone.end();
+            for (0..max_entities) |i| {
+                const e = Entity.reserve(&cb);
+                e.add(&cb, A, @intCast(i));
+                e.add(&cb, B, @intCast(i));
+                e.add(&cb, C, @intCast(i));
+            }
+        }
+    }
+
+    for (0..iterations) |_| {
         const alloc_zone = Zone.begin(.{ .name = "alloc", .src = @src() });
 
         const alloc_es_zone = Zone.begin(.{ .name = "es", .src = @src() });
@@ -72,18 +163,15 @@ pub fn main() !void {
         alloc_es_zone.end();
 
         const alloc_cb_zone = Zone.begin(.{ .name = "cb", .src = @src() });
-        var capacity: CmdBuf.GranularCapacity = .init(.{
+        var cb: CmdBuf = try .init(allocator, &es, .{
             .cmds = max_entities * 3,
-            .avg_cmd_bytes = 16,
+            .reserved_entities = max_entities,
         });
-        capacity.reserved = max_entities;
-        var cb: CmdBuf = try .initGranularCapacity(allocator, &es, capacity);
         defer cb.deinit(allocator, &es);
         alloc_cb_zone.end();
 
         alloc_zone.end();
 
-        // also compare interning vs not etc
         {
             const cmdbuf_zone = Zone.begin(.{ .name = "cb", .src = @src() });
             defer cmdbuf_zone.end();
@@ -102,11 +190,6 @@ pub fn main() !void {
             cb.execImmediate(&es);
         }
 
-        // orig: 1.41 + 1.46 + 1.45 -> 1.44
-        // typed: 1.43 + 1.44 + 1.43 -> 1.43
-        // cached: 1.49 + 1.42 + 1.43 -> 1.4466666666666665
-        // debug mode cached: 27.59
-        // debug mode orig: 26.7
         {
             var total: u256 = 0;
             {

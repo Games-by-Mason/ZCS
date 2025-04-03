@@ -235,13 +235,10 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
     var o: Oracle = .init();
     defer o.deinit();
 
-    var cb: CmdBuf = try .initGranularCapacity(gpa, &fz.es, b: {
-        var cap: CmdBuf.GranularCapacity = .init(.{
-            .cmds = cmds_capacity,
-            .avg_cmd_bytes = @sizeOf(Node),
-        });
-        cap.reserved = 0;
-        break :b cap;
+    var cb: CmdBuf = try .init(gpa, &fz.es, .{
+        .cmds = cmds_capacity,
+        .data = .{ .bytes_per_cmd = @sizeOf(Node) },
+        .reserved_entities = 0,
     });
     defer cb.deinit(gpa, &fz.es);
 
@@ -277,13 +274,10 @@ fn fuzzNodeCyclesCmdBuf(_: void, input: []const u8) !void {
     var o: Oracle = .init();
     defer o.deinit();
 
-    var cb: CmdBuf = try .initGranularCapacity(gpa, &fz.es, b: {
-        var cap: CmdBuf.GranularCapacity = .init(.{
-            .cmds = cmds_capacity,
-            .avg_cmd_bytes = @sizeOf(Node),
-        });
-        cap.reserved = 0;
-        break :b cap;
+    var cb: CmdBuf = try .init(gpa, &fz.es, .{
+        .cmds = cmds_capacity,
+        .data = .{ .bytes_per_cmd = @sizeOf(Node) },
+        .reserved_entities = 0,
     });
     defer cb.deinit(gpa, &fz.es);
 
