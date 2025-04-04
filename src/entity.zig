@@ -306,7 +306,7 @@ pub const Entity = packed struct {
     pub fn getId(self: @This(), es: *const Entities, id: TypeId) ?[]u8 {
         const entity_loc = es.handle_tab.get(self.key) orelse return null;
         const chunk = entity_loc.chunk.get(&es.chunk_pool) orelse return null;
-        const comps = chunk.compsFromId(es, id) orelse return null;
+        const comps = chunk.compsFromId(id) orelse return null;
         return comps[@intFromEnum(entity_loc.index_in_chunk) * id.size ..][0..id.size];
     }
 
@@ -391,12 +391,31 @@ pub const Entity = packed struct {
     }
 
     /// Options for `changeArchImmediate`.
-    pub const ChangeArchImmediateOptions = struct {
-        add: []const Any = &.{},
-        remove: CompFlag.Set = .initEmpty(),
-    };
+    pub fn ChangeArchImmediateOptions(Add: type) type {
+        comptime var has_defaults = true;
+        for (@typeInfo(Add).@"struct".fields) |field| {
+            if (field.default_value_ptr == null) {
+                has_defaults = false;
+                break;
+            }
+        }
+        if (has_defaults) {
+            return struct {
+                add: Add = .{},
+                remove: CompFlag.Set = .{},
+            };
+        } else {
+            return struct {
+                add: Add,
+                remove: CompFlag.Set = .{},
+            };
+        }
+    }
 
     /// Adds the listed components and then removes the listed component IDs.
+    ///
+    /// `Add` is a tuple or struct of components that may be added by `changes`. They may be
+    /// optional types to allow deciding whether or not to add them at runtime.
     ///
     /// Returns `true` if the change was made, returns `false` if it couldn't be made because the
     /// entity doesn't exist.
@@ -405,9 +424,10 @@ pub const Entity = packed struct {
     pub fn changeArchImmediate(
         self: @This(),
         es: *Entities,
-        changes: ChangeArchImmediateOptions,
+        Add: type,
+        changes: ChangeArchImmediateOptions(Add),
     ) bool {
-        return self.changeArchImmediateOrErr(es, changes) catch |err|
+        return self.changeArchImmediateOrErr(es, Add, changes) catch |err|
             @panic(@errorName(err));
     }
 
@@ -415,12 +435,62 @@ pub const Entity = packed struct {
     pub fn changeArchImmediateOrErr(
         self: @This(),
         es: *Entities,
-        changes: ChangeArchImmediateOptions,
+        Add: type,
+        changes: ChangeArchImmediateOptions(Add),
     ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!bool {
         es.pointer_generation.increment();
 
-        // Early out if the entity does not exist, also checks some assertions
-        if (!self.exists(es)) return false;
+        // Build a set of component types to add/remove
+        var add_comps: CompFlag.Set = .{};
+        inline for (@typeInfo(Add).@"struct".fields) |field| {
+            const Comp = zcs.view.Unwrap(field.type);
+            if (@typeInfo(field.type) != .optional or @field(changes.add, field.name) != null) {
+                add_comps.insert(CompFlag.registerImmediate(typeId(Comp)));
+            }
+        }
+
+        // Apply the archetype change, early out if the entity doesn't exist
+        if (!try self.changeArchUninitImmediateOrErr(es, .{
+            .add = add_comps,
+            .remove = changes.remove,
+        })) return false;
+
+        const entity_loc = es.handle_tab.get(self.key).?;
+        const new_chunk = entity_loc.chunk.get(&es.chunk_pool).?;
+        inline for (@typeInfo(Add).@"struct".fields) |field| {
+            const Comp = zcs.view.Unwrap(field.type);
+            if (@typeInfo(field.type) != .optional or @field(changes.add, field.name) != null) {
+                // Unwrapping the flag is safe because we already registered it above
+                const flag = typeId(Comp).comp_flag.?;
+                if (!changes.remove.contains(flag)) {
+                    // https://github.com/Games-by-Mason/ZCS/issues/24
+                    const offset = new_chunk.header().comp_buf_offsets.values[@intFromEnum(flag)];
+                    // Safe because we added it above
+                    assert(offset != 0);
+                    const comp: *Comp = @ptrFromInt(@intFromPtr(new_chunk) +
+                        offset +
+                        @intFromEnum(entity_loc.index_in_chunk) * @sizeOf(Comp));
+                    comp.* = @as(?Comp, @field(changes.add, field.name)).?;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /// Options for `changeArchAnyImmediate`.
+    pub const ChangeArchAnyImmediateOptions = struct {
+        add: []const Any = &.{},
+        remove: CompFlag.Set = .initEmpty(),
+    };
+
+    /// Similar to `changeArchImmediateOrErr`, but doesn't require comptime types.
+    pub fn changeArchAnyImmediate(
+        self: @This(),
+        es: *Entities,
+        changes: ChangeArchAnyImmediateOptions,
+    ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!bool {
+        es.pointer_generation.increment();
 
         // Build a set of component types to add/remove
         var add_comps: CompFlag.Set = .{};
@@ -428,19 +498,27 @@ pub const Entity = packed struct {
             add_comps.insert(CompFlag.registerImmediate(comp.id));
         }
 
-        // Apply the archetype change. We already verified the entity exists.
-        assert(try self.changeArchUninitImmediateOrErr(es, .{
+        // Apply the archetype change, early out if the entity doesn't exist
+        if (!try self.changeArchUninitImmediateOrErr(es, .{
             .add = add_comps,
             .remove = changes.remove,
-        }));
+        })) return false;
 
         // Initialize the components
+        const entity_loc = es.handle_tab.get(self.key).?;
+        const chunk = entity_loc.chunk.get(&es.chunk_pool).?;
         for (changes.add) |comp| {
             // Unwrapping the flag is safe because we already registered it above
             const flag = comp.id.comp_flag.?;
             if (!changes.remove.contains(flag)) {
-                // Unwrapping the component is safe because we added it above
-                const dest = self.getId(es, comp.id).?;
+                // Unwrap okay because registered above
+                // https://github.com/Games-by-Mason/ZCS/issues/24
+                const offset = chunk.header().comp_buf_offsets.values[@intFromEnum(flag)];
+                assert(offset != 0);
+                const dest_unsized: [*]u8 = @ptrFromInt(@intFromPtr(chunk) +
+                    offset +
+                    @intFromEnum(entity_loc.index_in_chunk) * comp.id.size);
+                const dest = dest_unsized[0..comp.id.size];
                 @memcpy(dest, comp.bytes());
             }
         }
@@ -462,6 +540,12 @@ pub const Entity = packed struct {
     ///
     /// May change internal allocator state even on failure, chunk lists are not destroyed even if
     /// no chunks could be allocated for them at this time.
+    ///
+    /// Technically we could go slightly faster with compile time known types, similar to
+    /// `changeArchImmediate` vs `changeArchAnyImmediate`. This works because `@memcpy` with a
+    /// comptime known length tends to be a bit faster. However, in practice, these sorts of
+    /// immediate arch changes are only done (or only done in bulk) when loading a level, which
+    /// means this function is essentially a noop anyway since there won't be any data to move.
     pub fn changeArchUninitImmediateOrErr(
         self: @This(),
         es: *Entities,
@@ -498,7 +582,7 @@ pub const Entity = packed struct {
             var added = options.add.differenceWith(options.remove).iterator();
             while (added.next()) |flag| {
                 const id = flag.getId();
-                const comp_buffer = new_chunk.compsFromId(es, id).?;
+                const comp_buffer = new_chunk.compsFromId(id).?;
                 const comp_offset = @intFromEnum(new_loc.index_in_chunk) * id.size;
                 const comp = comp_buffer[comp_offset..][0..id.size];
                 @memset(comp, undefined);
@@ -512,11 +596,11 @@ pub const Entity = packed struct {
             while (move.next()) |flag| {
                 const id = flag.getId();
 
-                const new_comp_buffer = new_chunk.compsFromId(es, id).?;
+                const new_comp_buffer = new_chunk.compsFromId(id).?;
                 const new_comp_offset = @intFromEnum(new_loc.index_in_chunk) * id.size;
                 const new_comp = new_comp_buffer[new_comp_offset..][0..id.size];
 
-                const prev_comp_buffer = prev_chunk.compsFromId(es, id).?;
+                const prev_comp_buffer = prev_chunk.compsFromId(id).?;
                 const prev_comp_offset = @intFromEnum(entity_loc.index_in_chunk) * id.size;
                 const prev_comp = prev_comp_buffer[prev_comp_offset..][0..id.size];
 

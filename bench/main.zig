@@ -24,6 +24,8 @@ const A = if (small) u2 else u64;
 const B = if (small) u4 else u128;
 const C = if (small) u8 else u256;
 
+// Eventually we may make reusable benchmarks for comparing releases. Right now this is just a
+// dumping ground for testing performance tweaks.
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .thread_safe = false }){};
     const allocator = gpa.allocator();
@@ -42,17 +44,43 @@ pub fn main() !void {
 
         // also compare interning vs not etc
         {
-            const fill_zone = Zone.begin(.{ .name = "fill immediate", .src = @src() });
+            const fill_zone = Zone.begin(.{ .name = "fill immediate any", .src = @src() });
             for (0..max_entities) |i| {
                 const e = Entity.reserveImmediate(&es);
                 const a: A = @intCast(i);
                 const b: B = @intCast(i);
                 const c: C = @intCast(i);
-                assert(e.changeArchImmediate(&es, .{ .add = &.{
+                assert(e.changeArchAnyImmediate(&es, .{ .add = &.{
                     .init(A, &a),
                     .init(B, &b),
                     .init(C, &c),
-                } }));
+                } }) catch |err| @panic(@errorName(err)));
+            }
+            fill_zone.end();
+        }
+    }
+
+    for (0..iterations) |_| {
+        var es: Entities = try .init(allocator, .{
+            .max_entities = max_entities,
+            .max_archetypes = 1,
+            .max_chunks = 4096,
+            .chunk_size = 65536,
+        });
+        defer es.deinit(allocator);
+
+        // also compare interning vs not etc
+        {
+            const fill_zone = Zone.begin(.{ .name = "fill immediate", .src = @src() });
+            for (0..max_entities) |i| {
+                const e = Entity.reserveImmediate(&es);
+                assert(e.changeArchImmediate(
+                    &es,
+                    struct { A, B, C },
+                    .{
+                        .add = .{ @intCast(i), @intCast(i), @intCast(i) },
+                    },
+                ));
             }
             fill_zone.end();
         }
@@ -138,7 +166,7 @@ pub fn main() !void {
         defer cb.deinit(allocator, &es);
 
         {
-            const fill_fast_zone = Zone.begin(.{ .name = "fill fast", .src = @src() });
+            const fill_fast_zone = Zone.begin(.{ .name = "fill cb", .src = @src() });
             defer fill_fast_zone.end();
             for (0..max_entities) |i| {
                 const e = Entity.reserve(&cb);

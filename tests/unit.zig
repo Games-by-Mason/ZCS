@@ -202,10 +202,14 @@ test "cb interning" {
     try cb.extVal(FooExt, foo_ev_value);
 
     // Throw in a destroy for good measure, verify the components end up in the remove flags
-    try expect(e2.changeArchImmediate(&es, .{
-        .add = &.{ .init(RigidBody, &.{ .mass = 1.0 }), .init(Model, &.{ .vertex_start = 2 }) },
-        .remove = .initEmpty(),
-    }));
+    try expect(e2.changeArchImmediate(
+        &es,
+        struct { rb: RigidBody, model: Model },
+        .{
+            .add = .{ .rb = .{ .mass = 1.0 }, .model = .{ .vertex_start = 2 } },
+            .remove = .initEmpty(),
+        },
+    ));
     e2.destroy(&cb);
 
     // Explicit interning
@@ -463,7 +467,7 @@ test "cb overflow" {
     });
     defer cb.deinit(gpa, &es);
     const e = Entity.reserveImmediate(&es);
-    try expect(e.changeArchImmediate(&es, .{}));
+    try expect(e.changeArchImmediate(&es, struct {}, .{}));
     try e.addVal(&cb, RigidBody, .{});
     try e.addPtr(&cb, RigidBody, &.{});
     try expect(!e.has(&es, Model));
@@ -689,10 +693,14 @@ test "change arch immediate" {
 
     {
         const e = Entity.reserveImmediate(&es);
-        try expect(e.changeArchImmediate(&es, .{
-            .add = &.{ .init(RigidBody, &.{ .mass = 1.0 }), .init(Model, &.{ .vertex_start = 2 }) },
-            .remove = .initMany(&.{CompFlag.registerImmediate(typeId(RigidBody))}),
-        }));
+        try expect(e.changeArchImmediate(
+            &es,
+            struct { ?RigidBody, Model },
+            .{
+                .add = .{ RigidBody{ .mass = 1.0 }, Model{ .vertex_start = 2 } },
+                .remove = .initMany(&.{CompFlag.registerImmediate(typeId(RigidBody))}),
+            },
+        ));
         try expectEqual(Model{ .vertex_start = 2 }, e.get(&es, Model).?.*);
         try expectEqual(null, e.get(&es, RigidBody));
         try expectEqual(null, e.get(&es, Tag));
@@ -700,13 +708,18 @@ test "change arch immediate" {
 
     {
         const e = Entity.reserveImmediate(&es);
-        try expect(e.changeArchImmediate(&es, .{
-            .add = &.{
-                .init(RigidBody, &.{ .mass = 0.5 }),
-                .init(Model, &.{ .vertex_start = 20 }),
+        try expect(e.changeArchImmediate(
+            &es,
+            struct { RigidBody, Model, ?Tag },
+            .{
+                .add = .{
+                    RigidBody{ .mass = 0.5 },
+                    Model{ .vertex_start = 20 },
+                    null,
+                },
+                .remove = .initMany(&.{CompFlag.registerImmediate(typeId(Tag))}),
             },
-            .remove = .initMany(&.{CompFlag.registerImmediate(typeId(Tag))}),
-        }));
+        ));
         try expectEqual(RigidBody{ .mass = 0.5 }, e.get(&es, RigidBody).?.*);
         try expectEqual(Model{ .vertex_start = 20 }, e.get(&es, Model).?.*);
         try expectEqual(null, e.get(&es, Tag));
@@ -715,18 +728,22 @@ test "change arch immediate" {
     {
         const e = Entity.reserveImmediate(&es);
         try expect(e.destroyImmediate(&es));
-        try expect(!e.changeArchImmediate(&es, .{
-            .add = &.{
-                .init(RigidBody, &.{ .mass = 0.5 }),
-                .init(Model, &.{ .vertex_start = 20 }),
+        try expect(!e.changeArchImmediate(
+            &es,
+            struct { RigidBody, Model },
+            .{
+                .add = .{
+                    RigidBody{ .mass = 0.5 },
+                    Model{ .vertex_start = 20 },
+                },
+                .remove = .initMany(&.{CompFlag.registerImmediate(typeId(Tag))}),
             },
-            .remove = .initMany(&.{CompFlag.registerImmediate(typeId(Tag))}),
-        }));
+        ));
         try expectEqual(null, e.get(&es, RigidBody));
         try expectEqual(null, e.get(&es, Model));
         try expectEqual(null, e.get(&es, Tag));
 
-        try expect(!e.changeArchImmediate(&es, .{}));
+        try expect(!e.changeArchImmediate(&es, struct {}, .{}));
         try expectEqual(null, e.get(&es, RigidBody));
         try expectEqual(null, e.get(&es, Model));
         try expectEqual(null, e.get(&es, Tag));
@@ -751,10 +768,14 @@ test "getAll" {
     defer es.deinit(gpa);
     const e = Entity.reserveImmediate(&es);
     // Should register two types
-    try expect(e.changeArchImmediate(&es, .{ .add = &.{
-        Any.init(RigidBody, &.{}),
-        Any.init(Model, &.{}),
-    } }));
+    try expect(e.changeArchImmediate(
+        &es,
+        struct { RigidBody, Model },
+        .{ .add = .{
+            RigidBody{},
+            Model{},
+        } },
+    ));
     // Should not result in a registration
     _ = typeId(i32);
     var cb: CmdBuf = try .init(gpa, &es, .{ .cmds = 24 });
@@ -798,13 +819,23 @@ test "entity overflow" {
     _ = Entity.reserveImmediate(&es);
     try expectError(error.ZcsEntityOverflow, Entity.reserveImmediateOrErr(&es));
 
-    try expect(e0.changeArchImmediate(&es, .{ .add = &.{
-        .init(u32, &0),
-    } }));
+    try expect(e0.changeArchImmediate(
+        &es,
+        struct { u32 },
+        .{ .add = .{0} },
+    ));
     var dummy: [256]u8 = undefined;
-    try expectError(error.ZcsChunkOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+    try expectError(error.ZcsChunkOverflow, e0.changeArchAnyImmediate(&es, .{ .add = &.{
         .init([256]u8, &dummy),
     } }));
+    try expectError(
+        error.ZcsChunkOverflow,
+        e0.changeArchImmediateOrErr(
+            &es,
+            struct { [256]u8 },
+            .{ .add = .{dummy} },
+        ),
+    );
 }
 
 test "archetype overflow" {
@@ -821,36 +852,36 @@ test "archetype overflow" {
     try expectEqual(0, es.chunk_lists.arches.count());
 
     // Create three archetypes
-    try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
-        .init(u1, &0),
-    } }));
+    try expect(try e0.changeArchImmediateOrErr(&es, struct { u1 }, .{ .add = .{0} }));
     try expectEqual(1, es.chunk_lists.arches.count());
 
-    try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
-        .init(u2, &0),
-    } }));
+    try expect(try e0.changeArchImmediateOrErr(&es, struct { u2 }, .{ .add = .{0} }));
     try expectEqual(2, es.chunk_lists.arches.count());
 
     // Test that trying to create additional archetypes causes it to overflow
-    try expectError(error.ZcsArchOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
-        .init(u3, &0),
-    } }));
-    try expectError(error.ZcsArchOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
-        .init(u3, &0),
-    } }));
-    try expectError(error.ZcsArchOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
-        .init(u4, &0),
-    } }));
+    try expectError(error.ZcsArchOverflow, e0.changeArchImmediateOrErr(
+        &es,
+        struct { u3 },
+        .{ .add = .{0} },
+    ));
+    try expectError(error.ZcsArchOverflow, e0.changeArchImmediateOrErr(
+        &es,
+        struct { u3 },
+        .{ .add = .{0} },
+    ));
+    try expectError(error.ZcsArchOverflow, e0.changeArchImmediateOrErr(
+        &es,
+        struct { u4 },
+        .{ .add = .{0} },
+    ));
     try expectEqual(2, es.chunk_lists.arches.count());
 
     // Trying to create an archetype that already exists should be fine
-    try expect(try e0.changeArchImmediateOrErr(&es, .{
+    try expect(try e0.changeArchImmediateOrErr(&es, struct {}, .{
         .remove = .initMany(&.{typeId(u2).comp_flag.?}),
     }));
     try expectEqual(2, es.chunk_lists.arches.count());
-    try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
-        .init(u2, &0),
-    } }));
+    try expect(try e0.changeArchImmediateOrErr(&es, struct { u2 }, .{ .add = .{0} }));
     try expectEqual(2, es.chunk_lists.arches.count());
 }
 
@@ -868,17 +899,17 @@ test "chunk pool overflow" {
     try expectEqual(0, es.chunk_lists.arches.count());
 
     // Create one chunk
-    try expect(try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
-        .init(u1, &0),
-    } }));
+    try expect(try e0.changeArchImmediateOrErr(&es, struct { u1 }, .{ .add = .{0} }));
     try expectEqual(1, es.chunk_pool.reserved);
     try expectEqual(1, es.chunk_lists.arches.count());
 
     // Try to create a new archetype, and fail due to chunk overflow
     for (0..2) |_| {
-        try expectError(error.ZcsChunkPoolOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
-            .init(u2, &0),
-        } }));
+        try expectError(error.ZcsChunkPoolOverflow, e0.changeArchImmediateOrErr(
+            &es,
+            struct { u2 },
+            .{ .add = .{0} },
+        ));
         try expectEqual(1, es.chunk_pool.reserved);
         try expect(!e0.has(&es, u2));
         try expectEqual(2, es.chunk_lists.arches.count());
@@ -888,9 +919,7 @@ test "chunk pool overflow" {
     const n = 45;
     for (0..n) |_| {
         const e = Entity.reserveImmediate(&es);
-        try expect(try e.changeArchImmediateOrErr(&es, .{ .add = &.{
-            .init(u1, &0),
-        } }));
+        try expect(try e.changeArchImmediateOrErr(&es, struct { u1 }, .{ .add = .{0} }));
     }
     try expectEqual(1, es.chunk_pool.reserved);
     try expectEqual(n + 1, es.count());
@@ -899,9 +928,14 @@ test "chunk pool overflow" {
     // Go past the end of the chunk, causing it to overflow since we've used up all available chunks
     {
         const e = Entity.reserveImmediate(&es);
-        try expectError(error.ZcsChunkPoolOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
+        try expectError(error.ZcsChunkPoolOverflow, e.changeArchAnyImmediate(&es, .{ .add = &.{
             .init(u1, &0),
         } }));
+        try expectError(error.ZcsChunkPoolOverflow, e.changeArchImmediateOrErr(
+            &es,
+            struct { u1 },
+            .{ .add = .{0} },
+        ));
         try expectEqual(n + 1, es.count());
     }
     var count: usize = 0;
@@ -916,9 +950,7 @@ test "chunk pool overflow" {
     // Now that the chunk was returned the pool, we can create a different archetype
     for (0..n + 1) |_| {
         const e = Entity.reserveImmediate(&es);
-        _ = try e.changeArchImmediateOrErr(&es, .{ .add = &.{
-            .init(u2, &0),
-        } });
+        _ = try e.changeArchImmediateOrErr(&es, struct { u2 }, .{ .add = .{0} });
         try expectEqual(1, es.chunk_pool.reserved);
         try expect(!e.has(&es, u1));
         try expect(e.has(&es, u2));
@@ -928,9 +960,11 @@ test "chunk pool overflow" {
     // Make sure we can't overfill it
     {
         const e = Entity.reserveImmediate(&es);
-        try expectError(error.ZcsChunkPoolOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
-            .init(u2, &0),
-        } }));
+        try expectError(error.ZcsChunkPoolOverflow, e.changeArchImmediateOrErr(
+            &es,
+            struct { u2 },
+            .{ .add = .{0} },
+        ));
         try expectEqual(n + 1, es.count());
     }
 
@@ -947,9 +981,7 @@ test "chunk pool overflow" {
     // Now that the chunk was returned the pool again, we can create a different archetype
     for (0..n + 1) |_| {
         const e = Entity.reserveImmediate(&es);
-        _ = try e.changeArchImmediateOrErr(&es, .{ .add = &.{
-            .init(u3, &0),
-        } });
+        _ = try e.changeArchImmediateOrErr(&es, struct { u3 }, .{ .add = .{0} });
         try expectEqual(1, es.chunk_pool.reserved);
         try expect(!e.has(&es, u1));
         try expect(!e.has(&es, u2));
@@ -960,9 +992,14 @@ test "chunk pool overflow" {
     // Make sure we can't overfill it
     {
         const e = Entity.reserveImmediate(&es);
-        try expectError(error.ZcsChunkPoolOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
+        try expectError(error.ZcsChunkPoolOverflow, e.changeArchAnyImmediate(&es, .{ .add = &.{
             .init(u3, &0),
         } }));
+        try expectError(error.ZcsChunkPoolOverflow, e.changeArchImmediateOrErr(
+            &es,
+            struct { u3 },
+            .{ .add = .{0} },
+        ));
         try expectEqual(n + 1, es.count());
     }
 
@@ -979,9 +1016,7 @@ test "chunk pool overflow" {
     // Refill a chunk list that already existed
     for (0..n + 1) |_| {
         const e = Entity.reserveImmediate(&es);
-        _ = try e.changeArchImmediateOrErr(&es, .{ .add = &.{
-            .init(u3, &0),
-        } });
+        _ = try e.changeArchImmediateOrErr(&es, struct { u3 }, .{ .add = .{0} });
         try expectEqual(1, es.chunk_pool.reserved);
         try expect(!e.has(&es, u1));
         try expect(!e.has(&es, u2));
@@ -992,7 +1027,12 @@ test "chunk pool overflow" {
     // Make sure we can't overfill it
     {
         const e = Entity.reserveImmediate(&es);
-        try expectError(error.ZcsChunkPoolOverflow, e.changeArchImmediateOrErr(&es, .{ .add = &.{
+        try expectError(error.ZcsChunkPoolOverflow, e.changeArchImmediateOrErr(
+            &es,
+            struct { u3 },
+            .{ .add = .{0} },
+        ));
+        try expectError(error.ZcsChunkPoolOverflow, e.changeArchAnyImmediate(&es, .{ .add = &.{
             .init(u3, &0),
         } }));
         try expectEqual(n + 1, es.count());
@@ -1016,9 +1056,14 @@ test "chunk overflow" {
         try expectEqual(0, es.chunk_lists.arches.count());
 
         // Create one chunk
-        try expectError(error.ZcsChunkOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+        try expectError(error.ZcsChunkOverflow, e0.changeArchAnyImmediate(&es, .{ .add = &.{
             .init(u1, &0),
         } }));
+        try expectError(error.ZcsChunkOverflow, e0.changeArchImmediateOrErr(
+            &es,
+            struct { u1 },
+            .{ .add = .{0} },
+        ));
         try expectEqual(0, es.chunk_pool.reserved);
         try expectEqual(0, es.chunk_lists.arches.count());
     }
@@ -1037,7 +1082,12 @@ test "chunk overflow" {
         try expectEqual(0, es.chunk_lists.arches.count());
 
         // Create one chunk
-        try expectError(error.ZcsChunkOverflow, e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+        try expectError(error.ZcsChunkOverflow, e0.changeArchImmediateOrErr(
+            &es,
+            struct { [4096]u8 },
+            .{ .add = .{undefined} },
+        ));
+        try expectError(error.ZcsChunkOverflow, e0.changeArchAnyImmediate(&es, .{ .add = &.{
             .init([4096]u8, undefined),
         } }));
         try expectEqual(0, es.chunk_pool.reserved);
@@ -1060,14 +1110,14 @@ test "smoke test" {
 
     const e0: Entity = .reserveImmediate(&es);
 
-    _ = try e0.changeArchImmediateOrErr(&es, .{ .add = &.{
+    _ = try e0.changeArchAnyImmediate(&es, .{ .add = &.{
         .init(f32, &1.5),
         .init(bool, &true),
     } });
     try expectEqual(@as(f32, 1.5), e0.get(&es, f32).?.*);
     try expectEqual(true, e0.get(&es, bool).?.*);
 
-    _ = try e0.changeArchImmediateOrErr(&es, .{
+    _ = try e0.changeArchAnyImmediate(&es, .{
         .add = &.{.init(u8, &2)},
         .remove = .initMany(&.{CompFlag.registerImmediate(typeId(bool))}),
     });

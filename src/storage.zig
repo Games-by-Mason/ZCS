@@ -152,11 +152,10 @@ pub const Chunk = opaque {
 
     /// Similar to `view`, but only gets a single component slice and doesn't require comptime
     /// types.
-    pub fn compsFromId(self: *Chunk, es: *const Entities, id: TypeId) ?[]u8 {
+    pub fn compsFromId(self: *Chunk, id: TypeId) ?[]u8 {
         const flag = id.comp_flag orelse return null;
-        const list = self.header().list.get(&es.chunk_lists);
         // https://github.com/Games-by-Mason/ZCS/issues/24
-        const offset = list.comp_buf_offsets.values[@intFromEnum(flag)];
+        const offset = self.header().comp_buf_offsets.values[@intFromEnum(flag)];
         if (offset == 0) return null;
         const ptr: [*]u8 = @ptrFromInt(@intFromPtr(self) + offset);
         return ptr[0 .. self.header().len * id.size];
@@ -180,7 +179,7 @@ pub const Chunk = opaque {
             } else {
                 // https://github.com/Games-by-Mason/ZCS/issues/24
                 const offset = if (typeId(As).comp_flag) |flag|
-                    list.comp_buf_offsets.values[@intFromEnum(flag)]
+                    self.header().comp_buf_offsets.values[@intFromEnum(flag)]
                 else
                     0;
                 if (@typeInfo(field.type) == .optional and offset == 0) {
@@ -223,7 +222,7 @@ pub const Chunk = opaque {
                 var it = self.header().arch(&es.chunk_lists).iterator();
                 while (it.next()) |flag| {
                     const id = flag.getId();
-                    const comp_buffer = self.compsFromId(es, id).?;
+                    const comp_buffer = self.compsFromId(id).?;
                     const comp_offset = new_len * id.size;
                     const comp = comp_buffer[comp_offset..][0..id.size];
                     @memset(comp, undefined);
@@ -250,7 +249,7 @@ pub const Chunk = opaque {
             while (move.next()) |flag| {
                 const id = flag.getId();
 
-                const comp_buffer = self.compsFromId(es, id).?;
+                const comp_buffer = self.compsFromId(id).?;
                 const new_comp_offset = @intFromEnum(index_in_chunk) * id.size;
                 const new_comp = comp_buffer[new_comp_offset..][0..id.size];
 
@@ -336,7 +335,7 @@ pub const ChunkList = struct {
     /// A map from component flags to the byte offset of their arrays. Components that aren't
     /// present or are zero sized have undefined offsets. It's generally faster to read this from
     /// the chunk instead of the chunk list to avoid the extra cache miss.
-    comp_buf_offsets: std.enums.EnumArray(CompFlag, u32),
+    comp_buf_offsets_cold: std.enums.EnumArray(CompFlag, u32),
     /// The number of entities that can be stored in a single chunk from this list.
     chunk_capacity: u32,
 
@@ -507,7 +506,7 @@ pub const ChunkList = struct {
             .head = .none,
             .tail = .none,
             .avail = .none,
-            .comp_buf_offsets = comp_buf_offsets,
+            .comp_buf_offsets_cold = comp_buf_offsets,
             .index_buf_offset = index_buf_offset,
             .chunk_capacity = chunk_capacity,
         };
@@ -766,7 +765,7 @@ pub const ChunkPool = struct {
         // Initialize the chunk and return it
         const header = chunk.header();
         header.* = .{
-            .comp_buf_offsets = list.get(&es.chunk_lists).comp_buf_offsets,
+            .comp_buf_offsets = list.get(&es.chunk_lists).comp_buf_offsets_cold,
             .list = list,
             .len = 0,
         };

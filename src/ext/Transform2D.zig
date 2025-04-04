@@ -478,8 +478,13 @@ pub fn markDirtyImmediate(self: *@This(), es: *Entities) void {
 
     self.cache = .dirty;
     const e: Entity = .reserveImmediate(es);
-    const dirty: Dirty = .{ .entity = .from(es, self) };
-    assert(e.changeArchImmediate(es, .{ .add = &.{.init(Dirty, &dirty)} }));
+    assert(e.changeArchImmediate(
+        es,
+        struct { Dirty },
+        .{ .add = .{
+            .{ .entity = .from(es, self) },
+        } },
+    ));
 }
 
 /// The dirty event is emitted for transforms that have been moved or re-parented.

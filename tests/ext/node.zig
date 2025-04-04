@@ -38,18 +38,22 @@ test "immediate" {
     defer es.deinit(gpa);
 
     const empty = Entity.reserveImmediate(&es);
-    try expect(empty.changeArchImmediate(&es, .{ .add = &.{
-        .init(Node, &.{}),
-        .init(Model, &Model.interned[0]),
-    } }));
+    try expect(empty.changeArchImmediate(
+        &es,
+        struct { Node, Model },
+        .{ .add = .{
+            Node{},
+            Model.interned[0],
+        } },
+    ));
     const parent = Entity.reserveImmediate(&es);
-    try expect(parent.changeArchImmediate(&es, .{ .add = &.{.init(Node, &.{})} }));
+    try expect(parent.changeArchImmediate(&es, struct { Node }, .{ .add = .{Node{}} }));
     const child_1 = Entity.reserveImmediate(&es);
-    try expect(child_1.changeArchImmediate(&es, .{ .add = &.{.init(Node, &.{})} }));
+    try expect(child_1.changeArchImmediate(&es, struct { Node }, .{ .add = .{Node{}} }));
     const child_2 = Entity.reserveImmediate(&es);
-    try expect(child_2.changeArchImmediate(&es, .{ .add = &.{.init(Node, &.{})} }));
+    try expect(child_2.changeArchImmediate(&es, struct { Node }, .{ .add = .{Node{}} }));
     const descendant = Entity.reserveImmediate(&es);
-    try expect(descendant.changeArchImmediate(&es, .{ .add = &.{.init(Node, &.{})} }));
+    try expect(descendant.changeArchImmediate(&es, struct { Node }, .{ .add = .{Node{}} }));
 
     // Make sure this compiles
     try expectEqual(empty.get(&es, Node).?.getEntity(&es).get(&es, Model), empty.get(&es, Model).?);
@@ -545,7 +549,8 @@ fn remove(fz: *Fuzzer, o: *Oracle) !void {
     // Remove from the real entity
     if (entity.get(&fz.es, Node)) |node| {
         _ = node.destroyChildrenAndUnparentImmediate(&fz.es);
-        _ = entity.changeArchImmediate(&fz.es, .{
+        _ = entity.changeArchImmediate(&fz.es, struct {}, .{
+            .add = .{},
             .remove = CompFlag.Set.initOne(CompFlag.registerImmediate(typeId(Node))),
         });
     }
