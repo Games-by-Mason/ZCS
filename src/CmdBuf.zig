@@ -327,11 +327,24 @@ pub const Batch = union(enum) {
             // Initialize any new components. Note that we check for existence on each because they
             // could have been subsequently removed.
             {
+                // Unwrapping these is fine since we just committed the entity if it wasn't
+                // committed, or earlied out if it doesn't exist
+                const entity_loc = es.handle_tab.get(self.entity.key).?;
+                const chunk = entity_loc.chunk.get(&es.chunk_pool).?;
                 var ops = self.iterator();
                 while (ops.next()) |op| {
                     switch (op) {
-                        .add => |comp| if (self.entity.getId(es, comp.id)) |dest| {
-                            @memcpy(dest, comp.bytes());
+                        .add => |comp| if (comp.id.comp_flag) |flag| {
+                            const offset = chunk.header()
+                                .comp_buf_offsets.values[@intFromEnum(flag)];
+                            if (offset != 0) {
+                                assert(offset != 0);
+                                const dest_unsized: [*]u8 = @ptrFromInt(@intFromPtr(chunk) +
+                                    offset +
+                                    @intFromEnum(entity_loc.index_in_chunk) * comp.id.size);
+                                const dest = dest_unsized[0..comp.id.size];
+                                @memcpy(dest, comp.bytes());
+                            }
                         },
                         .remove,
                         .destroy,
