@@ -69,6 +69,8 @@ cb.clear(&es);
 
 `execImmediate` only exercises ZCS's public interface. You can implement extensions to the command buffer by iterating it and executing it yourself.
 
+Keep in mind that while this is fairly fast, it's always faster to create the data directly. If you're loading a large number of entities on a single thread and can invalidate pointers, creating the entities directly will be faster than putting the work on a command buffer.
+
 ## Command Buffer Iteration
 
 It's common for game systems to need to do work when objects are created or destroyed. For example, you may need to make adjustments to parent child relationships in a scene graph when an object is deleted.
