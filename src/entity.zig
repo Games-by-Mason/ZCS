@@ -221,7 +221,8 @@ pub const Entity = packed struct {
     }
 
     /// Similar to `destroy`, but returns `error.ZcsCmdBufOverflow` on failure instead of
-    /// panicking. The command buffer is left in an undefined state on error.
+    /// panicking. The command buffer is left in an undefined state on error, see the top level
+    /// documentation on `CmdBuf` for more info.
     pub fn destroyOrErr(self: @This(), cb: *CmdBuf) error{ZcsCmdBufOverflow}!void {
         try Subcmd.encodeDestroy(cb, self);
     }
@@ -327,7 +328,8 @@ pub const Entity = packed struct {
     }
 
     /// Similar to `add`, but returns an error on failure instead of panicking. The command buffer
-    /// is left in an undefined state on error.
+    /// is left in an undefined state on error, see the top level documentation on `CmdBuf` for more
+    /// info.
     pub inline fn addOrErr(
         self: @This(),
         cb: *CmdBuf,
@@ -373,7 +375,8 @@ pub const Entity = packed struct {
     }
 
     /// Similar to `remove`, but doesn't require compile time types and returns an error on failure
-    /// instead of panicking on failure. The command buffer is left in an undefined state on error.
+    /// instead of panicking on failure. The command buffer is left in an undefined state on error,
+    /// see the top level documentation on `CmdBuf` for more info.
     pub fn removeId(self: @This(), cb: *CmdBuf, id: TypeId) error{ZcsCmdBufOverflow}!void {
         try Subcmd.encodeRemove(cb, self, id);
     }
@@ -385,7 +388,8 @@ pub const Entity = packed struct {
             @panic(@errorName(err));
     }
     /// Similar to `commit`, but returns `error.ZcsCmdBufOverflow` on failure instead of
-    /// panicking. The command buffer is left in an undefined state on error.
+    /// panicking. The command buffer is left in an undefined state on error, see the top level
+    /// documentation on `CmdBuf` for more info.
     pub fn commitOrErr(self: @This(), cb: *CmdBuf) error{ZcsCmdBufOverflow}!void {
         try Subcmd.encodeCommit(cb, self);
     }

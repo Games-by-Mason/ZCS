@@ -10,6 +10,14 @@
 //! All exec methods may invalidate iterators, but by convention only the high level
 //! `execImmediate*` explicitly calls `es.pointer_generation.increment()`. If you are writing your
 //! own exec function, you should call this yourself.
+//!
+//! Some command buffer modifications leave the command buffer in an undefined state on failure, this
+//! is documented on the relevant functions. Trying to execute a command buffer invalidated in this
+//! way results in safety checked illegal behavior. This design means that these functions are
+//! typically not useful in real applications since you can't recover the CB after the error, rather
+//! they're intended for tests. While it would be possible to preserve valid state by restoring the
+//! lengths, this doesn't tend to be useful for real applications and substantially affects
+//! performance in benchmarks.
 
 const std = @import("std");
 const tracy = @import("tracy");
@@ -119,7 +127,8 @@ pub inline fn ext(self: *@This(), T: type, payload: T) void {
         @panic(@errorName(err));
 }
 
-/// Similar to `ext`, but returns an error on failure instead of panicking.
+/// Similar to `ext`, but returns an error on failure instead of panicking. The command buffer is
+/// left in an undefined state on error, see the top level documentation for more detail.
 pub inline fn extOrErr(self: *@This(), T: type, payload: T) error{ZcsCmdBufOverflow}!void {
     // Don't get tempted to remove inline from here! It's required for `isComptimeKnown`.
     comptime assert(@typeInfo(@TypeOf(extOrErr)).@"fn".calling_convention == .@"inline");
