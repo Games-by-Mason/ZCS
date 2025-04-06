@@ -23,16 +23,8 @@ first_child: Entity.Optional = .none,
 prev_sib: Entity.Optional = .none,
 next_sib: Entity.Optional = .none,
 
-/// Returns the entity associated with this node.
-pub fn getEntity(self: *const @This(), es: *const Entities) Entity {
-    return .from(es, self);
-}
-
-/// Returns the associated component, or null if none exists.
-pub fn get(self: *const @This(), es: *const Entities, T: type) ?*T {
-    comptime assert(T != Node); // Redundant
-    return self.getEntity(es).get(es, T);
-}
+pub const get = Entity.getMixin;
+pub const getEntity = Entity.getEntityMixin;
 
 /// Returns the parent node, or null if none exists.
 pub fn getParent(self: *const @This(), es: *const Entities) ?*Node {

@@ -45,6 +45,9 @@ world_from_model: Mat2x3 = .identity,
 /// Whether or not this transform's space is relative to its parent.
 relative: bool = true,
 
+pub const get = Entity.getMixin;
+pub const getEntity = Entity.getEntityMixin;
+
 /// Move the transform in local space by `delta` and then calls `sync`.
 pub fn move(self: *@This(), es: *const Entities, delta: Vec2) void {
     self.pos.add(delta);
@@ -89,8 +92,7 @@ pub fn sync(self: *@This(), es: *const Entities) void {
 /// Returns the parent's world form model matrix, or identity if not relative.
 pub inline fn getRelativeWorldFromModel(self: *const @This(), es: *const Entities) Mat2x3 {
     if (!self.relative) return .identity;
-    const entity: Entity = .from(es, self);
-    const node = entity.get(es, Node) orelse return .identity;
+    const node = self.get(es, Node) orelse return .identity;
     const parent = node.parent.unwrap() orelse return .identity;
     const parent_transform = parent.get(es, Transform2D) orelse return .identity;
     return parent_transform.world_from_model;
@@ -104,10 +106,9 @@ pub fn getForward(self: *const @This()) Vec2 {
 /// Returns a pre-order iterator over the subtree of relative transforms starting at `self`. This
 /// will visit parents before children, and it will include `self`.
 pub fn preOrderIterator(self: *@This(), es: *const Entities) PreOrderIterator {
-    const e: Entity = .from(es, self);
     return .{
         .parent = self,
-        .children = if (e.get(es, Node)) |node| node.preOrderIterator(es) else .empty,
+        .children = if (self.get(es, Node)) |node| node.preOrderIterator(es) else .empty,
         .pointer_lock = es.pointer_generation.lock(),
     };
 }
