@@ -1,7 +1,6 @@
 //! Storage for entities.
 //!
-//! See `SlotMap` for how handle safety works. Note that you may want to check
-//! `saturated` every now and then and warn if it's nonzero.
+//! See `SlotMap` for how handle safety works.
 //!
 //! See `README.md` for more information.
 
@@ -12,6 +11,8 @@ const tracy = @import("tracy");
 const Allocator = std.mem.Allocator;
 
 const Zone = tracy.Zone;
+
+const log = std.log;
 
 const zcs = @import("root.zig");
 const typeId = zcs.typeId;
@@ -35,6 +36,10 @@ chunk_lists: ChunkLists,
 pointer_generation: PointerLock.Generation = .{},
 reserved_entities: usize = 0,
 chunk_pool: ChunkPool,
+warned_saturated: u64 = 0,
+warned_capacity: bool = false,
+warned_chunk_pool: bool = false,
+warned_arches: bool = false,
 
 /// Options for `init`.
 pub const Options = struct {
@@ -64,6 +69,16 @@ pub fn init(gpa: Allocator, options: Options) Allocator.Error!@This() {
 
     var chunk_lists: ChunkLists = try .init(gpa, options.max_archetypes);
     errdefer chunk_lists.deinit(gpa);
+
+    if (tracy.enabled) {
+        var buf: [1024]u8 = undefined;
+        const info = std.fmt.bufPrintZ(
+            &buf,
+            "{}",
+            .{options},
+        ) catch @panic("OOB");
+        tracy.appInfo(info);
+    }
 
     return .{
         .handle_tab = handle_tab,
@@ -264,6 +279,63 @@ pub fn forEachChunk(
     while (chunks.next(self)) |chunk| {
         const chunk_view = chunk.view(self, view.Tuple(params[1..])).?;
         @call(.auto, updateChunk, .{ctx} ++ chunk_view);
+    }
+}
+
+/// Options for `updateStats`.
+pub const UpdateStatsOptions = struct {
+    emit_warnings: bool = true,
+};
+
+/// If Tracy is enabled, sends usage statistics to Tracy. If `warn` is true, emits warning if
+/// storage is past 50% capacity. It's recommended that you call this once a frame.
+pub fn updateStats(self: *@This(), options: UpdateStatsOptions) void {
+    if (tracy.enabled) {
+        tracy.plot(.{
+            .name = "entities",
+            .value = .{ .i64 = @intCast(self.count()) },
+        });
+        tracy.plot(.{
+            .name = "reserved entities",
+            .value = .{ .i64 = @intCast(self.reserved()) },
+        });
+        tracy.plot(.{
+            .name = "saturated entities",
+            .value = .{ .i64 = @intCast(self.handle_tab.saturated) },
+        });
+        tracy.plot(.{
+            .name = "reserved chunks",
+            .value = .{ .i64 = @intCast(self.chunk_pool.reserved) },
+        });
+        tracy.plot(.{
+            .name = "archetypes",
+            .value = .{ .i64 = @intCast(self.chunk_lists.arches.count()) },
+        });
+    }
+
+    if (options.emit_warnings) {
+        if (!self.warned_capacity and self.handle_tab.count() > self.handle_tab.capacity / 2) {
+            self.warned_capacity = true;
+            log.warn("entities past 50% capacity", .{});
+        }
+
+        if (self.handle_tab.saturated > self.warned_saturated) {
+            self.warned_saturated = self.handle_tab.saturated;
+            log.warn("{} entity slots have been saturated", .{self.warned_saturated});
+        }
+
+        const chunk_pool_cap = self.chunk_pool.buf.len / self.chunk_pool.size_align.toByteUnits();
+        if (!self.warned_chunk_pool and self.chunk_pool.reserved > chunk_pool_cap / 2) {
+            self.warned_chunk_pool = true;
+            log.warn("chunk pool past 50% capacity", .{});
+        }
+
+        if (!self.warned_arches and
+            self.chunk_lists.arches.count() > self.chunk_lists.arches.capacity() / 2)
+        {
+            self.warned_arches = true;
+            log.warn("archetypes past 50% capacity", .{});
+        }
     }
 }
 

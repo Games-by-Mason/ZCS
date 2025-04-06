@@ -681,7 +681,7 @@ pub const ChunkPool = struct {
 
     /// Memory reserved for chunks
     buf: []u8,
-    /// The number of unique chunks that have ever reserved
+    /// The number of unique chunks that have ever been reserved.
     reserved: u32,
     /// The chunk size and alignment are both set to this value. This is done for a couple reasons:
     /// 1. It makes `Entity.from` slightly cheaper

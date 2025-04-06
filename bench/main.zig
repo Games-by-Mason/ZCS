@@ -76,6 +76,7 @@ pub fn main() !void {
 
         // also compare interning vs not etc
         {
+            es.updateStats(.{ .emit_warnings = false });
             const fill_zone = Zone.begin(.{ .name = "fill immediate", .src = @src() });
             for (0..max_entities) |i| {
                 const e = Entity.reserveImmediate(&es);
@@ -88,6 +89,7 @@ pub fn main() !void {
                 ));
             }
             fill_zone.end();
+            es.updateStats(.{ .emit_warnings = false });
         }
     }
 

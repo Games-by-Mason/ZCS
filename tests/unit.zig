@@ -121,6 +121,9 @@ test "cb execImmediate" {
     try expectEqual(null, e2.get(&es, RigidBody));
     try expectEqual(model, e2.get(&es, Model).?.*);
     try expectEqual(null, e2.get(&es, Tag));
+
+    // Make sure this compiles
+    es.updateStats(.{ .emit_warnings = false });
 }
 
 fn isInAnyBytes(cb: CmdBuf, data: anytype) bool {
