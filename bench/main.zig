@@ -7,6 +7,7 @@ const assert = std.debug.assert;
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const CmdBuf = zcs.CmdBuf;
+const Transform2D = zcs.ext.Transform2D;
 
 const Zone = tracy.Zone;
 
@@ -297,6 +298,50 @@ pub fn main() !void {
             std.debug.print("ecs ra: {}\n", .{total});
             if (expected_ra_total == null) expected_ra_total = total;
             if (expected_ra_total != total) @panic("inconsistent result");
+        }
+    }
+
+    for (0..iterations) |_| {
+        const zone = Zone.begin(.{ .name = "transform", .src = @src() });
+        defer zone.end();
+
+        var tp: std.Thread.Pool = undefined;
+        try std.Thread.Pool.init(&tp, .{
+            .allocator = allocator,
+        });
+        defer tp.deinit();
+
+        const es_init_zone = Zone.begin(.{ .name = "es init", .src = @src() });
+        var es: Entities = try .init(allocator, .{
+            .max_entities = max_entities,
+            .max_archetypes = 64,
+            .max_chunks = 4096,
+            .chunk_size = 65536,
+        });
+        defer es.deinit(allocator);
+        es_init_zone.end();
+
+        {
+            const entity_init_zone = Zone.begin(.{ .name = "entity init", .src = @src() });
+            defer entity_init_zone.end();
+            for (0..max_entities) |_| {
+                assert(Entity.reserveImmediate(&es).changeArchImmediate(
+                    &es,
+                    struct { Transform2D },
+                    .{ .add = .{.{}} },
+                ));
+            }
+        }
+
+        {
+            const queue_zone = Zone.begin(.{ .name = "move", .src = @src() });
+            defer queue_zone.end();
+            var iter = es.iterator(struct { transform: *Transform2D });
+            var f: f32 = 0;
+            while (iter.next(&es)) |vw| {
+                vw.transform.move(&es, .{ .x = f, .y = f });
+                f += 0.01;
+            }
         }
     }
 

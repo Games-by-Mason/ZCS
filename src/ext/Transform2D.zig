@@ -1,16 +1,22 @@
 //! A component that tracks the position and orientation of an entity in 2D. Hierarchical
 //! relationships formed by the `Node` component are respected if present.
 //!
-//! See `syncAllImmediate` and `Exec` for integration into your game.
+//! You can synchronize a transform's `world_from_model` field, and the `world_from_model` fields of
+//! all its relative children by calling `sync`. This is necessary when modifying the transform, or
+//! changing the hierarchy by adding or removing a transform.
 //!
-//! You're encouraged to access the state via the provided getters instead of reading/writing the
-//! fields directly.
+//! To alleviate this burden, a number of setters are provided that call `sync` for you, and command
+//! buffer integration is provided for automatically calling sync when transforms are added and
+//! removed.
+//!
+//! For more information on command buffer integration, see `exec`.
 //!
 //! If you need features not provided by this implementation, for example a third dimension, you're
 //! encouraged to use this as a reference for your own transform component.
 
 const std = @import("std");
 const zcs = @import("../root.zig");
+const tracy = @import("tracy");
 
 const math = std.math;
 const assert = std.debug.assert;
@@ -26,94 +32,58 @@ const Vec2 = zcs.ext.geom.Vec2;
 const Rotor2 = zcs.ext.geom.Rotor2;
 const Mat2x3 = zcs.ext.geom.Mat2x3;
 
+const Zone = tracy.Zone;
+
 const Transform2D = @This();
 
-/// For internal use. The cached local position.
-cached_local_pos: Vec2,
-/// For internal use. The cached local orientation.
-cached_local_orientation: Rotor2,
-/// For internal use. The cached world from model matrix.
-cached_world_from_model: Mat2x3,
+/// The transform's local position.
+pos: Vec2 = .zero,
+/// The transform's local orientation.
+rot: Rotor2 = .identity,
+/// The transform's world from model matrix.
+world_from_model: Mat2x3 = .identity,
 /// Whether or not this transform's space is relative to its parent.
-relative: bool,
-/// For internal use. The cache status.
-cache: enum {
-    /// This transform's cache is clean.
-    clean,
-    /// This transform's cache is dirty.
-    dirty,
-    /// This transform's cache is dirty, and has been visited by the dirty subtree iterator.
-    dirty_visited,
-},
+relative: bool = true,
 
-/// Options for `initLocal`.
-pub const InitLocalOptions = struct {
-    /// The initial position in local space.
-    pos: Vec2 = .zero,
-    /// The initial orientation in local space.
-    orientation: Rotor2 = .identity,
-    /// Whether or not this transform's space is relative to its parent.
-    relative: bool = true,
-};
-
-/// Initialize a transform with the given local position and orientation.
-pub fn initLocal(options: InitLocalOptions) @This() {
-    return .{
-        .cached_local_pos = options.pos,
-        .cached_local_orientation = options.orientation,
-        .cached_world_from_model = undefined,
-        .relative = options.relative,
-        .cache = .dirty,
-    };
+/// Move the transform in local space by `delta` and then calls `sync`.
+pub fn move(self: *@This(), es: *const Entities, delta: Vec2) void {
+    self.pos.add(delta);
+    self.sync(es);
 }
 
-/// Move the transform in local space by `delta`.
-pub fn move(self: *@This(), es: *const Entities, cb: *CmdBuf, delta: Vec2) void {
-    self.cached_local_pos.add(delta);
-    self.markDirty(es, cb);
+/// Set the local position to `pos` and then calls `sync`.
+pub fn setPos(self: *@This(), es: *const Entities, pos: Vec2) void {
+    self.pos = pos;
+    self.sync(es);
 }
 
-/// Set the local position to `pos`.
-pub fn setLocalPos(self: *@This(), es: *const Entities, cb: *CmdBuf, pos: Vec2) void {
-    self.cached_local_pos = pos;
-    self.markDirty(es, cb);
+/// Rotates the local space and then calls `sync`.
+pub fn rotate(self: *@This(), es: *const Entities, rotation: Rotor2) void {
+    self.rot.mul(rotation);
+    self.sync(es);
 }
 
-/// Returns the local position.
-pub inline fn getLocalPos(self: @This()) Vec2 {
-    return self.cached_local_pos;
+/// Sets the local orientation to `rot` and then calls `sync`.
+pub fn setRot(self: *@This(), es: *const Entities, rot: Rotor2) void {
+    self.rot = rot;
+    self.sync(es);
 }
 
-/// Returns the world space position calculated during the last call to `syncAllImmediate`.
-pub inline fn getPos(self: @This()) Vec2 {
-    return self.cached_world_from_model.getTranslation();
+/// Returns the world space position.
+pub inline fn getWorldPos(self: @This()) Vec2 {
+    return self.world_from_model.getTranslation();
 }
 
-/// Rotates the local space.
-pub fn rotate(self: *@This(), es: *const Entities, cb: *CmdBuf, rotation: Rotor2) void {
-    self.cached_local_orientation.mul(rotation);
-    self.markDirty(es, cb);
-}
-
-/// Sets the local orientation.
-pub fn setLocalOrientation(
-    self: *@This(),
-    es: *const Entities,
-    cb: *CmdBuf,
-    orientation: Rotor2,
-) void {
-    self.cached_local_orientation = orientation;
-    self.markDirty(es, cb);
-}
-
-/// Returns the local orientation in radians.
-pub inline fn getLocalOrientation(self: @This()) Rotor2 {
-    return self.cached_local_orientation;
-}
-
-/// Returns the world from model matrix.
-pub inline fn getWorldFromModel(self: @This()) Mat2x3 {
-    return self.cached_world_from_model;
+/// Updates the `world_from_model` matrix on this transform, and all of its transitive relative
+/// children.
+pub fn sync(self: *@This(), es: *const Entities) void {
+    var transforms = self.preOrderIterator(es);
+    while (transforms.next(es)) |transform| {
+        const translation: Mat2x3 = .translation(transform.pos);
+        const rotation: Mat2x3 = .rotation(transform.rot);
+        const parent_world_from_model = transform.getRelativeWorldFromModel(es);
+        transform.world_from_model = rotation.applied(translation).applied(parent_world_from_model);
+    }
 }
 
 /// Returns the parent's world form model matrix, or identity if not relative.
@@ -123,243 +93,55 @@ pub inline fn getRelativeWorldFromModel(self: *const @This(), es: *const Entitie
     const node = entity.get(es, Node) orelse return .identity;
     const parent = node.parent.unwrap() orelse return .identity;
     const parent_transform = parent.get(es, Transform2D) orelse return .identity;
-    return parent_transform.getWorldFromModel();
+    return parent_transform.world_from_model;
 }
 
 /// Returns the forward direction of this transform.
-pub fn getForward(self: @This()) Vec2 {
-    return self.cached_world_from_model.timesDir(.y_pos);
+pub fn getForward(self: *const @This()) Vec2 {
+    return self.world_from_model.timesDir(.y_pos);
 }
 
-/// Returns an iterator over the roots of the dirty subtrees. This will flip the root cache of each
-/// subtree from `.dirty` to `.dirty_subtreee` to prevent the results from overlapping, this means
-/// that you can use this method to synchronize subtrees on separate threads if desired.
-pub fn dirtySubtreeIterator(es: *Entities) DirtySubtreeIterator {
+/// Returns a pre-order iterator over the subtree of relative transforms starting at `self`. This
+/// will visit parents before children, and it will include `self`.
+pub fn preOrderIterator(self: *@This(), es: *const Entities) PreOrderIterator {
+    const e: Entity = .from(es, self);
     return .{
-        .events = es.iterator(DirtySubtreeIterator.EventView),
+        .parent = self,
+        .children = if (e.get(es, Node)) |node| node.preOrderIterator(es) else .empty,
+        .pointer_lock = es.pointer_generation.lock(),
     };
 }
 
-/// An iterator over the roots of the dirty subtrees.
-pub const DirtySubtreeIterator = struct {
-    const EventView = struct { dirty: *const Dirty };
-    events: Entities.Iterator(EventView),
+/// A pre-order iterator over relative transforms.
+pub const PreOrderIterator = struct {
+    parent: ?*Transform2D,
+    children: Node.PreOrderIterator,
+    pointer_lock: PointerLock,
 
     /// Returns the next transform.
-    pub fn next(self: *@This(), es: *const Entities) ?Subtree {
-        // Iterate over the dirty events
-        ev: while (self.events.next(es)) |event| {
-            if (event.dirty.entity.view(es, struct {
-                transform: *Transform2D,
-                node: ?*const Node,
-            })) |vw| {
-                // If we've already visited this transform skip it. The list of dirty events is not
-                // supposed to have duplicates, but since we always traverse up to the root of the
-                // dirty subtree we may have already encountered this transform.
-                if (vw.transform.cache == .dirty_visited) continue :ev;
+    pub fn next(self: *@This(), es: *const Entities) ?*Transform2D {
+        self.pointer_lock.check(es.pointer_generation);
 
-                // Create a subtree at this node and mark it as visited
-                var root: Subtree = .{
-                    .node = vw.node,
-                    .transform = vw.transform,
-                    .pointer_lock = es.pointer_generation.lock(),
-                };
-                assert(vw.transform.cache == .dirty);
-                vw.transform.cache = .dirty_visited;
+        if (self.parent) |parent| {
+            self.parent = null;
+            return parent;
+        }
 
-                // Move to the topmost dirty node in this transform subtree so that we don't process
-                // the same transforms multiple times
-                if (root.node) |event_node| {
-                    if (vw.transform.relative) {
-                        var ancestors = event_node.ancestorIterator();
-                        while (ancestors.next(es)) |curr| {
-                            // Get the transform, or early out if there is none since we don't
-                            // propagate through non transform nodes
-                            const transform = curr.get(es, Transform2D) orelse break;
-
-                            // Check the cache state
-                            switch (transform.cache) {
-                                // If the transform is dirty, set it as the new root
-                                .dirty => {
-                                    root = .{
-                                        .transform = transform,
-                                        .node = curr,
-                                        .pointer_lock = es.pointer_generation.lock(),
-                                    };
-                                    root.transform.cache = .dirty_visited;
-                                },
-                                // If it's clean ignore it
-                                .clean => {},
-                                // We've already visited this subtree, move onto the next event
-                                .dirty_visited => continue :ev,
-                            }
-
-                            // If this transform isn't relative to its parent, stop searching
-                            // parents
-                            if (!transform.relative) break;
-                        }
-                    }
+        while (self.children.next(es)) |node| {
+            // If the next child has a transform and that transform is relative to its parent,
+            // return it.
+            if (node.get(es, Transform2D)) |transform| {
+                if (transform.relative) {
+                    return transform;
                 }
-
-                // Return the root of the dirty subtree
-                return root;
             }
+            // Otherwise, skip this subtree.
+            self.children.skipSubtree(es, node);
         }
 
         return null;
     }
 };
-
-/// A transform subtree, only follows relative transforms. See `DirtySubtreeIterator`.
-pub const Subtree = struct {
-    transform: *Transform2D,
-    node: ?*const Node,
-    pointer_lock: PointerLock,
-
-    /// Returns a post order iterator over the subtree. This will visit parents before children.
-    pub fn preOrderIterator(self: @This(), es: *const Entities) Iterator {
-        self.pointer_lock.check(es.pointer_generation);
-        return .{
-            .parent = self.transform,
-            .children = if (self.node) |node| node.preOrderIterator(es) else .empty,
-            .pointer_lock = self.pointer_lock,
-        };
-    }
-
-    /// A post order iterator over the subtree. Skips subtrees of this subtree whose roots do
-    /// not have transforms.
-    pub const Iterator = struct {
-        parent: ?*Transform2D,
-        children: Node.PreOrderIterator,
-        pointer_lock: PointerLock,
-
-        /// Returns the next transform.
-        pub fn next(self: *@This(), es: *const Entities) ?*Transform2D {
-            self.pointer_lock.check(es.pointer_generation);
-
-            if (self.parent) |parent| {
-                self.parent = null;
-                return parent;
-            }
-
-            while (self.children.next(es)) |node| {
-                // If the next child has a transform and that transform is relative to its parent,
-                // return it.
-                if (node.get(es, Transform2D)) |transform| {
-                    if (transform.relative) {
-                        return transform;
-                    }
-                }
-                // Otherwise, skip this subtree.
-                self.children.skipSubtree(es, node);
-            }
-
-            return null;
-        }
-    };
-};
-
-/// Immediately synchronize the world space position and orientation of all dirty entities and their
-/// children. Recycles all dirty events. For multithreaded sync, see `syncAllThreadPool`.
-///
-/// Invalidates pointers.
-pub fn syncAllImmediate(es: *Entities) void {
-    // Iterate over the subtrees
-    var subtrees = dirtySubtreeIterator(es);
-    while (subtrees.next(es)) |subtree| {
-        // Synchronize the subtree
-        var transforms = subtree.preOrderIterator(es);
-        while (transforms.next(es)) |transform| {
-            transform.syncImmediate(transform.getRelativeWorldFromModel(es));
-        }
-    }
-
-    // Check assertions and clean up
-    finishSyncAllImmediate(es);
-}
-
-/// Options for `syncAllThreadPool`.
-pub const SyncAllThreadPoolOptions = struct {
-    /// The max number of subtrees per batch.
-    batch_size: usize,
-};
-
-/// Spawns tasks to sync the dirty transforms in parallel on the given thread pool. Call
-/// `finishSyncAllImmediate` after waiting on the wait group.
-///
-/// May be used as a reference for implementing your own multithreaded sync if you're
-/// not using the standard library thread pool.
-///
-/// Does not invalidate pointers, but is not thread safe (as in may not be called on multiple
-/// threads simultaneously, the work submitted to the thread pools is of course thread safe.)
-pub fn syncAllThreadPool(
-    es: *Entities,
-    tp: *std.Thread.Pool,
-    wg: *std.Thread.WaitGroup,
-    comptime options: SyncAllThreadPoolOptions,
-) void {
-    const pointer_lock = es.pointer_generation.lock();
-    defer pointer_lock.check(es.pointer_generation);
-
-    // Divide the dirty subtrees into batches, and spawn a task for each batch
-    var batch: std.BoundedArray(Subtree, options.batch_size) = .{};
-    var subtrees = dirtySubtreeIterator(es);
-    var done = false;
-    while (!done) {
-        // Fill the batch
-        for (0..options.batch_size) |_| {
-            batch.appendAssumeCapacity(subtrees.next(es) orelse {
-                done = true;
-                break;
-            });
-        }
-
-        // Spawn a task to sync a copy of the batch, then clear the batch for the next iteration
-        tp.spawnWg(wg, syncBatchImmediate, .{ es, batch });
-        batch.clear();
-    }
-}
-
-/// Immediately sync a batch, used by `syncAllThreadPool`.
-///
-/// Does not invalidate pointers. Is thread safe IFF the given subtree is not disturbed by other
-/// threads.
-fn syncBatchImmediate(es: *Entities, batch: anytype) void {
-    const pointer_lock = es.pointer_generation.lock();
-    defer pointer_lock.check(es.pointer_generation);
-
-    for (batch.constSlice()) |subtree| {
-        var transforms = subtree.preOrderIterator(es);
-        while (transforms.next(es)) |transform| {
-            transform.syncImmediate(transform.getRelativeWorldFromModel(es));
-        }
-    }
-}
-
-/// If implementing a custom sync, call this after it completes to clean up dirty events and check
-/// that all dirty entities were synced.
-///
-/// Invalidates pointers.
-pub fn finishSyncAllImmediate(es: *Entities) void {
-    var it = es.iterator(DirtySubtreeIterator.EventView);
-    while (it.next(es)) |vw| {
-        if (vw.dirty.entity.get(es, Transform2D)) |transform| {
-            transform.cache = .clean;
-        }
-    }
-
-    // Recycle all dirty events
-    Dirty.recycleAllImmediate(es);
-}
-
-/// Immediately synchronize this entity using the given `world_from_model` matrix.
-///
-/// This does not invalidate pointers, but it is not thread safe.
-pub fn syncImmediate(self: *@This(), parent_world_from_model: Mat2x3) void {
-    const translation: Mat2x3 = .translation(self.cached_local_pos);
-    const rotation: Mat2x3 = .rotation(self.cached_local_orientation);
-    self.cached_world_from_model = rotation.applied(translation).applied(parent_world_from_model);
-}
 
 /// `Exec` provides helpers for processing hierarchy changes via the command buffer.
 ///
@@ -368,7 +150,7 @@ pub fn syncImmediate(self: *@This(), parent_world_from_model: Mat2x3) void {
 /// use them as reference for implementing your own command buffer iterator.
 pub const exec = struct {
     /// Similar to `Node.exec.immediate`, but marks transforms as dirty as needed.
-    pub fn immediate(es: *Entities, cb: CmdBuf) void {
+    pub fn immediate(es: *Entities, cb: *const CmdBuf) void {
         immediateOrErr(es, cb) catch |err|
             @panic(@errorName(err));
     }
@@ -377,7 +159,7 @@ pub const exec = struct {
     /// commands are left partially evaluated.
     pub fn immediateOrErr(
         es: *Entities,
-        cb: CmdBuf,
+        cb: *const CmdBuf,
     ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
         es.pointer_generation.increment();
 
@@ -417,21 +199,20 @@ pub const exec = struct {
         switch (op) {
             .add => |comp| if (comp.id == typeId(Transform2D)) {
                 if (batch.entity.get(es, Transform2D)) |transform| {
-                    transform.cache = .clean;
-                    transform.markDirtyImmediate(es);
+                    transform.sync(es);
                 }
             },
             .remove => |id| {
                 if (id == typeId(Node)) {
                     if (batch.entity.get(es, Transform2D)) |transform| {
-                        transform.markDirtyImmediate(es);
+                        transform.sync(es);
                     }
                 } else if (id == typeId(Transform2D)) {
                     if (batch.entity.get(es, Node)) |node| {
                         var children = node.childIterator();
                         while (children.next(es)) |child| {
                             if (child.get(es, Transform2D)) |child_transform| {
-                                child_transform.markDirtyImmediate(es);
+                                child_transform.sync(es);
                             }
                         }
                     }
@@ -441,6 +222,7 @@ pub const exec = struct {
         }
     }
 
+    /// Call this to process an extension command.
     pub inline fn extImmediateOrErr(
         es: *Entities,
         payload: Any,
@@ -448,52 +230,8 @@ pub const exec = struct {
         try Node.exec.extImmediateOrErr(es, payload);
         if (payload.as(Node.SetParent)) |set_parent| {
             if (set_parent.child.get(es, Transform2D)) |transform| {
-                transform.markDirtyImmediate(es);
+                transform.sync(es);
             }
         }
-    }
-};
-
-/// Emits an event marking the transform as dirty if it is not already marked as dirty. Called
-/// automatically when the position or orientation are changed via the setters, or the node's parent
-/// is changed.
-///
-//// Must be called manually if modifying the transform fields directly.
-pub fn markDirty(self: *@This(), es: *const Entities, cb: *CmdBuf) void {
-    assert(self.cache != .dirty_visited);
-    if (self.cache == .dirty) return;
-
-    self.cache = .dirty;
-    const e: Entity = .reserve(cb);
-    e.add(cb, Dirty, .{ .entity = .from(es, self) });
-}
-
-/// Similar to `markDirty`, but immediately emits the event instead of adding it to a command
-/// buffer.
-///
-/// Invalidates pointers.
-pub fn markDirtyImmediate(self: *@This(), es: *Entities) void {
-    assert(self.cache != .dirty_visited);
-    if (self.cache == .dirty) return;
-
-    self.cache = .dirty;
-    const e: Entity = .reserveImmediate(es);
-    assert(e.changeArchImmediate(
-        es,
-        struct { Dirty },
-        .{ .add = .{
-            .{ .entity = .from(es, self) },
-        } },
-    ));
-}
-
-/// The dirty event is emitted for transforms that have been moved or re-parented.
-pub const Dirty = struct {
-    /// The dirty entity.
-    entity: Entity,
-
-    /// Recycles all dirty events, allowing their entities to be reused.
-    pub inline fn recycleAllImmediate(es: *Entities) void {
-        es.recycleArchImmediate(.initOne(.registerImmediate(typeId(Dirty))));
     }
 };
