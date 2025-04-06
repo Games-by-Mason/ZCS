@@ -102,116 +102,6 @@ pub const Entity = packed struct {
 
     key: HandleTab.Key,
 
-    /// Returns the associated component, or `null` if none exists.
-    pub fn getEntityMixin(self: anytype, es: *const Entities) @This() {
-        return .fromComp(es, self);
-    }
-
-    /// Returns the associated component, or `null` if none exists.
-    pub fn getMixin(self: anytype, es: *const Entities, T: type) ?*T {
-        comptime assert(T != @TypeOf(self.*)); // Redundant
-        return compFromComp(es, self, T);
-    }
-
-    /// Given a pointer to a non zero sized component, returns the corresponding entity.
-    pub fn fromComp(es: *const Entities, from_comp: anytype) @This() {
-        const T = @typeInfo(@TypeOf(from_comp)).pointer.child;
-
-        // We could technically pack the entity into the pointer value since both are typically 64
-        // bits. However, this would break support for getting a slice of zero sized components from
-        // a chunk since all would have the same address.
-        //
-        // I've chosen to support the slice use case and not this one as it's simpler and seems
-        // slightly more likely to come up in generic code. I don't expect either to come up
-        // particularly often, this decision can be reversed in the future if one or the other turns
-        // out to be desirable. If we do this, make sure to have an assertion/test that valid
-        // entities are never fully zero since non optional pointers can't be zero unless explicitly
-        // annotated as such.
-        comptime assert(@sizeOf(T) != 0);
-
-        return fromCompAny(es, .init(T, from_comp));
-    }
-
-    /// Similar to `fromComp`, but does not require compile time types. Assumes a valid pointer to a
-    /// non zero sized component.
-    pub fn fromCompAny(es: *const Entities, from_comp: Any) @This() {
-        // Get the entity index from the chunk
-        const loc = getLoc(es, from_comp);
-        const indices = loc.chunk.view(es, struct { indices: []const Entity.Index }).?.indices;
-        const entity_index = indices[@intFromEnum(loc.index_in_chunk)];
-
-        // Get the entity handle
-        assert(@intFromEnum(entity_index) < es.handle_tab.next_index);
-        const entity = entity_index.toEntity(es);
-
-        // Assert that the entity has been committed and return it
-        assert(entity.committed(es));
-        return entity;
-    }
-
-    /// Given a pointer to a non zero sized component `from_componenet`, returns the corresponding
-    /// component `GetComp` or `null` if there isn't one attached to the same entity.
-    pub fn compFromComp(es: *const Entities, from_comp: anytype, GetComp: type) ?*GetComp {
-        const T = @typeInfo(@TypeOf(from_comp)).pointer.child;
-        // See `from` for why this isn't allowed.
-        comptime assert(@sizeOf(T) != 0);
-        const slice = compFromCompAny(es, .init(T, from_comp), typeId(GetComp));
-        return @ptrCast(@alignCast(slice));
-    }
-
-    /// Similar to `compFromComp`, but does not require compile time types. Assumes a valid pointer
-    /// to a non zero sized component.
-    pub fn compFromCompAny(es: *const Entities, from_comp: Any, get_comp_id: TypeId) ?[]u8 {
-        // Check assertions
-        if (std.debug.runtime_safety) {
-            _ = Entity.fromCompAny(es, from_comp);
-        }
-
-        // Get the component
-        const flag = get_comp_id.comp_flag orelse return null;
-        const loc = getLoc(es, from_comp);
-        // https://github.com/Games-by-Mason/ZCS/issues/24
-        const comp_buf_offset = loc.chunk.header().comp_buf_offsets.values[@intFromEnum(flag)];
-        if (comp_buf_offset == 0) return null;
-        const unsized: [*]u8 = @ptrFromInt(@intFromPtr(loc.chunk) +
-            comp_buf_offset +
-            get_comp_id.size * @intFromEnum(loc.index_in_chunk));
-        return unsized[0..get_comp_id.size];
-    }
-
-    /// Looks up the location of an entity from a component.
-    fn getLoc(es: *const Entities, from_comp: Any) struct {
-        chunk: *Chunk,
-        index_in_chunk: Location.IndexInChunk,
-    } {
-        // See `from` for why this isn't allowed
-        assert(from_comp.id.size != 0);
-
-        const pool = &es.chunk_pool;
-        const flag = from_comp.id.comp_flag.?;
-
-        // Make sure this component is actually in the chunk pool
-        assert(@intFromPtr(from_comp.ptr) >= @intFromPtr(pool.buf.ptr));
-        assert(@intFromPtr(from_comp.ptr) <= @intFromPtr(&pool.buf[pool.buf.len - 1]));
-
-        // Get the corresponding chunk by rounding down to the chunk alignment. This works as chunks
-        // are aligned to their size, in part to support this operation.
-        const chunk: *Chunk = @ptrFromInt(pool.size_align.backward(@intFromPtr(from_comp.ptr)));
-
-        // Calculate the index in this chunk that this component is at
-        assert(chunk.header().arch(&es.chunk_lists).contains(flag));
-        const comp_offset = @intFromPtr(from_comp.ptr) - @intFromPtr(chunk);
-        assert(comp_offset != 0); // Zero when missing
-        // https://github.com/Games-by-Mason/ZCS/issues/24
-        const comp_buf_offset = chunk.header().comp_buf_offsets.values[@intFromEnum(flag)];
-        const index_in_chunk = @divExact(comp_offset - comp_buf_offset, from_comp.id.size);
-
-        return .{
-            .chunk = chunk,
-            .index_in_chunk = @enumFromInt(index_in_chunk),
-        };
-    }
-
     /// Pops a reserved entity.
     ///
     /// A reserved entity is given a persistent key, but no storage. As such, it will behave like
@@ -329,7 +219,7 @@ pub const Entity = packed struct {
     }
 
     /// Retrieves the given component type. Returns null if the entity does not have this component
-    /// or has been destroyed.
+    /// or has been destroyed. See also `Entities.getComp`.
     pub fn get(self: @This(), es: *const Entities, T: type) ?*T {
         // We could use `compsFromId` here, but we a measurable performance improvement in
         // benchmarks by calculating the result directly

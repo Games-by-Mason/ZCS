@@ -45,9 +45,6 @@ world_from_model: Mat2x3 = .identity,
 /// Whether or not this transform's space is relative to its parent.
 relative: bool = true,
 
-pub const get = Entity.getMixin;
-pub const getEntity = Entity.getEntityMixin;
-
 /// Move the transform in local space by `delta` and then calls `sync`.
 pub fn move(self: *@This(), es: *const Entities, delta: Vec2) void {
     self.pos.add(delta);
@@ -92,7 +89,7 @@ pub fn sync(self: *@This(), es: *const Entities) void {
 /// Returns the parent's world form model matrix, or identity if not relative.
 pub inline fn getRelativeWorldFromModel(self: *const @This(), es: *const Entities) Mat2x3 {
     if (!self.relative) return .identity;
-    const node = self.get(es, Node) orelse return .identity;
+    const node = es.getComp(self, Node) orelse return .identity;
     const parent = node.parent.unwrap() orelse return .identity;
     const parent_transform = parent.get(es, Transform2D) orelse return .identity;
     return parent_transform.world_from_model;
@@ -108,7 +105,7 @@ pub fn getForward(self: *const @This()) Vec2 {
 pub fn preOrderIterator(self: *@This(), es: *const Entities) PreOrderIterator {
     return .{
         .parent = self,
-        .children = if (self.get(es, Node)) |node| node.preOrderIterator(es) else .empty,
+        .children = if (es.getComp(self, Node)) |node| node.preOrderIterator(es) else .empty,
         .pointer_lock = es.pointer_generation.lock(),
     };
 }
@@ -131,7 +128,7 @@ pub const PreOrderIterator = struct {
         while (self.children.next(es)) |node| {
             // If the next child has a transform and that transform is relative to its parent,
             // return it.
-            if (node.get(es, Transform2D)) |transform| {
+            if (es.getComp(node, Transform2D)) |transform| {
                 if (transform.relative) {
                     return transform;
                 }
@@ -212,7 +209,7 @@ pub const exec = struct {
                     if (batch.entity.get(es, Node)) |node| {
                         var children = node.childIterator();
                         while (children.next(es)) |child| {
-                            if (child.get(es, Transform2D)) |child_transform| {
+                            if (es.getComp(child, Transform2D)) |child_transform| {
                                 child_transform.sync(es);
                             }
                         }

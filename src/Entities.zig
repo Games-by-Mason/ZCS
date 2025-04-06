@@ -19,6 +19,7 @@ const Any = zcs.Any;
 const CompFlag = zcs.CompFlag;
 const Entity = zcs.Entity;
 const PointerLock = zcs.PointerLock;
+const TypeId = zcs.TypeId;
 const ChunkList = zcs.storage.ChunkList;
 const ChunkPool = zcs.storage.ChunkPool;
 const Chunk = zcs.storage.Chunk;
@@ -115,6 +116,105 @@ pub fn count(self: *const @This()) usize {
 /// Returns the number of reserved but not committed entities that currently exist.
 pub fn reserved(self: *const @This()) usize {
     return self.reserved_entities;
+}
+
+/// Given a pointer to a non zero sized component, returns the corresponding entity.
+pub fn getEntity(es: *const Entities, from_comp: anytype) Entity {
+    const T = @typeInfo(@TypeOf(from_comp)).pointer.child;
+
+    // We could technically pack the entity into the pointer value since both are typically 64
+    // bits. However, this would break support for getting a slice of zero sized components from
+    // a chunk since all would have the same address.
+    //
+    // I've chosen to support the slice use case and not this one as it's simpler and seems
+    // slightly more likely to come up in generic code. I don't expect either to come up
+    // particularly often, this decision can be reversed in the future if one or the other turns
+    // out to be desirable. If we do this, make sure to have an assertion/test that valid
+    // entities are never fully zero since non optional pointers can't be zero unless explicitly
+    // annotated as such.
+    comptime assert(@sizeOf(T) != 0);
+
+    return getEntityFromAny(es, .init(T, from_comp));
+}
+
+/// Similar to `getEntity`, but does not require compile time types. Assumes a valid pointer to a
+/// non zero sized component.
+pub fn getEntityFromAny(es: *const Entities, from_comp: Any) Entity {
+    // Get the entity index from the chunk
+    const loc = getLoc(es, from_comp);
+    const indices = loc.chunk.view(es, struct { indices: []const Entity.Index }).?.indices;
+    const entity_index = indices[@intFromEnum(loc.index_in_chunk)];
+
+    // Get the entity handle
+    assert(@intFromEnum(entity_index) < es.handle_tab.next_index);
+    const entity = entity_index.toEntity(es);
+
+    // Assert that the entity has been committed and return it
+    assert(entity.committed(es));
+    return entity;
+}
+
+/// Given a valid pointer to a non zero sized component `from`, returns the corresponding
+/// component `Result`, or `null` if there isn't one attached to the same entity. See also
+/// `Entity.get`.
+pub fn getComp(es: *const Entities, from: anytype, Result: type) ?*Result {
+    const T = @typeInfo(@TypeOf(from)).pointer.child;
+    // See `from` for why this isn't allowed.
+    comptime assert(@sizeOf(T) != 0);
+    const slice = getCompFromAny(es, .init(T, from), typeId(Result));
+    return @ptrCast(@alignCast(slice));
+}
+
+/// Similar to `getComp`, but does not require compile time types.
+pub fn getCompFromAny(self: *const Entities, from_comp: Any, get_comp_id: TypeId) ?[]u8 {
+    // Check assertions
+    if (std.debug.runtime_safety) {
+        _ = self.getEntityFromAny(from_comp);
+    }
+
+    // Get the component
+    const flag = get_comp_id.comp_flag orelse return null;
+    const loc = self.getLoc(from_comp);
+    // https://github.com/Games-by-Mason/ZCS/issues/24
+    const comp_buf_offset = loc.chunk.header().comp_buf_offsets.values[@intFromEnum(flag)];
+    if (comp_buf_offset == 0) return null;
+    const unsized: [*]u8 = @ptrFromInt(@intFromPtr(loc.chunk) +
+        comp_buf_offset +
+        get_comp_id.size * @intFromEnum(loc.index_in_chunk));
+    return unsized[0..get_comp_id.size];
+}
+
+/// Looks up the location of an entity from a component.
+fn getLoc(self: *const Entities, from_comp: Any) struct {
+    chunk: *Chunk,
+    index_in_chunk: Entity.Location.IndexInChunk,
+} {
+    // See `from` for why this isn't allowed
+    assert(from_comp.id.size != 0);
+
+    const pool = &self.chunk_pool;
+    const flag = from_comp.id.comp_flag.?;
+
+    // Make sure this component is actually in the chunk pool
+    assert(@intFromPtr(from_comp.ptr) >= @intFromPtr(pool.buf.ptr));
+    assert(@intFromPtr(from_comp.ptr) <= @intFromPtr(&pool.buf[pool.buf.len - 1]));
+
+    // Get the corresponding chunk by rounding down to the chunk alignment. This works as chunks
+    // are aligned to their size, in part to support this operation.
+    const chunk: *Chunk = @ptrFromInt(pool.size_align.backward(@intFromPtr(from_comp.ptr)));
+
+    // Calculate the index in this chunk that this component is at
+    assert(chunk.header().arch(&self.chunk_lists).contains(flag));
+    const comp_offset = @intFromPtr(from_comp.ptr) - @intFromPtr(chunk);
+    assert(comp_offset != 0); // Zero when missing
+    // https://github.com/Games-by-Mason/ZCS/issues/24
+    const comp_buf_offset = chunk.header().comp_buf_offsets.values[@intFromEnum(flag)];
+    const index_in_chunk = @divExact(comp_offset - comp_buf_offset, from_comp.id.size);
+
+    return .{
+        .chunk = chunk,
+        .index_in_chunk = @enumFromInt(index_in_chunk),
+    };
 }
 
 /// Calls `updateEntity` on each compatible entity in an implementation defined order.

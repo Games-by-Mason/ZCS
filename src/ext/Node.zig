@@ -23,9 +23,6 @@ first_child: Entity.Optional = .none,
 prev_sib: Entity.Optional = .none,
 next_sib: Entity.Optional = .none,
 
-pub const get = Entity.getMixin;
-pub const getEntity = Entity.getEntityMixin;
-
 /// Returns the parent node, or null if none exists.
 pub fn getParent(self: *const @This(), es: *const Entities) ?*Node {
     const parent = self.parent.unwrap() orelse return null;
@@ -78,9 +75,9 @@ pub fn setParentImmediate(self: *Node, es: *Entities, parent_opt: ?*Node) void {
 
     // Set the new parent
     if (parent_opt) |parent| {
-        self.parent = parent.getEntity(es).toOptional();
+        self.parent = es.getEntity(parent).toOptional();
         self.next_sib = parent.first_child;
-        const child_entity = self.getEntity(es);
+        const child_entity = es.getEntity(self);
         if (parent.first_child.unwrap()) |first_child| {
             first_child.get(es, Node).?.prev_sib = child_entity.toOptional();
         }
@@ -94,7 +91,7 @@ pub fn setParentImmediate(self: *Node, es: *Entities, parent_opt: ?*Node) void {
 /// Invalidates pointers.
 pub fn destroyImmediate(unstable_ptr: *@This(), es: *Entities) void {
     // Cache the entity handle since we're about to invalidate pointers
-    const e = unstable_ptr.getEntity(es);
+    const e = es.getEntity(unstable_ptr);
 
     // Destroy the children and unparent this node
     unstable_ptr.destroyChildrenAndUnparentImmediate(es);
@@ -125,7 +122,7 @@ pub fn destroyChildrenAndUnparentImmediate(unstable_ptr: *@This(), es: *Entities
     // Iterate over the children and destroy them, this will invalidate `unstable_ptr`
     es.pointer_generation.increment();
     while (children.next(es)) |curr| {
-        assert(curr.getEntity(es).destroyImmediate(es));
+        assert(es.getEntity(curr).destroyImmediate(es));
     }
 }
 
@@ -180,7 +177,7 @@ const AncestorIterator = struct {
 /// children.
 pub fn preOrderIterator(self: *const @This(), es: *const Entities) PreOrderIterator {
     return .{
-        .start = self.getEntity(es).toOptional(),
+        .start = es.getEntity(self).toOptional(),
         .curr = self.first_child,
     };
 }
@@ -249,7 +246,7 @@ pub fn postOrderIterator(self: *const @This(), es: *const Entities) PostOrderIte
             break :b curr.toOptional();
         },
         // And we end when we reach the given entity
-        .end = self.getEntity(es),
+        .end = es.getEntity(self),
     };
 }
 

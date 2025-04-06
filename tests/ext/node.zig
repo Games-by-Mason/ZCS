@@ -56,7 +56,7 @@ test "immediate" {
     try expect(descendant.changeArchImmediate(&es, struct { Node }, .{ .add = .{Node{}} }));
 
     // Make sure this compiles
-    try expectEqual(empty.get(&es, Node).?.getEntity(&es).get(&es, Model), empty.get(&es, Model).?);
+    try expectEqual(es.getEntity(empty.get(&es, Node).?).get(&es, Model), empty.get(&es, Model).?);
 
     child_2.get(&es, Node).?.setParentImmediate(&es, parent.get(&es, Node).?);
     child_1.get(&es, Node).?.setParentImmediate(&es, parent.get(&es, Node).?);
@@ -76,8 +76,8 @@ test "immediate" {
     try expect(!child_1.get(&es, Node).?.isAncestorOf(&es, child_2.get(&es, Node).?));
 
     var children = parent.get(&es, Node).?.childIterator();
-    try expectEqualEntity(child_1, children.next(&es).?.getEntity(&es));
-    try expectEqualEntity(child_2, children.next(&es).?.getEntity(&es));
+    try expectEqualEntity(child_1, es.getEntity(children.next(&es).?));
+    try expectEqualEntity(child_2, es.getEntity(children.next(&es).?));
     try expectEqual(null, children.next(&es));
 
     parent.get(&es, Node).?.destroyImmediate(&es);
@@ -349,7 +349,7 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
             for (0..keys.len) |i| {
                 const expected = keys[keys.len - i - 1];
                 const child = children.next(&fz.es).?;
-                const child_entity = child.getEntity(&fz.es);
+                const child_entity = fz.es.getEntity(child);
                 try expectEqualEntity(expected, child_entity);
 
                 // Validate prev pointers to catch issues sooner
@@ -390,7 +390,7 @@ fn checkPostOrderInner(
         } else {
             try expectEqualEntity(
                 curr,
-                (iter.next(&fz.es) orelse return error.ExpectedNext).getEntity(&fz.es),
+                fz.es.getEntity(iter.next(&fz.es) orelse return error.ExpectedNext),
             );
         }
     } else {
@@ -417,7 +417,7 @@ fn checkPreOrderInner(
         const actual = iter.next(&fz.es);
         try expectEqualEntity(
             curr,
-            (actual orelse return error.ExpectedNext).getEntity(&fz.es),
+            fz.es.getEntity(actual orelse return error.ExpectedNext),
         );
     }
     if (o.entities.get(curr).?.node) |node| {

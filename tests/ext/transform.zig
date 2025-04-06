@@ -240,7 +240,7 @@ fn checkOracle(es: *const Entities) !void {
             if (vw.node) |node| {
                 var ancestors = node.ancestorIterator();
                 while (ancestors.next(es)) |ancestor| {
-                    const transform = ancestor.get(es, Transform) orelse break;
+                    const transform = es.getComp(ancestor, Transform) orelse break;
                     try path.append(gpa, transform);
                     if (!transform.relative) break;
                 }
