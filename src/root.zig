@@ -7,6 +7,8 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
+pub const tracy = @import("tracy");
+
 pub const Entities = @import("Entities.zig");
 pub const Entity = @import("entity.zig").Entity;
 pub const Any = @import("Any.zig");

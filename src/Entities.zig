@@ -229,9 +229,12 @@ fn getLoc(self: *const Entities, from_comp: Any) struct {
 /// isn't served well by `forEach`, you can fork it into your code base and modify it as needed.
 pub fn forEach(
     self: *@This(),
+    comptime dbg_name: ?[:0]const u8,
     updateEntity: anytype,
     ctx: view.params(@TypeOf(updateEntity))[0],
 ) void {
+    const zone = Zone.begin(.{ .src = @src(), .name = if (dbg_name) |name| name.ptr else null });
+    defer zone.end();
     const params = view.params(@TypeOf(updateEntity));
     const View = view.Tuple(params[1..]);
     var iter = self.iterator(View);
@@ -249,9 +252,12 @@ pub fn forEach(
 /// Invalidating pointers from the update function results in safety checked illegal behavior.
 pub fn forEachChunk(
     self: *@This(),
+    comptime dbg_name: ?[:0]const u8,
     updateChunk: anytype,
     ctx: view.params(@TypeOf(updateChunk))[0],
 ) void {
+    const zone = Zone.begin(.{ .src = @src(), .name = if (dbg_name) |name| name.ptr else null });
+    defer zone.end();
     const params = view.params(@TypeOf(updateChunk));
     const required_comps = view.comps(view.Tuple(params[1..]), .slice) orelse return;
     var chunks = self.chunkIterator(required_comps);

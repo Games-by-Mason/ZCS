@@ -317,21 +317,21 @@ pub fn checkIterators(self: *@This()) !void {
         // Per entity, no handle
         {
             var count: usize = 0;
-            self.es.forEach(countEntities, &count);
+            self.es.forEach(null, countEntities, &count);
             try expectEqual(self.committed.count(), count);
         }
 
         // Per chunk, with handles
         {
             defer self.found_buf.clearRetainingCapacity();
-            self.es.forEachChunk(countEntitiesChunkedWithHandles, self);
+            self.es.forEachChunk(null, countEntitiesChunkedWithHandles, self);
             try expectEqual(self.committed.count(), self.found_buf.count());
         }
 
         // Per entity, with handles
         {
             defer self.found_buf.clearRetainingCapacity();
-            self.es.forEach(countEntitiesWithHandle, self);
+            self.es.forEach(null, countEntitiesWithHandle, self);
             try expectEqual(self.committed.count(), self.found_buf.count());
         }
     }
@@ -341,28 +341,32 @@ pub fn checkIterators(self: *@This()) !void {
         // Per entity, no handle
         {
             defer self.found_buf.clearRetainingCapacity();
-            self.es.forEach(checkRigidBodies, self);
+            self.es.forEach("checkRigidBodies", checkRigidBodies, self);
             try expectEqual(self.expectedOfArch(.{ .rb = true }), self.found_buf.count());
         }
 
         // Per entity, with handle
         {
             defer self.found_buf.clearRetainingCapacity();
-            self.es.forEach(checkRigidBodiesWithHandle, self);
+            self.es.forEach("checkRigidBodiesWithHandle", checkRigidBodiesWithHandle, self);
             try expectEqual(self.expectedOfArch(.{ .rb = true }), self.found_buf.count());
         }
 
         // Per chunk, without handles
         {
             defer self.found_buf.clearRetainingCapacity();
-            self.es.forEachChunk(checkRigidBodiesChunked, self);
+            self.es.forEachChunk("checkRigidBodiesChunked", checkRigidBodiesChunked, self);
             try expectEqual(self.expectedOfArch(.{ .rb = true }), self.found_buf.count());
         }
 
         // Per chunk, with handles
         {
             defer self.found_buf.clearRetainingCapacity();
-            self.es.forEachChunk(checkRigidBodiesChunkedWithHandles, self);
+            self.es.forEachChunk(
+                "checkRigidBodiesChunkedWithHandles",
+                checkRigidBodiesChunkedWithHandles,
+                self,
+            );
             try expectEqual(self.expectedOfArch(.{ .rb = true }), self.found_buf.count());
         }
     }
@@ -370,7 +374,7 @@ pub fn checkIterators(self: *@This()) !void {
     // Models
     {
         defer self.found_buf.clearRetainingCapacity();
-        self.es.forEach(checkModelsWithHandle, self);
+        self.es.forEach("checkModelsWithHandle", checkModelsWithHandle, self);
         try expectEqual(self.expectedOfArch(.{ .model = true }), self.found_buf.count());
         try expectEqual(
             self.expectedOfArch(.{ .model = true }),
@@ -381,7 +385,7 @@ pub fn checkIterators(self: *@This()) !void {
     // Tags, with handle
     {
         defer self.found_buf.clearRetainingCapacity();
-        self.es.forEach(checkTagsWithHandle, self);
+        self.es.forEach("checkTagsWithHandle", checkTagsWithHandle, self);
         try expectEqual(self.expectedOfArch(.{ .tag = true }), self.found_buf.count());
         try expectEqual(
             self.expectedOfArch(.{ .tag = true }),
@@ -392,7 +396,7 @@ pub fn checkIterators(self: *@This()) !void {
     // All three, with handle
     {
         defer self.found_buf.clearRetainingCapacity();
-        self.es.forEach(checkAllWithHandle, self);
+        self.es.forEach("checkAllWithHandle", checkAllWithHandle, self);
         try expectEqual(
             self.expectedOfArch(.{ .rb = true, .model = true, .tag = true }),
             self.found_buf.count(),
@@ -402,7 +406,7 @@ pub fn checkIterators(self: *@This()) !void {
     // All optional
     {
         defer self.found_buf.clearRetainingCapacity();
-        self.es.forEach(checkAllOptionalWithHandle, self);
+        self.es.forEach("checkAllOptionalWithHandle", checkAllOptionalWithHandle, self);
         try expectEqual(self.committed.count(), self.found_buf.count());
     }
 
@@ -411,7 +415,7 @@ pub fn checkIterators(self: *@This()) !void {
         // Per entity, without handle
         {
             defer self.found_buf.clearRetainingCapacity();
-            self.es.forEach(checkSomeOptional, self);
+            self.es.forEach("checkSomeOptional", checkSomeOptional, self);
             try expectEqual(
                 self.expectedOfArch(.{ .rb = true, .model = true }),
                 self.found_buf.count(),
@@ -421,7 +425,7 @@ pub fn checkIterators(self: *@This()) !void {
         // Per entity, with handle
         {
             defer self.found_buf.clearRetainingCapacity();
-            self.es.forEach(checkSomeOptionalWithHandle, self);
+            self.es.forEach("checkSomeOptionalWithHandle", checkSomeOptionalWithHandle, self);
             try expectEqual(
                 self.expectedOfArch(.{ .rb = true, .tag = true }),
                 self.found_buf.count(),
@@ -431,7 +435,7 @@ pub fn checkIterators(self: *@This()) !void {
         // Per entity, without handles chunked
         {
             defer self.found_buf.clearRetainingCapacity();
-            self.es.forEachChunk(checkSomeOptionalChunked, self);
+            self.es.forEachChunk("checkSomeOptionalChunked", checkSomeOptionalChunked, self);
             try expectEqual(
                 self.expectedOfArch(.{ .rb = true, .model = true }),
                 self.found_buf.count(),
@@ -441,7 +445,11 @@ pub fn checkIterators(self: *@This()) !void {
         // Per entity, with handles chunked
         {
             defer self.found_buf.clearRetainingCapacity();
-            self.es.forEachChunk(checkSomeOptionalChunkedWithHandles, self);
+            self.es.forEachChunk(
+                "checkSomeOptionalChunkedWithHandles",
+                checkSomeOptionalChunkedWithHandles,
+                self,
+            );
             try expectEqual(
                 self.expectedOfArch(.{ .rb = true, .model = true }),
                 self.found_buf.count(),

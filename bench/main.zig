@@ -19,6 +19,9 @@ pub const std_options: std.Options = .{
 };
 
 pub const tracy_impl = @import("tracy_impl");
+pub const tracy_options: tracy.Options = .{
+    .default_callstack_depth = 8,
+};
 
 const small = false;
 const A = if (small) u2 else u64;
@@ -238,6 +241,14 @@ pub fn main() !void {
 
         {
             var total: u256 = 0;
+            es.forEach("sum", sum, .{ .total = &total });
+            std.debug.print("{}\n", .{total});
+            if (expected_total == null) expected_total = total;
+            if (expected_total != total) @panic("inconsistent result");
+        }
+
+        {
+            var total: u256 = 0;
             {
                 const iter_zone = Zone.begin(.{ .name = "iter.view", .src = @src() });
                 defer iter_zone.end();
@@ -402,4 +413,11 @@ pub fn main() !void {
             std.debug.print("mal ra: {}\n", .{total});
         }
     }
+}
+
+fn sum(ctx: struct { total: *u256 }, a: *const A, b: *const B, c: *const C) void {
+    const total = ctx.total;
+    total.* +%= a.*;
+    total.* +%= b.*;
+    total.* +%= c.*;
 }
