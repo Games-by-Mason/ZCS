@@ -205,8 +205,8 @@ pub fn iterator(self: *const @This()) Iterator {
 /// Executes the command buffer.
 ///
 /// Invalidates pointers.
-pub fn execImmediate(self: *@This(), es: *Entities) void {
-    self.execImmediateOrErr(es) catch |err|
+pub fn execImmediate(self: *@This(), es: *Entities, comptime dbg_name: ?[:0]const u8) void {
+    self.execImmediateOrErr(es, dbg_name) catch |err|
         @panic(@errorName(err));
 }
 
@@ -215,8 +215,9 @@ pub fn execImmediate(self: *@This(), es: *Entities) void {
 pub fn execImmediateOrErr(
     self: *@This(),
     es: *Entities,
+    comptime dbg_name: ?[:0]const u8,
 ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
-    const zone = Zone.begin(.{ .src = @src() });
+    const zone = Zone.begin(.{ .src = @src(), .name = if (dbg_name) |name| name.ptr else null });
     defer zone.end();
     es.pointer_generation.increment();
     var iter = self.iterator();

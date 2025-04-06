@@ -217,9 +217,7 @@ pub fn main() !void {
                     e.add(&cb, C, @intCast(i));
                 }
             }
-            const exec_zone = Zone.begin(.{ .name = "exec", .src = @src() });
-            defer exec_zone.end();
-            cb.execImmediate(&es);
+            cb.execImmediate(&es, "exec");
         }
 
         {

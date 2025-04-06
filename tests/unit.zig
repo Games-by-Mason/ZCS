@@ -70,7 +70,7 @@ test "cb execImmediate" {
     e2.add(&cb, RigidBody, rb);
     try expectEqual(4, es.reserved());
     try expectEqual(0, es.count());
-    cb.execImmediate(&es);
+    cb.execImmediate(&es, "exec");
     try expectEqual(0, es.reserved());
     try expectEqual(3, es.count());
     cb.clear(&es);
@@ -105,7 +105,7 @@ test "cb execImmediate" {
     e1.remove(&cb, RigidBody);
     e2.add(&cb, Model, model);
     e2.remove(&cb, RigidBody);
-    cb.execImmediate(&es);
+    cb.execImmediate(&es, null);
     cb.clear(&es);
 
     try expectEqual(3, es.count());
@@ -781,7 +781,7 @@ test "getAll" {
     var cb: CmdBuf = try .init(gpa, &es, .{ .cmds = 24 });
     defer cb.deinit(gpa, &es);
     cb.ext(BarExt, .{ .bar = 1 });
-    cb.execImmediate(&es);
+    cb.execImmediate(&es, "exec");
 
     const registered = CompFlag.getAll();
     try std.testing.expectEqual(2, registered.len);
@@ -974,7 +974,7 @@ test "chunk pool overflow" {
         defer cb.deinit(gpa, &es);
         var it = es.iterator(struct { e: Entity });
         while (it.next(&es)) |vw| vw.e.destroy(&cb);
-        cb.execImmediate(&es);
+        cb.execImmediate(&es, null);
         try expectEqual(0, es.count());
     }
 
@@ -1009,7 +1009,7 @@ test "chunk pool overflow" {
         defer cb.deinit(gpa, &es);
         var it = es.iterator(struct { e: Entity });
         while (it.next(&es)) |vw| vw.e.destroy(&cb);
-        cb.execImmediate(&es);
+        cb.execImmediate(&es, null);
         try expectEqual(0, es.count());
     }
 

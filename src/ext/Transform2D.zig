@@ -148,8 +148,8 @@ pub const PreOrderIterator = struct {
 /// use them as reference for implementing your own command buffer iterator.
 pub const exec = struct {
     /// Similar to `Node.exec.immediate`, but marks transforms as dirty as needed.
-    pub fn immediate(es: *Entities, cb: *const CmdBuf) void {
-        immediateOrErr(es, cb) catch |err|
+    pub fn immediate(es: *Entities, cb: *const CmdBuf, comptime dbg_name: ?[:0]const u8) void {
+        immediateOrErr(es, cb, dbg_name) catch |err|
             @panic(@errorName(err));
     }
 
@@ -158,7 +158,14 @@ pub const exec = struct {
     pub fn immediateOrErr(
         es: *Entities,
         cb: *const CmdBuf,
+        comptime dbg_name: ?[:0]const u8,
     ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
+        const zone = Zone.begin(.{
+            .src = @src(),
+            .name = if (dbg_name) |name| name.ptr else null,
+        });
+        defer zone.end();
+
         es.pointer_generation.increment();
 
         var batches = cb.iterator();

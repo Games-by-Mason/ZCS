@@ -5,6 +5,8 @@
 //! your changes.
 
 const std = @import("std");
+const tracy = @import("tracy");
+
 const assert = std.debug.assert;
 
 const zcs = @import("../root.zig");
@@ -15,6 +17,8 @@ const Entity = zcs.Entity;
 const CmdBuf = zcs.CmdBuf;
 const CompFlag = zcs.CompFlag;
 const Any = zcs.Any;
+
+const Zone = tracy.Zone;
 
 const Node = @This();
 
@@ -292,8 +296,8 @@ pub const exec = struct {
     /// related events along the way. In practice, you likely want to call the finer grained
     /// functions provided directly, so that other libraries you use can also hook into the command
     /// buffer iterator.
-    pub fn immediate(es: *Entities, cb: CmdBuf) void {
-        immediateOrErr(es, cb) catch |err|
+    pub fn immediate(es: *Entities, cb: CmdBuf, comptime dbg_name: ?[:0]const u8) void {
+        immediateOrErr(es, cb, dbg_name) catch |err|
             @panic(@errorName(err));
     }
 
@@ -304,7 +308,14 @@ pub const exec = struct {
     pub fn immediateOrErr(
         es: *Entities,
         cb: CmdBuf,
+        comptime dbg_name: ?[:0]const u8,
     ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
+        const zone = Zone.begin(.{
+            .src = @src(),
+            .name = if (dbg_name) |name| name.ptr else null,
+        });
+        defer zone.end();
+
         es.pointer_generation.increment();
 
         var batches = cb.iterator();
