@@ -202,35 +202,54 @@ pub fn iterator(self: *const @This()) Iterator {
     return .{ .decoder = .{ .cb = self } };
 }
 
-/// Executes the command buffer.
-///
-/// Invalidates pointers.
-pub fn execImmediate(self: *@This(), es: *Entities, comptime dbg_name: ?[:0]const u8) void {
-    self.execImmediateOrErr(es, dbg_name) catch |err|
-        @panic(@errorName(err));
-}
+pub const Exec = struct {
+    zone_cmd_exec: zcs.ext.ZoneCmd.Exec = .{},
 
-/// Similar to `execImmediate`, but returns an error on failure instead of panicking. On error, the
-/// command buffer will be partially executed.
-pub fn execImmediateOrErr(
-    self: *@This(),
-    es: *Entities,
-    comptime dbg_name: ?[:0]const u8,
-) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
-    const zone = Zone.begin(.{ .src = @src(), .name = if (dbg_name) |name| name.ptr else null });
-    defer zone.end();
-    es.pointer_generation.increment();
-    var iter = self.iterator();
-    while (iter.next()) |batch| {
-        switch (batch) {
-            .arch_change => |arch_change| {
-                const delta = arch_change.deltaImmediate();
-                _ = try arch_change.execImmediateOrErr(es, delta);
-            },
-            .ext => {},
+    /// Executes the command buffer.
+    ///
+    /// Invalidates pointers.
+    pub fn immediate(
+        es: *Entities,
+        cb: *CmdBuf,
+        comptime dbg_name: ?[:0]const u8,
+    ) void {
+        immediateOrErr(es, cb, dbg_name) catch |err|
+            @panic(@errorName(err));
+    }
+
+    /// Similar to `execImmediate`, but returns an error on failure instead of panicking. On error, the
+    /// command buffer will be partially executed.
+    pub fn immediateOrErr(
+        es: *Entities,
+        cb: *CmdBuf,
+        comptime dbg_name: ?[:0]const u8,
+    ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
+        const zone = Zone.begin(.{ .src = @src(), .name = if (dbg_name) |name| name.ptr else null });
+        defer zone.end();
+        var self: @This() = .{};
+        defer self.deinit();
+
+        es.pointer_generation.increment();
+        var iter = cb.iterator();
+        while (iter.next()) |batch| {
+            switch (batch) {
+                .arch_change => |arch_change| {
+                    const delta = arch_change.deltaImmediate();
+                    _ = try arch_change.execImmediateOrErr(es, delta);
+                },
+                .ext => |payload| self.extImmediateOrErr(payload),
+            }
         }
     }
-}
+
+    pub fn extImmediateOrErr(self: *@This(), payload: Any) void {
+        self.zone_cmd_exec.extImmediate(payload);
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.zone_cmd_exec.deinit();
+    }
+};
 
 /// Worst case capacity for a command buffer.
 pub const Capacity = struct {

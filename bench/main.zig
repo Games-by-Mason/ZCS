@@ -8,6 +8,7 @@ const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const CmdBuf = zcs.CmdBuf;
 const Transform2D = zcs.ext.Transform2D;
+const ZoneCmd = zcs.ext.ZoneCmd;
 
 const Zone = tracy.Zone;
 
@@ -210,14 +211,42 @@ pub fn main() !void {
             {
                 const fill_zone = Zone.begin(.{ .name = "fill", .src = @src() });
                 defer fill_zone.end();
-                for (0..max_entities) |i| {
-                    const e = Entity.reserve(&cb);
-                    e.add(&cb, A, @intCast(i));
-                    e.add(&cb, B, @intCast(i));
-                    e.add(&cb, C, @intCast(i));
+
+                // Divided into two parts to test exec zones
+                const exec_zone = ZoneCmd.begin(&cb, .{
+                    .src = @src(),
+                    .name = "exec zone",
+                });
+                defer exec_zone.end(&cb);
+
+                {
+                    const first_half_zone = ZoneCmd.begin(&cb, .{
+                        .src = @src(),
+                        .name = "first half",
+                    });
+                    defer first_half_zone.end(&cb);
+                    for (0..max_entities / 2) |i| {
+                        const e = Entity.reserve(&cb);
+                        e.add(&cb, A, @intCast(i));
+                        e.add(&cb, B, @intCast(i));
+                        e.add(&cb, C, @intCast(i));
+                    }
+                }
+                {
+                    const second_half_zone = ZoneCmd.begin(&cb, .{
+                        .src = @src(),
+                        .name = "second half",
+                    });
+                    defer second_half_zone.end(&cb);
+                    for (max_entities / 2..max_entities) |i| {
+                        const e = Entity.reserve(&cb);
+                        e.add(&cb, A, @intCast(i));
+                        e.add(&cb, B, @intCast(i));
+                        e.add(&cb, C, @intCast(i));
+                    }
                 }
             }
-            cb.execImmediate(&es, "exec");
+            CmdBuf.Exec.immediate(&es, &cb, "exec fill");
         }
 
         {

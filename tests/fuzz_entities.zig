@@ -106,7 +106,7 @@ fn run(input: []const u8, saturated: bool) !void {
             }
         }
 
-        cb.execImmediate(&fz.es, null);
+        CmdBuf.Exec.immediate(&fz.es, &cb, null);
         cb.clear(&fz.es);
         try checkOracle(&fz, &cb);
 

@@ -286,12 +286,12 @@ pub const SetParent = struct {
     parent: Entity.Optional,
 };
 
-/// `exec` provides helpers for processing hierarchy changes via the command buffer.
+/// `Exec` provides helpers for processing hierarchy changes via the command buffer.
 ///
 /// By convention, `exec` only calls into the stable public interface of the types it's working
 /// with. As such, documentation is sparse. You are welcome to call these methods directly, or
 /// use them as reference for implementing your own command buffer iterator.
-pub const exec = struct {
+pub const Exec = struct {
     /// Provided as reference. Executes a command buffer, maintaining the hierarchy and reacting to
     /// related events along the way. In practice, you likely want to call the finer grained
     /// functions provided directly, so that other libraries you use can also hook into the command
@@ -310,6 +310,9 @@ pub const exec = struct {
         cb: CmdBuf,
         comptime dbg_name: ?[:0]const u8,
     ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
+        var default_exec: CmdBuf.Exec = .{};
+        defer default_exec.deinit();
+
         const zone = Zone.begin(.{
             .src = @src(),
             .name = if (dbg_name) |name| name.ptr else null,
@@ -331,7 +334,10 @@ pub const exec = struct {
 
                     _ = try arch_change.execImmediateOrErr(es, delta);
                 },
-                .ext => |ext| try extImmediateOrErr(es, ext),
+                .ext => |ext| {
+                    try extImmediateOrErr(es, ext);
+                    default_exec.extImmediateOrErr(ext);
+                },
             }
         }
     }
@@ -341,8 +347,6 @@ pub const exec = struct {
         es: *Entities,
         payload: Any,
     ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
-        es.pointer_generation.increment();
-
         if (payload.as(SetParent)) |set_parent| {
             const child = set_parent.child;
             if (set_parent.parent.unwrap()) |parent| {

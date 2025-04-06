@@ -146,8 +146,8 @@ pub const PreOrderIterator = struct {
 /// By convention, `Exec` only calls into the stable public interface of the types it's working
 /// with. As such, documentation is sparse. You are welcome to call these methods directly, or
 /// use them as reference for implementing your own command buffer iterator.
-pub const exec = struct {
-    /// Similar to `Node.exec.immediate`, but marks transforms as dirty as needed.
+pub const Exec = struct {
+    /// Similar to `Node.Exec.immediate`, but marks transforms as dirty as needed.
     pub fn immediate(es: *Entities, cb: *const CmdBuf, comptime dbg_name: ?[:0]const u8) void {
         immediateOrErr(es, cb, dbg_name) catch |err|
             @panic(@errorName(err));
@@ -168,6 +168,9 @@ pub const exec = struct {
 
         es.pointer_generation.increment();
 
+        var default_exec: CmdBuf.Exec = .{};
+        defer default_exec.deinit();
+
         var batches = cb.iterator();
         while (batches.next()) |batch| {
             switch (batch) {
@@ -176,7 +179,7 @@ pub const exec = struct {
                         var delta: CmdBuf.Batch.ArchChange.Delta = .{};
                         var ops = arch_change.iterator();
                         while (ops.next()) |op| {
-                            Node.exec.beforeArchChangeImmediate(es, arch_change, op);
+                            Node.Exec.beforeArchChangeImmediate(es, arch_change, op);
                             delta.updateImmediate(op);
                         }
 
@@ -190,7 +193,10 @@ pub const exec = struct {
                         }
                     }
                 },
-                .ext => |ext| try extImmediateOrErr(es, ext),
+                .ext => |ext| {
+                    try extImmediateOrErr(es, ext);
+                    default_exec.extImmediateOrErr(ext);
+                },
             }
         }
     }
@@ -232,7 +238,7 @@ pub const exec = struct {
         es: *Entities,
         payload: Any,
     ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
-        try Node.exec.extImmediateOrErr(es, payload);
+        try Node.Exec.extImmediateOrErr(es, payload);
         if (payload.as(Node.SetParent)) |set_parent| {
             if (set_parent.child.get(es, Transform2D)) |transform| {
                 transform.sync(es);
