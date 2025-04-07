@@ -22,6 +22,11 @@ pub const ext = @import("ext.zig");
 /// Returns the component ID for the given type.
 pub const typeId = TypeInfo.init;
 
+/// A thread ID.
+///
+/// Wraps the thread IDs given out by `std.Thread.Pool`.
+pub const ThreadId = enum(usize) { _ };
+
 test {
     std.testing.refAllDecls(@This());
 }

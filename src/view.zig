@@ -20,24 +20,32 @@ const Entity = zcs.Entity;
 const Any = zcs.Any;
 const CompFlag = zcs.CompFlag;
 
+/// Options for a view.
+pub const ViewOptions = struct {
+    /// The pointer type for the view's components.
+    size: std.builtin.Type.Pointer.Size,
+};
+
 /// Given a field type from an entity view or entity slice view, returns the underlying component
 /// type or `Entity`/`Entity.Index` as appropriate.
 ///
 /// For entity views, `size` should be set to `.one`. Otherwise it should be set to `.slice` (or the
 /// desired pointer size.)
-pub fn UnwrapField(T: type, size: std.builtin.Type.Pointer.Size) type {
+///
+/// If `track_ids` is `true`, `ThreadId` is also allowed as a parameter.
+pub fn UnwrapField(T: type, options: ViewOptions) type {
     // If we're looking for a single element and `T` is an entity, return it directly
-    if (size == .one and T == Entity) {
+    if (options.size == .one and T == Entity) {
         return Entity;
     }
 
     // Get the component pointer
     const SomePtr = Unwrap(T);
-    comptime assert(@typeInfo(SomePtr).pointer.size == size);
+    comptime assert(@typeInfo(SomePtr).pointer.size == options.size);
     const Result = @typeInfo(SomePtr).pointer.child;
 
     // If we're looking for multiple elements and `T` points to entity indices, return it directly
-    if (size != .one and Result == Entity.Index) {
+    if (options.size != .one and Result == Entity.Index) {
         comptime assert(@typeInfo(T) != .optional);
         return Result;
     }
@@ -51,7 +59,7 @@ pub fn UnwrapField(T: type, size: std.builtin.Type.Pointer.Size) type {
 pub fn index(View: type, es: *const Entities, slices: anytype, i: u32) View {
     var view: View = undefined;
     inline for (@typeInfo(View).@"struct".fields, slices) |field, slice| {
-        if (UnwrapField(@TypeOf(slice), .slice) == Entity.Index) {
+        if (UnwrapField(@TypeOf(slice), .{ .size = .slice }) == Entity.Index) {
             const entity_index = slice[i];
             @field(view, field.name) = entity_index.toEntity(es);
         } else {
@@ -67,11 +75,11 @@ pub fn index(View: type, es: *const Entities, slices: anytype, i: u32) View {
 /// Converts an entity view or entity slice view into a comp flag set, or `null` if any of the
 /// component fields are unregistered. Size should be set to `.one` for entity views, and `.slice`
 /// or the desired pointer size for entity slice views.
-pub inline fn comps(T: type, size: std.builtin.Type.Pointer.Size) ?CompFlag.Set {
+pub inline fn comps(T: type, options: ViewOptions) ?CompFlag.Set {
     var arch: CompFlag.Set = .{};
     inline for (@typeInfo(T).@"struct".fields) |field| {
         if (field.type != Entity and @typeInfo(field.type) != .optional) {
-            const Unwrapped = zcs.view.UnwrapField(field.type, size);
+            const Unwrapped = zcs.view.UnwrapField(field.type, options);
             if (Unwrapped == Entity.Index) continue;
             const flag = typeId(Unwrapped).comp_flag orelse return null;
             arch.insert(flag);
@@ -115,14 +123,14 @@ pub fn Slice(EntityView: type) type {
 }
 
 /// Returns the list of parameter types for a function type.
-pub fn params(T: type) []type {
+pub fn params(T: type) [@typeInfo(T).@"fn".params.len]type {
     var results: [@typeInfo(T).@"fn".params.len]type = undefined;
     inline for (&results, @typeInfo(T).@"fn".params) |*result, param| {
         result.* = if (param.type) |Param| Param else {
             @compileError("cannot get type of `anytype` parameter");
         };
     }
-    return &results;
+    return results;
 }
 
 /// Generates a tuple from a list of types. Similar to `std.meta.Tuple`, but does not call

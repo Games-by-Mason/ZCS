@@ -567,14 +567,14 @@ pub const Entity = packed struct {
         // necessary doesn't appear to be measurable.
         const entity_loc = es.handle_tab.get(self.key) orelse return null;
         const chunk = entity_loc.chunk.get(&es.chunk_pool) orelse return null;
-        const view_arch = zcs.view.comps(View, .one) orelse return null;
+        const view_arch = zcs.view.comps(View, .{ .size = .one }) orelse return null;
         const entity_arch = chunk.header().list.arch(&es.chunk_lists);
         if (!entity_arch.supersetOf(view_arch)) return null;
 
         // Fill in the view and return it
         var result: View = undefined;
         inline for (@typeInfo(View).@"struct".fields) |field| {
-            const Unwrapped = zcs.view.UnwrapField(field.type, .one);
+            const Unwrapped = zcs.view.UnwrapField(field.type, .{ .size = .one });
             if (Unwrapped == Entity) {
                 @field(result, field.name) = self;
             } else {

@@ -248,7 +248,7 @@ pub fn main() !void {
                     }
                 }
             }
-            CmdBuf.Exec.immediate(&es, &cb, .{ .name = "exec fill" });
+            CmdBuf.Exec.immediate(&es, &cb, .{ .name = "exec fill", .emit_warnings = false });
         }
 
         {
@@ -274,6 +274,24 @@ pub fn main() !void {
             std.debug.print("{}\n", .{total});
             if (expected_total == null) expected_total = total;
             if (expected_total != total) @panic("inconsistent result");
+        }
+
+        {
+            const zone = Zone.begin(.{ .src = @src(), .name = "sum threaded" });
+            defer zone.end();
+
+            var tp: std.Thread.Pool = undefined;
+            try std.Thread.Pool.init(&tp, .{
+                .allocator = allocator,
+            });
+            defer tp.deinit();
+            var wg: std.Thread.WaitGroup = .{};
+            es.forEachThreaded("sum threaded", sumThreaded, .{
+                .tp = &tp,
+                .wg = &wg,
+                .ctx = .{},
+            });
+            tp.waitAndWork(&wg);
         }
 
         {
@@ -344,12 +362,6 @@ pub fn main() !void {
     for (0..iterations) |_| {
         const zone = Zone.begin(.{ .name = "transform", .src = @src() });
         defer zone.end();
-
-        var tp: std.Thread.Pool = undefined;
-        try std.Thread.Pool.init(&tp, .{
-            .allocator = allocator,
-        });
-        defer tp.deinit();
 
         const es_init_zone = Zone.begin(.{ .name = "es init", .src = @src() });
         var es: Entities = try .init(allocator, .{
@@ -446,7 +458,15 @@ pub fn main() !void {
 
 fn sum(ctx: struct { total: *u256 }, a: *const A, b: *const B, c: *const C) void {
     const total = ctx.total;
-    total.* +%= a.*;
-    total.* +%= b.*;
-    total.* +%= c.*;
+    total.* += a.*;
+    total.* += b.*;
+    total.* += c.*;
+}
+
+// This isn't expensive enough to be worth threading, but when you modify it to do more work it becomes worth it
+threadlocal var thread_sum: u256 = 0;
+fn sumThreaded(_: struct {}, a: *const A, b: *const B, c: *const C) void {
+    thread_sum += a.*;
+    thread_sum += b.*;
+    thread_sum += c.*;
 }

@@ -126,6 +126,134 @@ test "cb execImmediate" {
     es.updateStats(.{ .emit_warnings = false });
 }
 
+fn incrementId(thread_id: zcs.ThreadId, ctx: struct { by: u8 }, counter: *u32) void {
+    _ = thread_id; // Not actually tested, just forwarded from std so this is probably fine
+    counter.* += ctx.by;
+}
+
+fn increment(ctx: struct { by: u8 }, counter: *u32) void {
+    counter.* += ctx.by;
+}
+
+fn incrementChunk(ctx: struct { by: u8 }, counters: []u32) void {
+    for (counters) |*counter| {
+        counter.* += ctx.by;
+    }
+}
+
+fn incrementChunkId(thread_id: zcs.ThreadId, ctx: struct { by: u8 }, counters: []u32) void {
+    _ = thread_id; // Not actually tested, just forwarded from std so this is probably fine
+    for (counters) |*counter| {
+        counter.* += ctx.by;
+    }
+}
+
+test "threading" {
+    defer CompFlag.unregisterAll();
+
+    const max_entities = 8192;
+    var es: Entities = try .init(gpa, .{
+        .max_entities = max_entities,
+        .max_archetypes = 1,
+        .max_chunks = 128,
+        .chunk_size = 1024,
+    });
+    defer es.deinit(gpa);
+
+    var entities: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, max_entities);
+    defer entities.deinit(gpa);
+
+    for (0..max_entities) |i| {
+        const e: Entity = .reserveImmediate(&es);
+        entities.appendAssumeCapacity(e);
+        try expect(e.changeArchImmediate(
+            &es,
+            struct { counter: u32 },
+            .{ .add = .{ .counter = @intCast(i) } },
+        ));
+    }
+
+    // Per entity without thread IDs
+    {
+        var tp: std.Thread.Pool = undefined;
+        try std.Thread.Pool.init(&tp, .{ .allocator = gpa, .track_ids = false });
+        defer tp.deinit();
+
+        var wg: std.Thread.WaitGroup = .{};
+
+        es.forEachThreaded("increment", increment, .{
+            .ctx = .{ .by = 1 },
+            .tp = &tp,
+            .wg = &wg,
+        });
+        tp.waitAndWork(&wg);
+
+        for (entities.items, 0..) |e, i| {
+            try std.testing.expectEqual(i + 1, e.get(&es, u32).?.*);
+        }
+    }
+
+    // Per entity with thread IDs
+    {
+        var tp: std.Thread.Pool = undefined;
+        try std.Thread.Pool.init(&tp, .{ .allocator = gpa, .track_ids = true });
+        defer tp.deinit();
+
+        var wg: std.Thread.WaitGroup = .{};
+
+        es.forEachThreaded("incrementId", incrementId, .{
+            .ctx = .{ .by = 1 },
+            .tp = &tp,
+            .wg = &wg,
+        });
+        tp.waitAndWork(&wg);
+
+        for (entities.items, 0..) |e, i| {
+            try std.testing.expectEqual(i + 2, e.get(&es, u32).?.*);
+        }
+    }
+
+    // Per chunk without thread IDs
+    {
+        var tp: std.Thread.Pool = undefined;
+        try std.Thread.Pool.init(&tp, .{ .allocator = gpa, .track_ids = false });
+        defer tp.deinit();
+
+        var wg: std.Thread.WaitGroup = .{};
+
+        es.forEachChunkThreaded("incrementChunk", incrementChunk, .{
+            .ctx = .{ .by = 1 },
+            .tp = &tp,
+            .wg = &wg,
+        });
+        tp.waitAndWork(&wg);
+
+        for (entities.items, 0..) |e, i| {
+            try std.testing.expectEqual(i + 3, e.get(&es, u32).?.*);
+        }
+    }
+
+    // Per chunk without thread IDs
+    {
+        var tp: std.Thread.Pool = undefined;
+        try std.Thread.Pool.init(&tp, .{ .allocator = gpa, .track_ids = true });
+        defer tp.deinit();
+
+        var wg: std.Thread.WaitGroup = .{};
+
+        es.forEachChunkThreaded("incrementChunkId", incrementChunkId, .{
+            .ctx = .{ .by = 1 },
+            .tp = &tp,
+            .wg = &wg,
+        });
+        tp.waitAndWork(&wg);
+
+        for (entities.items, 0..) |e, i| {
+            try std.testing.expectEqual(i + 4, e.get(&es, u32).?.*);
+        }
+    }
+}
+
 fn isInBytes(cb: CmdBuf, comp: anytype) bool {
     const comp_bytes = std.mem.asBytes(comp);
     const data = cb.data.items;

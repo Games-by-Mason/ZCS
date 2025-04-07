@@ -165,13 +165,13 @@ pub const Chunk = opaque {
     pub fn view(self: *@This(), es: *const Entities, View: type) ?View {
         const list = self.header().list.get(&es.chunk_lists);
 
-        const view_arch = zcs.view.comps(View, .slice) orelse return null;
+        const view_arch = zcs.view.comps(View, .{ .size = .slice }) orelse return null;
         const chunk_arch = self.header().arch(&es.chunk_lists);
         if (!chunk_arch.supersetOf(view_arch)) return null;
 
         var result: View = undefined;
         inline for (@typeInfo(View).@"struct".fields) |field| {
-            const As = zcs.view.UnwrapField(field.type, .slice);
+            const As = zcs.view.UnwrapField(field.type, .{ .size = .slice });
             if (As == Entity.Index) {
                 const unsized: [*]As = @ptrFromInt(@intFromPtr(self) + list.index_buf_offset);
                 const sized = unsized[0..self.header().len];

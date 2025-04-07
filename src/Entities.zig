@@ -244,17 +244,147 @@ fn getLoc(self: *const Entities, from_comp: Any) struct {
 /// isn't served well by `forEach`, you can fork it into your code base and modify it as needed.
 pub fn forEach(
     self: *@This(),
-    comptime dbg_name: ?[:0]const u8,
-    updateEntity: anytype,
+    comptime name: [:0]const u8,
+    comptime updateEntity: anytype,
     ctx: view.params(@TypeOf(updateEntity))[0],
 ) void {
-    const zone = Zone.begin(.{ .src = @src(), .name = if (dbg_name) |name| name.ptr else null });
+    const zone = Zone.begin(.{ .src = @src(), .name = name });
     defer zone.end();
     const params = view.params(@TypeOf(updateEntity));
     const View = view.Tuple(params[1..]);
     var iter = self.iterator(View);
     while (iter.next(self)) |vw| {
         @call(.auto, updateEntity, .{ctx} ++ vw);
+    }
+}
+
+/// Options for `forEachThreaded`.
+pub fn ForEachThreadedOptions(cb: type) type {
+    return struct {
+        const track_ids = view.params(cb)[0] == zcs.ThreadId;
+        const Ctx = view.params(cb)[if (track_ids) 1 else 0];
+        const Comps = view.Tuple(view.params(cb)[if (track_ids) 2 else 1..]);
+
+        ctx: Ctx,
+        tp: *std.Thread.Pool,
+        wg: *std.Thread.WaitGroup,
+    };
+}
+
+/// Similar to `forEach`, but spawns each chunk's work as a thread pool task. Optionally, you may
+/// add an argument of type `zcs.ThreadId` as the first argument to get the thread index if
+/// `track_ids` is enabled on the thread pool.
+///
+/// Keep in mind that this is unlikely to be a performance win unless your update function is very
+/// expensive. Iteration is cheap.
+pub fn forEachThreaded(
+    self: *@This(),
+    comptime name: [:0]const u8,
+    comptime updateEntity: anytype,
+    options: ForEachThreadedOptions(@TypeOf(updateEntity)),
+) void {
+    const zone = Zone.begin(.{ .src = @src(), .name = name });
+    defer zone.end();
+
+    const Opt = @TypeOf(options);
+
+    const Wrapped = struct {
+        fn processChunkId(
+            thread_id: usize,
+            es: *const Entities,
+            chunk: *Chunk,
+            ctx: @FieldType(@TypeOf(options), "ctx"),
+        ) void {
+            const batch_zone = Zone.begin(.{ .src = @src(), .name = name });
+            defer batch_zone.end();
+
+            const slices = chunk.view(es, view.Slice(Opt.Comps)).?;
+            for (0..chunk.header().len) |i| {
+                const vw = view.index(Opt.Comps, es, slices, @intCast(i));
+                const thread_id_enum: zcs.ThreadId = @enumFromInt(thread_id);
+                @call(.auto, updateEntity, .{thread_id_enum} ++ .{ctx} ++ vw);
+            }
+        }
+
+        fn processChunk(
+            es: *const Entities,
+            chunk: *Chunk,
+            ctx: @FieldType(@TypeOf(options), "ctx"),
+        ) void {
+            const batch_zone = Zone.begin(.{ .src = @src(), .name = name });
+            defer batch_zone.end();
+
+            const slices = chunk.view(es, view.Slice(Opt.Comps)).?;
+            for (0..chunk.header().len) |i| {
+                const vw = view.index(Opt.Comps, es, slices, @intCast(i));
+                @call(.auto, updateEntity, .{ctx} ++ vw);
+            }
+        }
+    };
+
+    const required_comps = view.comps(Opt.Comps, .{ .size = .one }) orelse return;
+    var chunks = self.chunkIterator(required_comps);
+    while (chunks.next(self)) |chunk| {
+        const spawn = if (Opt.track_ids) std.Thread.Pool.spawnWgId else std.Thread.Pool.spawnWg;
+        const task = if (Opt.track_ids) Wrapped.processChunkId else Wrapped.processChunk;
+        spawn(options.tp, options.wg, task, .{
+            self,
+            chunk,
+            options.ctx,
+        });
+    }
+}
+
+/// Similar to `forEach`, but with the threading model from `forEachThreaded`.
+pub fn forEachChunkThreaded(
+    self: *@This(),
+    comptime name: [:0]const u8,
+    comptime updateChunk: anytype,
+    options: ForEachThreadedOptions(@TypeOf(updateChunk)),
+) void {
+    const zone = Zone.begin(.{ .src = @src(), .name = name });
+    defer zone.end();
+
+    const Opt = @TypeOf(options);
+
+    const Wrapped = struct {
+        fn processChunkId(
+            thread_id: usize,
+            es: *const Entities,
+            chunk: *Chunk,
+            ctx: @FieldType(@TypeOf(options), "ctx"),
+        ) void {
+            const batch_zone = Zone.begin(.{ .src = @src(), .name = name });
+            defer batch_zone.end();
+
+            const thread_id_enum: zcs.ThreadId = @enumFromInt(thread_id);
+            const slices = chunk.view(es, view.Slice(Opt.Comps)).?;
+            @call(.auto, updateChunk, .{thread_id_enum} ++ .{ctx} ++ slices);
+        }
+
+        fn processChunk(
+            es: *const Entities,
+            chunk: *Chunk,
+            ctx: @FieldType(@TypeOf(options), "ctx"),
+        ) void {
+            const batch_zone = Zone.begin(.{ .src = @src(), .name = name });
+            defer batch_zone.end();
+
+            const slices = chunk.view(es, view.Slice(Opt.Comps)).?;
+            @call(.auto, updateChunk, .{ctx} ++ slices);
+        }
+    };
+
+    const required_comps = view.comps(Opt.Comps, .{ .size = .slice }) orelse return;
+    var chunks = self.chunkIterator(required_comps);
+    while (chunks.next(self)) |chunk| {
+        const spawn = if (Opt.track_ids) std.Thread.Pool.spawnWgId else std.Thread.Pool.spawnWg;
+        const task = if (Opt.track_ids) Wrapped.processChunkId else Wrapped.processChunk;
+        spawn(options.tp, options.wg, task, .{
+            self,
+            chunk,
+            options.ctx,
+        });
     }
 }
 
@@ -267,11 +397,11 @@ pub fn forEach(
 /// Invalidating pointers from the update function results in safety checked illegal behavior.
 pub fn forEachChunk(
     self: *@This(),
-    comptime dbg_name: ?[:0]const u8,
-    updateChunk: anytype,
+    comptime name: [:0]const u8,
+    comptime updateChunk: anytype,
     ctx: view.params(@TypeOf(updateChunk))[0],
 ) void {
-    const zone = Zone.begin(.{ .src = @src(), .name = if (dbg_name) |name| name.ptr else null });
+    const zone = Zone.begin(.{ .src = @src(), .name = if (name) |n| n.ptr else null });
     defer zone.end();
     const params = view.params(@TypeOf(updateChunk));
     const required_comps = view.comps(view.Tuple(params[1..]), .slice) orelse return;
@@ -424,7 +554,7 @@ pub const ChunkIterator = struct {
 ///
 /// Invalidating pointers while iterating results in safety checked illegal behavior.
 pub fn iterator(self: *const @This(), View: type) Iterator(View) {
-    const required_comps: CompFlag.Set = view.comps(View, .one) orelse
+    const required_comps: CompFlag.Set = view.comps(View, .{ .size = .one }) orelse
         return .empty(self);
     const chunks = self.chunkIterator(required_comps);
     const slices = if (chunks.peek(self)) |c| c.view(self, view.Slice(View)).? else undefined;
