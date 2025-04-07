@@ -70,7 +70,7 @@ test "cb execImmediate" {
     e2.add(&cb, RigidBody, rb);
     try expectEqual(4, es.reserved());
     try expectEqual(0, es.count());
-    CmdBuf.Exec.immediate(&es, &cb, "exec");
+    CmdBuf.Exec.immediate(&es, &cb, .{ .name = "cb execImmediate", .emit_warnings = false });
     try expectEqual(0, es.reserved());
     try expectEqual(3, es.count());
     cb.clear(&es);
@@ -105,7 +105,7 @@ test "cb execImmediate" {
     e1.remove(&cb, RigidBody);
     e2.add(&cb, Model, model);
     e2.remove(&cb, RigidBody);
-    CmdBuf.Exec.immediate(&es, &cb, null);
+    CmdBuf.Exec.immediate(&es, &cb, .{ .name = "cb exec immediate", .emit_warnings = false });
     cb.clear(&es);
 
     try expectEqual(3, es.count());
@@ -126,14 +126,14 @@ test "cb execImmediate" {
     es.updateStats(.{ .emit_warnings = false });
 }
 
-fn isInAnyBytes(cb: CmdBuf, data: anytype) bool {
-    const bytes = std.mem.asBytes(data);
-    const any_bytes = cb.any_bytes.items;
-    const start = @intFromPtr(any_bytes.ptr);
-    const end = start + any_bytes.len;
-    const addr_start = @intFromPtr(bytes.ptr);
-    const addr_end = addr_start + bytes.len;
-    return addr_start >= start and addr_end <= end;
+fn isInBytes(cb: CmdBuf, comp: anytype) bool {
+    const comp_bytes = std.mem.asBytes(comp);
+    const data = cb.data.items;
+    const data_start = @intFromPtr(data.ptr);
+    const data_end = data_start + data.len;
+    const comp_start = @intFromPtr(comp_bytes.ptr);
+    const comp_end = comp_start + comp_bytes.len;
+    return comp_start >= data_start and comp_end <= data_end;
 }
 
 // Verify that components are interned appropriately
@@ -237,19 +237,19 @@ test "cb interning" {
         try expectEqual(e0, ac.entity);
         var ops = ac.iterator();
         const comp1 = ops.next().?.add;
-        try expect(isInAnyBytes(cb, comp1.as(Model).?));
+        try expect(isInBytes(cb, comp1.as(Model).?));
         try expectEqual(model_value, comp1.as(Model).?.*);
         const comp2 = ops.next().?.add;
-        try expect(!isInAnyBytes(cb, comp2.as(RigidBody).?));
+        try expect(!isInBytes(cb, comp2.as(RigidBody).?));
         try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
         try expectEqual(null, ops.next());
     }
     {
         const ext1 = iter.next().?.ext;
-        try expect(isInAnyBytes(cb, ext1.as(BarExt).?));
+        try expect(isInBytes(cb, ext1.as(BarExt).?));
         try expectEqual(bar_ev_value, ext1.as(BarExt).?.*);
         const ext2 = iter.next().?.ext;
-        try expect(!isInAnyBytes(cb, ext2.as(FooExt).?));
+        try expect(!isInBytes(cb, ext2.as(FooExt).?));
         try expectEqual(foo_ev_interned, ext2.as(FooExt).?.*);
     }
     {
@@ -257,18 +257,18 @@ test "cb interning" {
         try expectEqual(e1, ac.entity);
         var ops = ac.iterator();
         const comp1 = ops.next().?.add;
-        try expect(isInAnyBytes(cb, comp1.as(Model).?)); // By value because it's too small!
+        try expect(isInBytes(cb, comp1.as(Model).?)); // By value because it's too small!
         try expectEqual(model_interned, comp1.as(Model).?.*);
         const comp2 = ops.next().?.add;
-        try expect(isInAnyBytes(cb, comp2.as(RigidBody).?));
+        try expect(isInBytes(cb, comp2.as(RigidBody).?));
         try expectEqual(rb_value, comp2.as(RigidBody).?.*);
     }
     {
         const ext1 = iter.next().?.ext;
-        try expect(isInAnyBytes(cb, ext1.as(BarExt).?)); // By value because it's too small!
+        try expect(isInBytes(cb, ext1.as(BarExt).?)); // By value because it's too small!
         try expectEqual(bar_ev_interned, ext1.as(BarExt).?.*);
         const ext2 = iter.next().?.ext;
-        try expect(isInAnyBytes(cb, ext2.as(FooExt).?));
+        try expect(isInBytes(cb, ext2.as(FooExt).?));
         try expectEqual(foo_ev_value, ext2.as(FooExt).?.*);
     }
     {
@@ -276,18 +276,18 @@ test "cb interning" {
         try expectEqual(e0, ac.entity);
         var ops = ac.iterator();
         const comp1 = ops.next().?.add;
-        try expect(isInAnyBytes(cb, comp1.as(Model).?));
+        try expect(isInBytes(cb, comp1.as(Model).?));
         try expectEqual(model_value, comp1.as(Model).?.*);
         const comp2 = ops.next().?.add;
-        try expect(isInAnyBytes(cb, comp2.as(RigidBody).?));
+        try expect(isInBytes(cb, comp2.as(RigidBody).?));
         try expectEqual(rb_interned, comp2.as(RigidBody).?.*);
     }
     {
         const ext1 = iter.next().?.ext;
-        try expect(isInAnyBytes(cb, ext1.as(BarExt).?));
+        try expect(isInBytes(cb, ext1.as(BarExt).?));
         try expectEqual(bar_ev_value, ext1.as(BarExt).?.*);
         const ext2 = iter.next().?.ext;
-        try expect(isInAnyBytes(cb, ext2.as(FooExt).?));
+        try expect(isInBytes(cb, ext2.as(FooExt).?));
         try expectEqual(foo_ev_interned, ext2.as(FooExt).?.*);
     }
     {
@@ -295,18 +295,18 @@ test "cb interning" {
         try expectEqual(e1, ac.entity);
         var ops = ac.iterator();
         const comp1 = ops.next().?.add;
-        try expect(isInAnyBytes(cb, comp1.as(Model).?));
+        try expect(isInBytes(cb, comp1.as(Model).?));
         try expectEqual(model_interned, comp1.as(Model).?.*);
         const comp2 = ops.next().?.add;
-        try expect(isInAnyBytes(cb, comp2.as(RigidBody).?));
+        try expect(isInBytes(cb, comp2.as(RigidBody).?));
         try expectEqual(rb_value, comp2.as(RigidBody).?.*);
     }
     {
         const ext1 = iter.next().?.ext;
-        try expect(isInAnyBytes(cb, ext1.as(BarExt).?));
+        try expect(isInBytes(cb, ext1.as(BarExt).?));
         try expectEqual(bar_ev_interned, ext1.as(BarExt).?.*);
         const ext2 = iter.next().?.ext;
-        try expect(isInAnyBytes(cb, ext2.as(FooExt).?));
+        try expect(isInBytes(cb, ext2.as(FooExt).?));
         try expectEqual(foo_ev_value, ext2.as(FooExt).?.*);
     }
     {
@@ -320,18 +320,18 @@ test "cb interning" {
         try expectEqual(e0, cmd.entity);
         var ops = cmd.iterator();
         const comp1 = ops.next().?.add;
-        try expect(!isInAnyBytes(cb, comp1.as(RigidBody).?));
+        try expect(!isInBytes(cb, comp1.as(RigidBody).?));
         try expectEqual(rb_interned, comp1.as(RigidBody).?.*);
         const comp2 = ops.next().?.add;
-        try expect(!isInAnyBytes(cb, comp2.as(Model).?));
+        try expect(!isInBytes(cb, comp2.as(Model).?));
         try expectEqual(model_interned, comp2.as(Model).?.*);
     }
     {
         const ext1 = iter.next().?.ext;
-        try expect(!isInAnyBytes(cb, ext1.as(BarExt).?));
+        try expect(!isInBytes(cb, ext1.as(BarExt).?));
         try expectEqual(bar_ev_interned, ext1.as(BarExt).?.*);
         const ext2 = iter.next().?.ext;
-        try expect(!isInAnyBytes(cb, ext2.as(FooExt).?));
+        try expect(!isInBytes(cb, ext2.as(FooExt).?));
         try expectEqual(foo_ev_interned, ext2.as(FooExt).?.*);
     }
     {
@@ -339,24 +339,24 @@ test "cb interning" {
         try expectEqual(e1, ac.entity);
         var ops = ac.iterator();
         const comp1 = ops.next().?.add;
-        try expect(isInAnyBytes(cb, comp1.as(Tag).?));
+        try expect(isInBytes(cb, comp1.as(Tag).?));
         try expectEqual(Tag{}, comp1.as(Tag).?.*);
         const comp2 = ops.next().?.add;
-        try expect(isInAnyBytes(cb, comp2.as(Tag).?));
+        try expect(isInBytes(cb, comp2.as(Tag).?));
         try expectEqual(Tag{}, comp2.as(Tag).?.*);
         const comp3 = ops.next().?.add;
-        try expect(!isInAnyBytes(cb, comp3.as(Tag).?));
+        try expect(!isInBytes(cb, comp3.as(Tag).?));
         try expectEqual(Tag{}, comp3.as(Tag).?.*);
     }
     {
         const ext1 = iter.next().?.ext;
-        try expect(isInAnyBytes(cb, ext1.as(BazExt).?));
+        try expect(isInBytes(cb, ext1.as(BazExt).?));
         try expectEqual(BazExt{}, ext1.as(BazExt).?.*);
         const ext2 = iter.next().?.ext;
-        try expect(isInAnyBytes(cb, ext2.as(BazExt).?));
+        try expect(isInBytes(cb, ext2.as(BazExt).?));
         try expectEqual(BazExt{}, ext2.as(BazExt).?.*);
         const ev3 = iter.next().?.ext;
-        try expect(!isInAnyBytes(cb, ev3.as(BazExt).?));
+        try expect(!isInBytes(cb, ev3.as(BazExt).?));
         try expectEqual(BazExt{}, ev3.as(BazExt).?.*);
     }
 
@@ -784,7 +784,7 @@ test "getAll" {
     var cb: CmdBuf = try .init(gpa, &es, .{ .cmds = 24 });
     defer cb.deinit(gpa, &es);
     cb.ext(BarExt, .{ .bar = 1 });
-    CmdBuf.Exec.immediate(&es, &cb, "exec");
+    CmdBuf.Exec.immediate(&es, &cb, .{ .name = "getAll" });
 
     const registered = CompFlag.getAll();
     try std.testing.expectEqual(2, registered.len);
@@ -977,7 +977,7 @@ test "chunk pool overflow" {
         defer cb.deinit(gpa, &es);
         var it = es.iterator(struct { e: Entity });
         while (it.next(&es)) |vw| vw.e.destroy(&cb);
-        CmdBuf.Exec.immediate(&es, &cb, null);
+        CmdBuf.Exec.immediate(&es, &cb, .{ .name = "chunk pool overflow", .emit_warnings = false });
         try expectEqual(0, es.count());
     }
 
@@ -1012,7 +1012,7 @@ test "chunk pool overflow" {
         defer cb.deinit(gpa, &es);
         var it = es.iterator(struct { e: Entity });
         while (it.next(&es)) |vw| vw.e.destroy(&cb);
-        CmdBuf.Exec.immediate(&es, &cb, null);
+        CmdBuf.Exec.immediate(&es, &cb, .{ .name = "destroy all", .emit_warnings = false });
         try expectEqual(0, es.count());
     }
 

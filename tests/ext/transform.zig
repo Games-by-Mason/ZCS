@@ -49,7 +49,7 @@ test "exec" {
     const child: Entity = .reserve(&cb);
     const parent: Entity = .reserve(&cb);
     cb.ext(SetParent, .{ .child = child, .parent = parent.toOptional() });
-    Transform.Exec.immediate(&es, &cb, "exec");
+    Transform.Exec.immediate(&es, &cb, .{ .name = "exec", .emit_warnings = false });
 
     const child_node = child.get(&es, Node).?;
     try expectEqual(child_node.parent, parent.toOptional());
@@ -217,7 +217,7 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
             },
         }
 
-        Transform.Exec.immediate(&es, &cb, null);
+        Transform.Exec.immediate(&es, &cb, .{ .name = "fuzzTransformsCmdBuf" });
         cb.clear(&es);
         try checkOracle(&es);
     }

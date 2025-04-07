@@ -24,6 +24,8 @@ const tracy = @import("tracy");
 const meta = @import("meta.zig");
 const zcs = @import("root.zig");
 
+const log = std.log;
+
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
@@ -46,9 +48,10 @@ const Binding = struct {
 
 tags: std.ArrayListUnmanaged(Subcmd.Tag),
 args: std.ArrayListUnmanaged(u64),
-any_bytes: std.ArrayListAlignedUnmanaged(u8, zcs.TypeInfo.max_align),
+data: std.ArrayListAlignedUnmanaged(u8, zcs.TypeInfo.max_align),
 binding: Binding = .{ .entity = .none },
 reserved: std.ArrayListUnmanaged(Entity),
+warned_capacity: bool = false,
 invalid: if (std.debug.runtime_safety) bool else void,
 
 /// Initializes a command buffer.
@@ -80,11 +83,11 @@ pub fn init(
     args_zone.end();
 
     const any_bytes_zone = Zone.begin(.{ .name = "any bytes", .src = @src() });
-    var any_bytes: std.ArrayListAlignedUnmanaged(u8, zcs.TypeInfo.max_align) = try .initCapacity(
+    var data: std.ArrayListAlignedUnmanaged(u8, zcs.TypeInfo.max_align) = try .initCapacity(
         gpa,
         capacity.dataBytes(),
     );
-    errdefer any_bytes.deinit(gpa);
+    errdefer data.deinit(gpa);
     any_bytes_zone.end();
 
     const reserved_zone = Zone.begin(.{ .name = "reserved", .src = @src() });
@@ -102,7 +105,7 @@ pub fn init(
         .reserved = reserved,
         .tags = tags,
         .args = args,
-        .any_bytes = any_bytes,
+        .data = data,
         .invalid = if (std.debug.runtime_safety) false else {},
     };
 }
@@ -111,7 +114,7 @@ pub fn init(
 pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
     for (self.reserved.items) |entity| assert(entity.destroyImmediate(es));
     self.reserved.deinit(gpa);
-    self.any_bytes.deinit(gpa);
+    self.data.deinit(gpa);
     self.args.deinit(gpa);
     self.tags.deinit(gpa);
     self.* = undefined;
@@ -165,7 +168,7 @@ pub fn clear(self: *@This(), es: *Entities) void {
 pub fn clearOrErr(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
-    self.any_bytes.clearRetainingCapacity();
+    self.data.clearRetainingCapacity();
     self.args.clearRetainingCapacity();
     self.tags.clearRetainingCapacity();
     self.binding = .none;
@@ -183,7 +186,7 @@ pub fn worstCaseUsage(self: @This()) f32 {
     else
         reserved_used / @as(f32, @floatFromInt(self.reserved.capacity));
     return @max(
-        usage(self.any_bytes),
+        usage(self.data),
         usage(self.args),
         usage(self.tags),
         reserved_usage,
@@ -203,7 +206,38 @@ pub fn iterator(self: *const @This()) Iterator {
 }
 
 pub const Exec = struct {
+    emit_warnings: bool,
+    emit_plots: bool,
+    name: [:0]const u8,
+    tags_plot_name: [:0]const u8,
+    args_plot_name: [:0]const u8,
+    data_plot_name: [:0]const u8,
+    warned_capacity: bool = false,
+    zone: Zone,
+
     zone_cmd_exec: zcs.ext.ZoneCmd.Exec = .{},
+
+    /// Execution options.
+    pub const Options = struct {
+        emit_warnings: bool = true,
+        emit_plots: bool = true,
+        name: [:0]const u8,
+    };
+
+    pub fn init(comptime options: Options) @This() {
+        return .{
+            .name = options.name,
+            .tags_plot_name = std.fmt.comptimePrint("{s}: tags", .{options.name}),
+            .args_plot_name = std.fmt.comptimePrint("{s}: args", .{options.name}),
+            .data_plot_name = std.fmt.comptimePrint("{s}: data", .{options.name}),
+            .emit_warnings = options.emit_warnings,
+            .emit_plots = options.emit_plots,
+            .zone = Zone.begin(.{
+                .src = @src(),
+                .name = options.name.ptr,
+            }),
+        };
+    }
 
     /// Executes the command buffer.
     ///
@@ -211,9 +245,9 @@ pub const Exec = struct {
     pub fn immediate(
         es: *Entities,
         cb: *CmdBuf,
-        comptime dbg_name: ?[:0]const u8,
+        comptime options: Options,
     ) void {
-        immediateOrErr(es, cb, dbg_name) catch |err|
+        immediateOrErr(es, cb, options) catch |err|
             @panic(@errorName(err));
     }
 
@@ -222,12 +256,10 @@ pub const Exec = struct {
     pub fn immediateOrErr(
         es: *Entities,
         cb: *CmdBuf,
-        comptime dbg_name: ?[:0]const u8,
+        comptime options: Options,
     ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
-        const zone = Zone.begin(.{ .src = @src(), .name = if (dbg_name) |name| name.ptr else null });
-        defer zone.end();
-        var self: @This() = .{};
-        defer self.deinit();
+        var self: @This() = .init(options);
+        defer self.deinit(cb);
 
         es.pointer_generation.increment();
         var iter = cb.iterator();
@@ -246,8 +278,49 @@ pub const Exec = struct {
         self.zone_cmd_exec.extImmediate(payload);
     }
 
-    pub fn deinit(self: *@This()) void {
+    pub fn checkStats(self: *@This(), cb: *const CmdBuf) void {
+        if (tracy.enabled and self.emit_plots) {
+            for ([_][:0]const u8{
+                self.tags_plot_name,
+                self.args_plot_name,
+                self.data_plot_name,
+            }) |name| {
+                tracy.plotConfig(.{
+                    .name = name,
+                    .format = .percentage,
+                    .mode = .line,
+                    .fill = true,
+                });
+            }
+
+            tracy.plot(.{
+                .name = self.tags_plot_name,
+                .value = .{ .f32 = usage(cb.tags) },
+            });
+
+            tracy.plot(.{
+                .name = self.args_plot_name,
+                .value = .{ .f32 = usage(cb.args) },
+            });
+
+            tracy.plot(.{
+                .name = self.data_plot_name,
+                .value = .{ .f32 = usage(cb.data) },
+            });
+        }
+
+        if (self.emit_warnings and
+            !self.warned_capacity and
+            cb.worstCaseUsage() > 0.5)
+        {
+            log.warn("{?s}: command buffer past 50% capacity", .{self.name});
+        }
+    }
+
+    pub fn deinit(self: *@This(), cb: *const CmdBuf) void {
+        self.checkStats(cb);
         self.zone_cmd_exec.deinit();
+        self.zone.end();
     }
 };
 

@@ -92,7 +92,7 @@ pub const Subcmd = union(enum) {
             // Assert that we're fully empty, and return null
             assert(self.tag_index == self.cb.tags.items.len);
             assert(self.arg_index == self.cb.args.items.len);
-            assert(self.comp_bytes_index == self.cb.any_bytes.items.len);
+            assert(self.comp_bytes_index == self.cb.data.items.len);
             return null;
         }
 
@@ -130,7 +130,7 @@ pub const Subcmd = union(enum) {
             );
 
             // Get the pointer as a slice, this way we don't fail on zero sized types
-            const bytes = &self.cb.any_bytes.items[self.comp_bytes_index..][0..id.size];
+            const bytes = &self.cb.data.items[self.comp_bytes_index..][0..id.size];
 
             // Update the offset and return the pointer
             self.comp_bytes_index += id.size;
@@ -217,14 +217,14 @@ pub const Subcmd = union(enum) {
 
         if (cb.binding.destroyed) return;
 
-        const aligned = std.mem.alignForward(usize, cb.any_bytes.items.len, @alignOf(T));
+        const aligned = std.mem.alignForward(usize, cb.data.items.len, @alignOf(T));
         if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
-        if (aligned + @sizeOf(T) > cb.any_bytes.capacity) return error.ZcsCmdBufOverflow;
+        if (aligned + @sizeOf(T) > cb.data.capacity) return error.ZcsCmdBufOverflow;
         cb.tags.appendAssumeCapacity(tag);
         cb.args.appendAssumeCapacity(@intFromPtr(typeId(T)));
 
-        cb.any_bytes.items.len = aligned;
-        cb.any_bytes.appendSliceAssumeCapacity(std.mem.asBytes(&val));
+        cb.data.items.len = aligned;
+        cb.data.appendSliceAssumeCapacity(std.mem.asBytes(&val));
     }
 
     /// Encode a pointer as part of a subcommand.

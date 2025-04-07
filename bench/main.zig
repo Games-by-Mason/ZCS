@@ -248,7 +248,7 @@ pub fn main() !void {
                     }
                 }
             }
-            CmdBuf.Exec.immediate(&es, &cb, "exec fill");
+            CmdBuf.Exec.immediate(&es, &cb, .{ .name = "exec fill" });
         }
 
         {

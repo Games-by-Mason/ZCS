@@ -54,7 +54,7 @@ test "events" {
     const e0 = Event.emit(&cb, 'a');
     const e1 = Event.emit(&cb, 'b');
 
-    CmdBuf.Exec.immediate(&es, &cb, null);
+    CmdBuf.Exec.immediate(&es, &cb, .{ .name = "events" });
 
     // Check that we received them in the expected order
     {
@@ -82,7 +82,7 @@ test "events" {
     try expectEqualEntity(e0, Event.emit(&cb, 'c'));
     try expectEqualEntity(e1, Event.emit(&cb, 'd'));
 
-    CmdBuf.Exec.immediate(&es, &cb, null);
+    CmdBuf.Exec.immediate(&es, &cb, .{ .name = "events" });
 
     // Check that we received them in order
     {
