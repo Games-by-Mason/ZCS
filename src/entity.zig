@@ -647,7 +647,7 @@ pub const Entity = packed struct {
 
         // Fill in any uninitialized components and return the view
         inline for (@typeInfo(View).@"struct".fields) |field| {
-            const Unwrapped = zcs.view.UnwrapField(field.type, .one);
+            const Unwrapped = zcs.view.UnwrapField(field.type, .{ .size = .one });
             if (@hasField(@TypeOf(comps), field.name) and
                 result.uninitialized.contains(typeId(Unwrapped).comp_flag.?))
             {
@@ -688,7 +688,7 @@ pub const Entity = packed struct {
         var view_arch: CompFlag.Set = .{};
         inline for (@typeInfo(View).@"struct".fields) |field| {
             if (field.type != Entity and @typeInfo(field.type) != .optional) {
-                const Unwrapped = zcs.view.UnwrapField(field.type, .one);
+                const Unwrapped = zcs.view.UnwrapField(field.type, .{ .size = .one });
                 const flag = CompFlag.registerImmediate(typeId(Unwrapped));
                 view_arch.insert(flag);
             }

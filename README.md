@@ -51,6 +51,8 @@ es.forEachThreaded("updateTurret", updateTurret, .{
 });
 ```
 
+*The name string is used in debug builds for profiling, and otherwise ignored.*
+
 *If you prefer a different threading model, the primitives necessary to wire up ZCS to your threading model of choice are exposed by the API.*
 
 ## Command Buffers

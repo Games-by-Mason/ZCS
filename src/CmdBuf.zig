@@ -278,7 +278,7 @@ pub const Exec = struct {
         self.zone_cmd_exec.extImmediate(payload);
     }
 
-    pub fn checkStats(self: *@This(), cb: *const CmdBuf) void {
+    pub fn updateStats(self: *@This(), cb: *const CmdBuf) void {
         if (tracy.enabled and self.emit_plots) {
             for ([_][:0]const u8{
                 self.tags_plot_name,
@@ -318,7 +318,7 @@ pub const Exec = struct {
     }
 
     pub fn deinit(self: *@This(), cb: *const CmdBuf) void {
-        self.checkStats(cb);
+        self.updateStats(cb);
         self.zone_cmd_exec.deinit();
         self.zone.end();
     }

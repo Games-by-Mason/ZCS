@@ -317,21 +317,21 @@ pub fn checkIterators(self: *@This()) !void {
         // Per entity, no handle
         {
             var count: usize = 0;
-            self.es.forEach(null, countEntities, &count);
+            self.es.forEach("countEntities", countEntities, &count);
             try expectEqual(self.committed.count(), count);
         }
 
         // Per chunk, with handles
         {
             defer self.found_buf.clearRetainingCapacity();
-            self.es.forEachChunk(null, countEntitiesChunkedWithHandles, self);
+            self.es.forEachChunk("countEntitiesChunkedWithHandles", countEntitiesChunkedWithHandles, self);
             try expectEqual(self.committed.count(), self.found_buf.count());
         }
 
         // Per entity, with handles
         {
             defer self.found_buf.clearRetainingCapacity();
-            self.es.forEach(null, countEntitiesWithHandle, self);
+            self.es.forEach("countEntitiesWithHandle", countEntitiesWithHandle, self);
             try expectEqual(self.committed.count(), self.found_buf.count());
         }
     }

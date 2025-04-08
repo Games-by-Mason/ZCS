@@ -401,10 +401,10 @@ pub fn forEachChunk(
     comptime updateChunk: anytype,
     ctx: view.params(@TypeOf(updateChunk))[0],
 ) void {
-    const zone = Zone.begin(.{ .src = @src(), .name = if (name) |n| n.ptr else null });
+    const zone = Zone.begin(.{ .src = @src(), .name = name });
     defer zone.end();
     const params = view.params(@TypeOf(updateChunk));
-    const required_comps = view.comps(view.Tuple(params[1..]), .slice) orelse return;
+    const required_comps = view.comps(view.Tuple(params[1..]), .{ .size = .slice }) orelse return;
     var chunks = self.chunkIterator(required_comps);
     while (chunks.next(self)) |chunk| {
         const chunk_view = chunk.view(self, view.Tuple(params[1..])).?;
