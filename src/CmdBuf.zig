@@ -21,10 +21,11 @@
 
 const std = @import("std");
 const tracy = @import("tracy");
-const meta = @import("meta.zig");
 const zcs = @import("root.zig");
 
 const log = std.log;
+
+const meta = zcs.meta;
 
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;

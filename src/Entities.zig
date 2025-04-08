@@ -25,13 +25,13 @@ const ChunkList = zcs.ChunkList;
 const ChunkPool = zcs.ChunkPool;
 const Chunk = zcs.Chunk;
 const HandleTab = zcs.HandleTab;
-const ChunkLists = zcs.ChunkLists;
+const Arches = zcs.Arches;
 const view = zcs.view;
 
 const Entities = @This();
 
 handle_tab: HandleTab,
-chunk_lists: ChunkLists,
+arches: Arches,
 pointer_generation: PointerLock.Generation = .{},
 reserved_entities: usize = 0,
 chunk_pool: ChunkPool,
@@ -66,8 +66,8 @@ pub fn init(gpa: Allocator, options: Options) Allocator.Error!@This() {
     });
     errdefer chunk_pool.deinit(gpa);
 
-    var chunk_lists: ChunkLists = try .init(gpa, options.max_archetypes);
-    errdefer chunk_lists.deinit(gpa);
+    var arches: Arches = try .init(gpa, options.max_archetypes);
+    errdefer arches.deinit(gpa);
 
     if (tracy.enabled) {
         var buf: [1024]u8 = undefined;
@@ -81,14 +81,14 @@ pub fn init(gpa: Allocator, options: Options) Allocator.Error!@This() {
 
     return .{
         .handle_tab = handle_tab,
-        .chunk_lists = chunk_lists,
+        .arches = arches,
         .chunk_pool = chunk_pool,
     };
 }
 
 /// Destroys the entity storage.
 pub fn deinit(self: *@This(), gpa: Allocator) void {
-    self.chunk_lists.deinit(gpa);
+    self.arches.deinit(gpa);
     self.chunk_pool.deinit(gpa);
     self.handle_tab.deinit(gpa);
     self.* = undefined;
@@ -99,7 +99,7 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
 /// Invalidates pointers.
 pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
     self.pointer_generation.increment();
-    var chunk_lists_iter = self.chunk_lists.iterator(self, arch);
+    var chunk_lists_iter = self.arches.iterator(self, arch);
     while (chunk_lists_iter.next(self)) |chunk_list| {
         var chunk_list_iter = chunk_list.iterator(self);
         while (chunk_list_iter.next(self)) |chunk| {
@@ -218,7 +218,7 @@ fn getLoc(self: *const Entities, from_comp: Any) struct {
     const chunk: *Chunk = @ptrFromInt(pool.size_align.backward(@intFromPtr(from_comp.ptr)));
 
     // Calculate the index in this chunk that this component is at
-    assert(chunk.header().arch(&self.chunk_lists).contains(flag));
+    assert(chunk.header().arch(&self.arches).contains(flag));
     const comp_offset = @intFromPtr(from_comp.ptr) - @intFromPtr(chunk);
     assert(comp_offset != 0); // Zero when missing
     // https://github.com/Games-by-Mason/ZCS/issues/24
@@ -438,7 +438,7 @@ pub fn updateStats(self: *@This(), options: UpdateStatsOptions) void {
         });
         tracy.plot(.{
             .name = "archetypes",
-            .value = .{ .i64 = @intCast(self.chunk_lists.arches.count()) },
+            .value = .{ .i64 = @intCast(self.arches.map.count()) },
         });
     }
 
@@ -460,7 +460,7 @@ pub fn updateStats(self: *@This(), options: UpdateStatsOptions) void {
         }
 
         if (!self.warned_arches and
-            self.chunk_lists.arches.count() > self.chunk_lists.arches.capacity() / 2)
+            self.arches.map.count() > self.arches.map.capacity() / 2)
         {
             self.warned_arches = true;
             log.warn("archetypes past 50% capacity", .{});
@@ -476,7 +476,7 @@ pub fn chunkIterator(
     self: *const @This(),
     required_comps: CompFlag.Set,
 ) ChunkIterator {
-    var lists = self.chunk_lists.iterator(self, required_comps);
+    var lists = self.arches.iterator(self, required_comps);
     const chunks: ChunkList.Iterator = if (lists.next(self)) |l| l.iterator(self) else .empty(self);
     var result: ChunkIterator = .{
         .lists = lists,
@@ -488,7 +488,7 @@ pub fn chunkIterator(
 
 /// See `chunkIterator`.
 pub const ChunkIterator = struct {
-    lists: ChunkLists.Iterator,
+    lists: Arches.Iterator,
     chunks: ChunkList.Iterator,
 
     /// Returns the pointer lock.

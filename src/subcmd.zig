@@ -1,5 +1,3 @@
-//! For internal use. See `Subcmd`.
-
 const std = @import("std");
 const assert = std.debug.assert;
 
@@ -11,7 +9,7 @@ const TypeId = zcs.TypeId;
 const CmdBuf = zcs.CmdBuf;
 const Entities = zcs.Entities;
 
-/// For internal use. An unencoded representation of command buffer commands.
+/// An unencoded representation of command buffer commands.
 pub const Subcmd = union(enum) {
     /// Binds an existing entity.
     bind_entity: Entity,

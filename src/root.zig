@@ -19,9 +19,10 @@ pub const PointerLock = @import("PointerLock.zig");
 pub const Chunk = @import("chunk.zig").Chunk;
 pub const ChunkList = @import("ChunkList.zig");
 pub const ChunkPool = @import("ChunkPool.zig");
-pub const ChunkLists = @import("ChunkLists.zig");
+pub const Arches = @import("Arches.zig");
 pub const view = @import("view.zig");
 pub const ext = @import("ext.zig");
+pub const meta = @import("meta.zig");
 
 /// Returns the component ID for the given type.
 pub const typeId = TypeInfo.init;

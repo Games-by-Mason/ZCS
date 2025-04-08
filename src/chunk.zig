@@ -10,11 +10,33 @@ const Entities = zcs.Entities;
 const PointerLock = zcs.PointerLock;
 const TypeId = zcs.TypeId;
 const CompFlag = zcs.CompFlag;
-const ChunkLists = zcs.ChunkLists;
+const ChunkList = zcs.ChunkList;
+const Arches = zcs.Arches;
 const ChunkPool = zcs.ChunkPool;
 
-/// A chunk of entity data where each entity has the same archetype.
+/// A chunk of entity data where each entity has the same archetype. This type is mostly used
+/// internally, you should prefer the higher level API in most cases.
 pub const Chunk = opaque {
+    /// A chunk's index in its `ChunkPool`.
+    pub const Index = enum(u32) {
+        /// The none index. The capacity is always less than this value, so there's no overlap.
+        none = std.math.maxInt(u32),
+        _,
+
+        /// Gets a chunk from the chunk ID.
+        pub fn get(self: Index, pool: *const ChunkPool) ?*Chunk {
+            if (self == .none) return null;
+            const byte_idx = @shlExact(
+                @intFromEnum(self),
+                @intCast(@intFromEnum(pool.size_align)),
+            );
+            const result: *Chunk = @ptrCast(&pool.buf[byte_idx]);
+            assert(@intFromEnum(self) < pool.reserved);
+            assert(pool.indexOf(result) == self);
+            return result;
+        }
+    };
+
     /// Meta information for a chunk.
     pub const Header = struct {
         /// The offsets to each component, or 0 for each that is missing.
@@ -23,22 +45,21 @@ pub const Chunk = opaque {
         /// measurably improves benchmarks, likely due to reducing cache misses.
         comp_buf_offsets: std.enums.EnumArray(CompFlag, u32),
         /// The chunk list this chunk is part of, if any.
-        list: ChunkLists.Index,
+        list: ChunkList.Index,
         /// The next chunk, if any.
-        next: ChunkPool.Index = .none,
+        next: Index = .none,
         /// The previous chunk, if any.
-        prev: ChunkPool.Index = .none,
+        prev: Index = .none,
         /// The next chunk with available space, if any.
-        next_avail: ChunkPool.Index = .none,
+        next_avail: Index = .none,
         /// The previous chunk with available space, if any.
-        prev_avail: ChunkPool.Index = .none,
+        prev_avail: Index = .none,
         /// The number of entities in this chunk.
         len: u32,
 
-        // XXX: when do we even use this?
         /// Returns this chunk's archetype. When checking for individual components, prefer checking
         /// `comp_buf_offsets`. This value larger but nearer in memory.
-        pub fn arch(self: *const @This(), lists: *const ChunkLists) CompFlag.Set {
+        pub fn arch(self: *const @This(), lists: *const Arches) CompFlag.Set {
             return self.list.arch(lists);
         }
     };
@@ -70,7 +91,7 @@ pub const Chunk = opaque {
     ) void {
         if (!std.debug.runtime_safety) return;
 
-        const list = self.header().list.get(&es.chunk_lists);
+        const list = self.header().list.get(&es.arches);
         const pool = &es.chunk_pool;
 
         // Validate next/prev
@@ -116,13 +137,12 @@ pub const Chunk = opaque {
         return @alignCast(@ptrCast(self));
     }
 
-    // XXX: keep internal? maybe move to caller
     /// Clears the chunk's entity data.
     pub fn clear(self: *Chunk, es: *Entities) void {
         // Get the header and chunk list
         const pool = &es.chunk_pool;
         const index = pool.indexOf(self);
-        const list = self.header().list.get(&es.chunk_lists);
+        const list = self.header().list.get(&es.arches);
 
         // Validate this chunk
         self.checkAssertions(es, .allow_empty);
@@ -149,10 +169,10 @@ pub const Chunk = opaque {
 
     /// Returns an entity slice view of type `View` into this chunk. See `zcs.view`.
     pub fn view(self: *@This(), es: *const Entities, View: type) ?View {
-        const list = self.header().list.get(&es.chunk_lists);
+        const list = self.header().list.get(&es.arches);
 
         const view_arch = zcs.view.comps(View, .{ .size = .slice }) orelse return null;
-        const chunk_arch = self.header().arch(&es.chunk_lists);
+        const chunk_arch = self.header().arch(&es.arches);
         if (!chunk_arch.supersetOf(view_arch)) return null;
 
         var result: View = undefined;
@@ -192,9 +212,9 @@ pub const Chunk = opaque {
         return ptr[0 .. self.header().len * id.size];
     }
 
-    // XXX: keep internal? maybe move to caller
-    /// For internal use. Swap removes an entity from the chunk, updating the location of the moved
-    /// entity.
+    /// Swap removes an entity from the chunk, updating the location of the moved entity. This is
+    /// typically used internally, for external uses you're likely looking for
+    /// `Entity.destroy` or `Entity.destroyImmediate`.
     pub fn swapRemove(
         self: *@This(),
         es: *Entities,
@@ -202,7 +222,7 @@ pub const Chunk = opaque {
     ) void {
         const pool = &es.chunk_pool;
         const index = pool.indexOf(self);
-        const list = self.header().list.get(&es.chunk_lists);
+        const list = self.header().list.get(&es.arches);
         const was_full = self.header().len >= list.chunk_capacity;
 
         // Get the last entity
@@ -217,7 +237,7 @@ pub const Chunk = opaque {
             // Clear the previous entity data
             if (std.debug.runtime_safety) {
                 indices[@intFromEnum(index_in_chunk)] = undefined;
-                var it = self.header().arch(&es.chunk_lists).iterator();
+                var it = self.header().arch(&es.arches).iterator();
                 while (it.next()) |flag| {
                     const id = flag.getId();
                     const comp_buffer = self.compsFromId(id).?;
@@ -243,7 +263,7 @@ pub const Chunk = opaque {
 
         // Move the moved entity's components
         {
-            var move = self.header().arch(&es.chunk_lists).iterator();
+            var move = self.header().arch(&es.arches).iterator();
             while (move.next()) |flag| {
                 const id = flag.getId();
 

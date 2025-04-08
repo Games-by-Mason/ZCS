@@ -9,7 +9,7 @@ const CompFlag = zcs.CompFlag;
 const Chunk = zcs.Chunk;
 const Entities = zcs.Entities;
 const PointerLock = zcs.PointerLock;
-const ChunkLists = zcs.ChunkLists;
+const Arches = zcs.Arches;
 const Entity = zcs.Entity;
 
 const Zone = tracy.Zone;
@@ -20,13 +20,15 @@ const assert = std.debug.assert;
 const alignForward = std.mem.alignForward;
 const math = std.math;
 
+const ChunkList = @This();
+
 /// The chunks in this chunk list, connected via the `next` and `prev` fields.
-head: ChunkPool.Index,
+head: Chunk.Index,
 /// The final chunk in this chunk list.
-tail: ChunkPool.Index,
+tail: Chunk.Index,
 /// The chunks in this chunk list that have space available, connected via the `next_avail`
 /// and `prev_avail` fields.
-avail: ChunkPool.Index,
+avail: Chunk.Index,
 /// The offset to the entity index buffer.
 index_buf_offset: u32,
 /// A map from component flags to the byte offset of their arrays. Components that aren't
@@ -36,7 +38,21 @@ comp_buf_offsets_cold: std.enums.EnumArray(CompFlag, u32),
 /// The number of entities that can be stored in a single chunk from this list.
 chunk_capacity: u32,
 
-// XXX: somehow keep internal?
+/// The index of a `ChunkList` in the `Arches` that owns it.
+pub const Index = enum(u32) {
+    /// Gets a chunk list from a chunk list ID.
+    pub fn get(self: @This(), arches: *const Arches) *ChunkList {
+        return &arches.map.values()[@intFromEnum(self)];
+    }
+
+    /// Gets the archetype for a chunk list.
+    pub fn arch(self: Index, arches: *const Arches) CompFlag.Set {
+        return arches.map.keys()[@intFromEnum(self)];
+    }
+
+    _,
+};
+
 /// Initializes a chunk list.
 pub fn init(pool: *const ChunkPool, arch: CompFlag.Set) error{ZcsChunkOverflow}!@This() {
     const zone = Zone.begin(.{ .src = @src() });
@@ -123,7 +139,6 @@ pub fn init(pool: *const ChunkPool, arch: CompFlag.Set) error{ZcsChunkOverflow}!
     };
 }
 
-// XXX: somehow keep internal or no?
 /// Adds an entity to the chunk list.
 pub fn append(
     self: *@This(),
@@ -131,12 +146,12 @@ pub fn append(
     e: Entity,
 ) error{ZcsChunkPoolOverflow}!Entity.Location {
     const pool = &es.chunk_pool;
-    const lists = &es.chunk_lists;
+    const arches = &es.arches;
 
     // Ensure there's a chunk with space available
     if (self.avail == .none) {
         // Allocate a new chunk
-        const new = try pool.reserve(es, self.indexOf(lists));
+        const new = try pool.reserve(es, arches.indexOf(self));
         const new_index = pool.indexOf(new);
 
         // Point the available list to the new chunk
@@ -224,18 +239,6 @@ pub fn iterator(self: *const @This(), es: *const Entities) Iterator {
         .chunk = self.head.get(&es.chunk_pool),
         .pointer_lock = es.pointer_generation.lock(),
     };
-}
-
-/// Gets the index of a chunk.
-pub fn indexOf(self: *const @This(), lists: *const ChunkLists) ChunkLists.Index {
-    const vals = lists.arches.values();
-
-    assert(@intFromPtr(self) >= @intFromPtr(vals.ptr));
-    assert(@intFromPtr(self) < @intFromPtr(vals.ptr) + vals.len * @sizeOf(@This()));
-
-    const offset = @intFromPtr(self) - @intFromPtr(vals.ptr);
-    const index = offset / @sizeOf(@This());
-    return @enumFromInt(index);
 }
 
 /// An iterator over a chunk list's chunks.

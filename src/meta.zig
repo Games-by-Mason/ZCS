@@ -1,5 +1,8 @@
+//! Metaprogramming helpers. See also `view`.
+
 const std = @import("std");
 
+/// Returns true if the given value is comptime known, false otherwise.
 pub inline fn isComptimeKnown(value: anytype) bool {
     return @typeInfo(@TypeOf(.{value})).@"struct".fields[0].is_comptime;
 }

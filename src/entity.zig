@@ -2,7 +2,6 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const zcs = @import("root.zig");
-const meta = @import("meta.zig");
 
 const typeId = zcs.typeId;
 
@@ -15,9 +14,10 @@ const CompFlag = zcs.CompFlag;
 const CmdBuf = zcs.CmdBuf;
 const TypeId = zcs.TypeId;
 const HandleTab = zcs.HandleTab;
-const Chunk = zcs.storage.Chunk;
+const Chunk = zcs.Chunk;
 const ChunkPool = zcs.ChunkPool;
 const ChunkList = zcs.storage.ChunkList;
+const meta = zcs.meta;
 
 /// An entity.
 ///
@@ -65,7 +65,7 @@ pub const Entity = packed struct {
         };
 
         /// The chunk where this entity is stored, or `null` if it hasn't been committed.
-        chunk: ChunkPool.Index = .none,
+        chunk: Chunk.Index = .none,
         /// The entity's index in the chunk, value is unspecified if not committed.
         index_in_chunk: IndexInChunk,
 
@@ -74,7 +74,7 @@ pub const Entity = packed struct {
         pub fn arch(self: @This(), es: *const Entities) CompFlag.Set {
             const chunk = self.chunk.get(&es.chunk_pool) orelse return .{};
             const header = chunk.header();
-            return header.arch(&es.chunk_lists);
+            return header.arch(&es.arches);
         }
     };
 
@@ -499,7 +499,7 @@ pub const Entity = packed struct {
         // If the entity is committed and the arch hasn't changed, early out
         if (old_chunk) |chunk| {
             const chunk_header = chunk.header();
-            if (chunk_header.arch(&es.chunk_lists).eql(new_arch)) {
+            if (chunk_header.arch(&es.arches).eql(new_arch)) {
                 @branchHint(.unlikely);
                 return true;
             }
@@ -507,7 +507,7 @@ pub const Entity = packed struct {
 
         // Get the new location. As mentioned in the doc comment, it's possible that we'll end up
         // creating a new chunk list but not be able to allocate any chunks for it.
-        const chunk_list = try es.chunk_lists.getOrPut(&es.chunk_pool, new_arch);
+        const chunk_list = try es.arches.getOrPut(&es.chunk_pool, new_arch);
         const new_loc = try chunk_list.append(es, self);
         const new_chunk = new_loc.chunk.get(&es.chunk_pool).?;
         errdefer comptime unreachable;
@@ -568,7 +568,7 @@ pub const Entity = packed struct {
         const entity_loc = es.handle_tab.get(self.key) orelse return null;
         const chunk = entity_loc.chunk.get(&es.chunk_pool) orelse return null;
         const view_arch = zcs.view.comps(View, .{ .size = .one }) orelse return null;
-        const entity_arch = chunk.header().list.arch(&es.chunk_lists);
+        const entity_arch = chunk.header().list.arch(&es.arches);
         if (!entity_arch.supersetOf(view_arch)) return null;
 
         // Fill in the view and return it

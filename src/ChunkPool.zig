@@ -6,7 +6,7 @@ const tracy = @import("tracy");
 
 const Chunk = zcs.Chunk;
 const Entities = zcs.Entities;
-const ChunkLists = zcs.ChunkLists;
+const ChunkList = zcs.ChunkList;
 
 const assert = std.debug.assert;
 const math = std.math;
@@ -17,27 +17,6 @@ const Allocator = std.mem.Allocator;
 const Zone = tracy.Zone;
 
 const ChunkPool = @This();
-
-// XXX: here or on chunk?
-/// A chunk's index in the pool.
-pub const Index = enum(u32) {
-    /// The none index. The capacity is always less than this value, so there's no overlap.
-    none = math.maxInt(u32),
-    _,
-
-    /// Gets a chunk from the chunk ID.
-    pub fn get(self: Index, pool: *const ChunkPool) ?*Chunk {
-        if (self == .none) return null;
-        const byte_idx = @shlExact(
-            @intFromEnum(self),
-            @intCast(@intFromEnum(pool.size_align)),
-        );
-        const result: *Chunk = @ptrCast(&pool.buf[byte_idx]);
-        assert(@intFromEnum(self) < pool.reserved);
-        assert(pool.indexOf(result) == self);
-        return result;
-    }
-};
 
 /// Memory reserved for chunks
 buf: []u8,
@@ -54,7 +33,7 @@ reserved: u32,
 /// first chunk, this is unlikely to ever matter.
 size_align: Alignment,
 /// Freed chunks, connected by the `next` field. All other fields are undefined.
-free: Index = .none,
+free: Chunk.Index = .none,
 
 /// Options for `init`.
 pub const Options = struct {
@@ -65,7 +44,6 @@ pub const Options = struct {
     chunk_size: u32,
 };
 
-// XXX: keep internal?
 /// Allocates a chunk pool.
 pub fn init(gpa: Allocator, options: Options) Allocator.Error!@This() {
     const zone = Zone.begin(.{ .src = @src() });
@@ -92,19 +70,17 @@ pub fn init(gpa: Allocator, options: Options) Allocator.Error!@This() {
     };
 }
 
-// XXX: keep internal?
 /// Frees a chunk pool.
 pub fn deinit(self: *@This(), gpa: Allocator) void {
     gpa.rawFree(self.buf, self.size_align, @returnAddress());
     self.* = undefined;
 }
 
-// XXX: keep internal?
 /// Reserves a chunk from the chunk pool
 pub fn reserve(
     self: *@This(),
     es: *const Entities,
-    list: ChunkLists.Index,
+    list: ChunkList.Index,
 ) error{ZcsChunkPoolOverflow}!*Chunk {
     // Get a free chunk. Try the free list first, then fall back to bump allocation from the
     // preallocated buffer.
@@ -128,7 +104,7 @@ pub fn reserve(
     // Initialize the chunk and return it
     const header = chunk.header();
     header.* = .{
-        .comp_buf_offsets = list.get(&es.chunk_lists).comp_buf_offsets_cold,
+        .comp_buf_offsets = list.get(&es.arches).comp_buf_offsets_cold,
         .list = list,
         .len = 0,
     };
@@ -136,7 +112,7 @@ pub fn reserve(
 }
 
 /// Gets the index of a chunk.
-pub fn indexOf(self: *const @This(), chunk: *const Chunk) Index {
+pub fn indexOf(self: *const @This(), chunk: *const Chunk) Chunk.Index {
     assert(@intFromPtr(chunk) >= @intFromPtr(self.buf.ptr));
     assert(@intFromPtr(chunk) < @intFromPtr(self.buf.ptr) + self.buf.len);
     const offset = @intFromPtr(chunk) - @intFromPtr(self.buf.ptr);
