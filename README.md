@@ -34,12 +34,28 @@ Games often feature cross cutting concerns. Archetype based iteration allows you
 var iter = es.iterator(struct {
     mesh: *const Mesh,
     transform: *const Transform,
-    effects: ?*const Effects,
+    effect: ?*const Effect,
 });
 while (iter.next()) |vw| {
-    vw.mesh.render(vw.transform, vw.effects);
+    vw.mesh.render(vw.transform, vw.effect);
 }
 ```
+
+The following syntax sugar is also provided, where the string is used as the name of a Tracy zone if Tracy is enabled:
+```zig
+fn updateMeshWithEffect(
+    ctx: void,
+    mesh: *const Mesh,
+    transform: *const Transform,
+    effect: ?*const Effect,
+) void {
+    // ...
+}
+
+es.forEach("updateMeshWithEffect", updateMeshWithEffect, {});
+```
+
+*Lower level iterators for operating on chunks of contiguous entities instead of individual entities are also provided.*
 
 ## Optional Thread Pool Integration
 
