@@ -4,7 +4,9 @@ An archetype based entity component system written in Zig.
 
 # Status
 
-ZCS is beta software. Once I've shipped a commercial game using ZCS, I'll start to stabilize the API and no longer consider it a beta.
+ZCS is beta software. Once I've shipped a commercial game using ZCS, I'll start to stabilize the API and remove this disclaimer.
+
+If at the time of reading you're not seeing any recent commits, this project isn't dead--I'm just working on a game!
 
 # Key Features
 
@@ -162,4 +164,8 @@ Comparing performance with something like `MultiArrayList`:
 
 You can generate documentation with `zig build docs`.
 
-This library is very new, and as such there are not high quality examples yet. You may be able to find some example code in [2Pew](https://github.com/MasonRemaley/2Pew/tree/zcs) which I'm porting to use this library, but it's currently incomplete.
+For example code, see [2Pew](https://github.com/MasonRemaley/2Pew/tree/zcs).
+
+# Contributing
+
+Contributions are welcome! If you'd like to add a major feature, please file a proposal first.
