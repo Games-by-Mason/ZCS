@@ -296,7 +296,7 @@ pub const Exec = struct {
     /// related events along the way. In practice, you likely want to call the finer grained
     /// functions provided directly, so that other libraries you use can also hook into the command
     /// buffer iterator.
-    pub fn immediate(es: *Entities, cb: *const CmdBuf, comptime options: CmdBuf.Exec.Options) void {
+    pub fn immediate(es: *Entities, cb: *CmdBuf, comptime options: CmdBuf.Exec.Options) void {
         immediateOrErr(es, cb, options) catch |err|
             @panic(@errorName(err));
     }
@@ -307,11 +307,10 @@ pub const Exec = struct {
     /// Invalidates pointers.
     pub fn immediateOrErr(
         es: *Entities,
-        cb: *const CmdBuf,
+        cb: *CmdBuf,
         comptime options: CmdBuf.Exec.Options,
-    ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
+    ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow, ZcsEntityOverflow }!void {
         var default_exec: CmdBuf.Exec = .init(options);
-        defer default_exec.deinit(cb);
 
         es.pointer_generation.increment();
 
@@ -334,6 +333,8 @@ pub const Exec = struct {
                 },
             }
         }
+
+        try default_exec.finish(cb, es);
     }
 
     /// Executes an extension command.

@@ -218,7 +218,6 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
         }
 
         Transform.Exec.immediate(&es, &cb, .{ .name = "fuzzTransformsCmdBuf" });
-        cb.clear(&es);
         try checkOracle(&es);
     }
 }

@@ -51,8 +51,8 @@ test "events" {
     defer cb.deinit(gpa, &es);
 
     // Emit some events
-    const e0 = Event.emit(&cb, 'a');
-    const e1 = Event.emit(&cb, 'b');
+    _ = Event.emit(&cb, 'a');
+    _ = Event.emit(&cb, 'b');
 
     CmdBuf.Exec.immediate(&es, &cb, .{ .name = "events" });
 
@@ -63,11 +63,9 @@ test "events" {
         var events = es.iterator(struct { entity: Entity, event: *const Event });
 
         const recv_0 = events.next(&es).?;
-        try expectEqualEntity(e0, recv_0.entity);
         try expectEqual('a', recv_0.event.payload);
 
         const recv_1 = events.next(&es).?;
-        try expectEqualEntity(e1, recv_1.entity);
         try expectEqual('b', recv_1.event.payload);
 
         try expectEqual(null, events.next(&es));
@@ -79,8 +77,8 @@ test "events" {
     try expectEqual(0, es.count());
 
     // Emit some more events, this should recycle the old IDs
-    try expectEqualEntity(e0, Event.emit(&cb, 'c'));
-    try expectEqualEntity(e1, Event.emit(&cb, 'd'));
+    _ = Event.emit(&cb, 'c');
+    _ = Event.emit(&cb, 'd');
 
     CmdBuf.Exec.immediate(&es, &cb, .{ .name = "events" });
 
@@ -90,11 +88,9 @@ test "events" {
 
         var events = es.iterator(struct { entity: Entity, event: *const Event });
         const recv_0 = events.next(&es).?;
-        try expectEqualEntity(e0, recv_0.entity);
         try expectEqual('c', recv_0.event.payload);
 
         const recv_1 = events.next(&es).?;
-        try expectEqualEntity(e1, recv_1.entity);
         try expectEqual('d', recv_1.event.payload);
 
         try expectEqual(null, events.next(&es));

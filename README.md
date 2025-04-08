@@ -76,7 +76,6 @@ e.add(&cb, Sprite, .{ .index = .cat });
 
 // Execute the command buffer, and then clear it for reuse. This would be done from the main thread.
 CmdBuf.Exec.immediate(&es);
-cb.clear(&es);
 ```
 
 ## Command Buffer Extensions

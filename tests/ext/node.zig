@@ -265,7 +265,6 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
 
         Node.Exec.immediate(&fz.es, &cb, .{ .name = "fuzzNodesCmdBuf" });
         try checkOracle(&fz, &o);
-        cb.clear(&fz.es);
     }
 }
 
@@ -296,7 +295,6 @@ fn fuzzNodeCyclesCmdBuf(_: void, input: []const u8) !void {
 
         Node.Exec.immediate(&fz.es, &cb, .{ .name = "fuzz cycles" });
         try checkOracle(&fz, &o);
-        cb.clear(&fz.es);
     }
 }
 

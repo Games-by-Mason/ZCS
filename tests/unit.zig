@@ -73,7 +73,6 @@ test "cb execImmediate" {
     CmdBuf.Exec.immediate(&es, &cb, .{ .name = "cb execImmediate", .emit_warnings = false });
     try expectEqual(0, es.reserved());
     try expectEqual(3, es.count());
-    cb.clear(&es);
 
     var iter = es.iterator(struct { e: Entity });
 
@@ -106,7 +105,6 @@ test "cb execImmediate" {
     e2.add(&cb, Model, model);
     e2.remove(&cb, RigidBody);
     CmdBuf.Exec.immediate(&es, &cb, .{ .name = "cb exec immediate", .emit_warnings = false });
-    cb.clear(&es);
 
     try expectEqual(3, es.count());
 

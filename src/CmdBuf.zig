@@ -158,7 +158,8 @@ pub fn extPtr(self: *@This(), T: type, payload: *const T) error{ZcsCmdBufOverflo
     try Subcmd.encodeExtPtr(self, T, payload);
 }
 
-/// Clears the command buffer for reuse. Refills the reserved entity list to capacity.
+/// Clears the command buffer for reuse and then refills the reserved entity list to capacity.
+/// Called automatically from `Exec.immediate`.
 pub fn clear(self: *@This(), es: *Entities) void {
     self.clearOrErr(es) catch |err|
         @panic(@errorName(err));
@@ -240,7 +241,7 @@ pub const Exec = struct {
         };
     }
 
-    /// Executes the command buffer.
+    /// Executes the command buffer and then clears it.
     ///
     /// Invalidates pointers.
     pub fn immediate(
@@ -258,9 +259,8 @@ pub const Exec = struct {
         es: *Entities,
         cb: *CmdBuf,
         comptime options: Options,
-    ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
+    ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow, ZcsEntityOverflow }!void {
         var self: @This() = .init(options);
-        defer self.deinit(cb);
 
         es.pointer_generation.increment();
         var iter = cb.iterator();
@@ -273,6 +273,8 @@ pub const Exec = struct {
                 .ext => |payload| self.extImmediateOrErr(payload),
             }
         }
+
+        try self.finish(cb, es);
     }
 
     pub fn extImmediateOrErr(self: *@This(), payload: Any) void {
@@ -318,9 +320,10 @@ pub const Exec = struct {
         }
     }
 
-    pub fn deinit(self: *@This(), cb: *const CmdBuf) void {
+    pub fn finish(self: *@This(), cb: *CmdBuf, es: *Entities) error{ZcsEntityOverflow}!void {
         self.updateStats(cb);
-        self.zone_cmd_exec.deinit();
+        cb.clear(es);
+        self.zone_cmd_exec.finish();
         self.zone.end();
     }
 };

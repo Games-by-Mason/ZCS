@@ -70,7 +70,7 @@ pub const Exec = struct {
         }
     }
 
-    pub fn deinit(self: *@This()) void {
+    pub fn finish(self: *@This()) void {
         if (tracy.enabled) {
             assert(self.stack.len == 0);
         }

@@ -107,7 +107,6 @@ fn run(input: []const u8, saturated: bool) !void {
         }
 
         CmdBuf.Exec.immediate(&fz.es, &cb, .{ .name = "run", .emit_warnings = false });
-        cb.clear(&fz.es);
         try checkOracle(&fz, &cb);
 
         // Modify the entities directly. We do this later since interspersing it with the
