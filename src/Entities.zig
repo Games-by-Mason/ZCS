@@ -21,12 +21,11 @@ const CompFlag = zcs.CompFlag;
 const Entity = zcs.Entity;
 const PointerLock = zcs.PointerLock;
 const TypeId = zcs.TypeId;
-const ChunkList = zcs.storage.ChunkList;
-const ChunkPool = zcs.storage.ChunkPool;
-const Chunk = zcs.storage.Chunk;
-const HandleTab = zcs.storage.HandleTab;
-const ChunkLists = zcs.storage.ChunkLists;
-const EntityIndex = zcs.storage.EntityIndex;
+const ChunkList = zcs.ChunkList;
+const ChunkPool = zcs.ChunkPool;
+const Chunk = zcs.Chunk;
+const HandleTab = zcs.HandleTab;
+const ChunkLists = zcs.ChunkLists;
 const view = zcs.view;
 
 const Entities = @This();
@@ -392,7 +391,7 @@ pub fn forEachChunkThreaded(
 /// defined order, may be useful for batch optimizations.
 ///
 /// `updateChunk` should take `ctx` as an argument, followed by any number of component slices,
-/// optional component slices, or const slices of `EntityIndex`.
+/// optional component slices, or const slices of `Entity.Index`.
 ///
 /// Invalidating pointers from the update function results in safety checked illegal behavior.
 pub fn forEachChunk(

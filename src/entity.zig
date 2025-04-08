@@ -14,9 +14,9 @@ const Any = zcs.Any;
 const CompFlag = zcs.CompFlag;
 const CmdBuf = zcs.CmdBuf;
 const TypeId = zcs.TypeId;
-const HandleTab = zcs.storage.HandleTab;
+const HandleTab = zcs.HandleTab;
 const Chunk = zcs.storage.Chunk;
-const ChunkPool = zcs.storage.ChunkPool;
+const ChunkPool = zcs.ChunkPool;
 const ChunkList = zcs.storage.ChunkList;
 
 /// An entity.
