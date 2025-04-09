@@ -14,6 +14,7 @@ const CmdBuf = zcs.CmdBuf;
 const Any = zcs.Any;
 const CompFlag = zcs.CompFlag;
 const TypeInfo = zcs.TypeInfo;
+const CmdPool = zcs.CmdPool;
 const typeId = zcs.typeId;
 
 const types = @import("types.zig");
@@ -124,8 +125,21 @@ test "cb execImmediate" {
     es.updateStats(.{ .emit_warnings = false });
 }
 
-fn incrementId(thread_id: zcs.ThreadId, ctx: struct { by: u8 }, counter: *u32) void {
+fn incrementId(
+    thread_id: zcs.ThreadId,
+    ctx: struct {
+        by: u8,
+        cp: *CmdPool,
+    },
+    counter: *u32,
+) void {
     _ = thread_id; // Not actually tested, just forwarded from std so this is probably fine
+    const cb = ctx.cp.acquire();
+    defer ctx.cp.release(cb);
+
+    const e = Entity.reserve(cb);
+    e.add(cb, u8, 0);
+
     counter.* += ctx.by;
 }
 
@@ -149,19 +163,20 @@ fn incrementChunkId(thread_id: zcs.ThreadId, ctx: struct { by: u8 }, counters: [
 test "threading" {
     defer CompFlag.unregisterAll();
 
-    const max_entities = 8192;
+    const max_entities = 524288;
+    const create_entities = 1024;
     var es: Entities = try .init(gpa, .{
         .max_entities = max_entities,
-        .max_archetypes = 1,
-        .max_chunks = 128,
+        .max_archetypes = 2,
+        .max_chunks = 256,
         .chunk_size = 1024,
     });
     defer es.deinit(gpa);
 
-    var entities: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, max_entities);
+    var entities: std.ArrayListUnmanaged(Entity) = try .initCapacity(gpa, create_entities);
     defer entities.deinit(gpa);
 
-    for (0..max_entities) |i| {
+    for (0..create_entities) |i| {
         const e: Entity = .reserveImmediate(&es);
         entities.appendAssumeCapacity(e);
         try expect(e.changeArchImmediate(
@@ -194,13 +209,20 @@ test "threading" {
     // Per entity with thread IDs
     {
         var tp: std.Thread.Pool = undefined;
-        try std.Thread.Pool.init(&tp, .{ .allocator = gpa, .track_ids = true });
+        try std.Thread.Pool.init(&tp, .{ .allocator = gpa, .track_ids = true, .n_jobs = 4 });
         defer tp.deinit();
+
+        var cp: CmdPool = try .init(gpa, &es, .{
+            .reserved = 256,
+            .cb = .{ .cmds = 512 },
+            .headroom = 0.0,
+        });
+        defer cp.deinit(gpa, &es);
 
         var wg: std.Thread.WaitGroup = .{};
 
         es.forEachThreaded("incrementId", incrementId, .{
-            .ctx = .{ .by = 1 },
+            .ctx = .{ .by = 1, .cp = &cp },
             .tp = &tp,
             .wg = &wg,
         });
@@ -209,6 +231,18 @@ test "threading" {
         for (entities.items, 0..) |e, i| {
             try std.testing.expectEqual(i + 2, e.get(&es, u32).?.*);
         }
+
+        for (cp.written()) |*cb| CmdBuf.Exec.immediate(&es, cb, .{ .name = "threaded" });
+
+        var count: usize = 0;
+        var iter = es.iterator(struct { n: *const u8 });
+        while (iter.next(&es)) |vw| {
+            try std.testing.expectEqual(@as(u8, 0), vw.n.*);
+            count += 1;
+        }
+        try expectEqual(create_entities, count);
+
+        cp.reset();
     }
 
     // Per chunk without thread IDs

@@ -179,6 +179,11 @@ pub fn clearOrErr(self: *@This(), es: *Entities) error{ZcsEntityOverflow}!void {
     }
 }
 
+/// Returns true if this command buffer is empty.
+pub fn isEmpty(self: @This()) bool {
+    return self.tags.items.len == 0 and self.reserved.items.len == self.reserved.capacity;
+}
+
 /// Returns the ratio of length to capacity for the internal buffer that is the nearest to being
 /// full.
 pub fn worstCaseUsage(self: @This()) f32 {

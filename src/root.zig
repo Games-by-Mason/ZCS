@@ -13,6 +13,7 @@ pub const Entity = @import("entity.zig").Entity;
 pub const Any = @import("Any.zig");
 pub const CompFlag = @import("comp_flag.zig").CompFlag;
 pub const CmdBuf = @import("CmdBuf.zig");
+pub const CmdPool = @import("CmdPool.zig");
 pub const TypeInfo = @import("type_id.zig").TypeInfo;
 pub const TypeId = @import("type_id.zig").TypeId;
 pub const PointerLock = @import("PointerLock.zig");
