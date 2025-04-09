@@ -45,8 +45,13 @@ pub const TypeInfo = struct {
         // compile time errors when trying to use bad types, so we just rule them out for any use of
         // `Any` instead.
         //
-        // `Entity.Index` is likely indicative of a mistake and so is ruled out.
-        if (@typeInfo(T) == .optional or T == zcs.Entity or T == zcs.Entity.Index) {
+        // `Entity.Index` and `zcs.ThreadId` are likely indicative of a mistake and so are ruled
+        // out.
+        if (@typeInfo(T) == .optional or
+            T == zcs.Entity or
+            T == zcs.Entity.Index or
+            T == zcs.ThreadId)
+        {
             @compileError("unsupported component type '" ++ @typeName(T) ++ "'; consider wrapping in struct");
         }
 

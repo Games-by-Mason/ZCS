@@ -174,7 +174,7 @@ Comparing performance with something like `MultiArrayList`:
 * Iterating over all data results in nearly identical performance
 * Iterating over only data that contains supersets of a given archetype is nearly equivalent to iterating a `MultiArrayList` that only contains the desired data
 * Inserting and removing entities is O(1), but more expensive than appending/popping from a `std.MultiArrayList` since more bookkeeping is involved for the aforementioned acceleration and persistent handles
-* Random access is O(1), but more expensive than random access to `std.MultiArrayList` as the persitent handles introduce a layer of indirection
+* Random access is O(1), but more expensive than random access to `std.MultiArrayList` as the persistent handles introduce a layer of indirection
 
 # Examples & Documentation
 

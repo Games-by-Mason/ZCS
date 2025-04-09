@@ -47,6 +47,7 @@ pub fn UnwrapField(T: type, options: ViewOptions) type {
     // If we're looking for multiple elements and `T` points to entity indices, return it directly
     if (options.size != .one and Result == Entity.Index) {
         comptime assert(@typeInfo(T) != .optional);
+        comptime assert(@typeInfo(T).pointer.is_const == true);
         return Result;
     }
 
@@ -100,8 +101,11 @@ pub fn Slice(EntityView: type) type {
             const Ptr = switch (@typeInfo(T)) {
                 .optional => |optional| optional.child,
                 .pointer => T,
-                else => comptime unreachable,
+                else => @compileError("expected pointer, found " ++ @typeName(T)),
             };
+            if (@typeInfo(Ptr) != .pointer) {
+                @compileError("expected pointer, found " ++ @typeName(T));
+            }
             const Child = @typeInfo(Ptr).pointer.child;
             const S = if (@typeInfo(Ptr).pointer.is_const) []const Child else []Child;
             break :b if (@typeInfo(T) == .optional) ?S else S;
