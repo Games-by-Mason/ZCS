@@ -26,6 +26,8 @@ const ChunkPool = zcs.ChunkPool;
 const Chunk = zcs.Chunk;
 const HandleTab = zcs.HandleTab;
 const Arches = zcs.Arches;
+const CmdBuf = zcs.CmdBuf;
+const CmdPool = zcs.CmdPool;
 const view = zcs.view;
 
 const Entities = @This();
@@ -257,136 +259,6 @@ pub fn forEach(
     }
 }
 
-/// Options for `forEachThreaded`.
-pub fn ForEachThreadedOptions(cb: type) type {
-    return struct {
-        const track_ids = view.params(cb)[0] == zcs.ThreadId;
-        const Ctx = view.params(cb)[if (track_ids) 1 else 0];
-        const Comps = view.Tuple(view.params(cb)[if (track_ids) 2 else 1..]);
-
-        ctx: Ctx,
-        tp: *std.Thread.Pool,
-        wg: *std.Thread.WaitGroup,
-    };
-}
-
-/// Similar to `forEach`, but spawns each chunk's work as a thread pool task. Optionally, you may
-/// add an argument of type `zcs.ThreadId` as the first argument to get the thread index if
-/// `track_ids` is enabled on the thread pool.
-///
-/// Keep in mind that this is unlikely to be a performance win unless your update function is very
-/// expensive. Iteration is cheap.
-pub fn forEachThreaded(
-    self: *@This(),
-    comptime name: [:0]const u8,
-    comptime updateEntity: anytype,
-    options: ForEachThreadedOptions(@TypeOf(updateEntity)),
-) void {
-    const zone = Zone.begin(.{ .src = @src(), .name = name });
-    defer zone.end();
-
-    const Opt = @TypeOf(options);
-
-    const Wrapped = struct {
-        fn processChunkId(
-            thread_id: usize,
-            es: *const Entities,
-            chunk: *Chunk,
-            ctx: @FieldType(@TypeOf(options), "ctx"),
-        ) void {
-            const batch_zone = Zone.begin(.{ .src = @src(), .name = name });
-            defer batch_zone.end();
-
-            const slices = chunk.view(es, view.Slice(Opt.Comps)).?;
-            for (0..chunk.header().len) |i| {
-                const vw = view.index(Opt.Comps, es, slices, @intCast(i));
-                const thread_id_enum: zcs.ThreadId = @enumFromInt(thread_id);
-                @call(.auto, updateEntity, .{thread_id_enum} ++ .{ctx} ++ vw);
-            }
-        }
-
-        fn processChunk(
-            es: *const Entities,
-            chunk: *Chunk,
-            ctx: @FieldType(@TypeOf(options), "ctx"),
-        ) void {
-            const batch_zone = Zone.begin(.{ .src = @src(), .name = name });
-            defer batch_zone.end();
-
-            const slices = chunk.view(es, view.Slice(Opt.Comps)).?;
-            for (0..chunk.header().len) |i| {
-                const vw = view.index(Opt.Comps, es, slices, @intCast(i));
-                @call(.auto, updateEntity, .{ctx} ++ vw);
-            }
-        }
-    };
-
-    const required_comps = view.comps(Opt.Comps, .{ .size = .one }) orelse return;
-    var chunks = self.chunkIterator(required_comps);
-    while (chunks.next(self)) |chunk| {
-        const spawn = if (Opt.track_ids) std.Thread.Pool.spawnWgId else std.Thread.Pool.spawnWg;
-        const task = if (Opt.track_ids) Wrapped.processChunkId else Wrapped.processChunk;
-        spawn(options.tp, options.wg, task, .{
-            self,
-            chunk,
-            options.ctx,
-        });
-    }
-}
-
-/// Similar to `forEach`, but with the threading model from `forEachThreaded`.
-pub fn forEachChunkThreaded(
-    self: *@This(),
-    comptime name: [:0]const u8,
-    comptime updateChunk: anytype,
-    options: ForEachThreadedOptions(@TypeOf(updateChunk)),
-) void {
-    const zone = Zone.begin(.{ .src = @src(), .name = name });
-    defer zone.end();
-
-    const Opt = @TypeOf(options);
-
-    const Wrapped = struct {
-        fn processChunkId(
-            thread_id: usize,
-            es: *const Entities,
-            chunk: *Chunk,
-            ctx: @FieldType(@TypeOf(options), "ctx"),
-        ) void {
-            const batch_zone = Zone.begin(.{ .src = @src(), .name = name });
-            defer batch_zone.end();
-
-            const thread_id_enum: zcs.ThreadId = @enumFromInt(thread_id);
-            const slices = chunk.view(es, view.Slice(Opt.Comps)).?;
-            @call(.auto, updateChunk, .{thread_id_enum} ++ .{ctx} ++ slices);
-        }
-
-        fn processChunk(
-            es: *const Entities,
-            chunk: *Chunk,
-            ctx: @FieldType(@TypeOf(options), "ctx"),
-        ) void {
-            const batch_zone = Zone.begin(.{ .src = @src(), .name = name });
-            defer batch_zone.end();
-
-            const slices = chunk.view(es, view.Slice(Opt.Comps)).?;
-            @call(.auto, updateChunk, .{ctx} ++ slices);
-        }
-    };
-
-    const required_comps = view.comps(Opt.Comps, .{ .size = .slice }) orelse return;
-    var chunks = self.chunkIterator(required_comps);
-    while (chunks.next(self)) |chunk| {
-        const spawn = if (Opt.track_ids) std.Thread.Pool.spawnWgId else std.Thread.Pool.spawnWg;
-        const task = if (Opt.track_ids) Wrapped.processChunkId else Wrapped.processChunk;
-        spawn(options.tp, options.wg, task, .{
-            self,
-            chunk,
-            options.ctx,
-        });
-    }
-}
-
 /// Prefer `forEach`. Calls `updateChunk` on each compatible chunk in an implementation
 /// defined order, may be useful for batch optimizations.
 ///
@@ -408,6 +280,144 @@ pub fn forEachChunk(
     while (chunks.next(self)) |chunk| {
         const chunk_view = chunk.view(self, view.Tuple(params[1..])).?;
         @call(.auto, updateChunk, .{ctx} ++ chunk_view);
+    }
+}
+
+/// Options for `forEachThreaded`.
+pub fn ForEachThreadedOptions(f: type) type {
+    return struct {
+        const acquire_cb = view.params(f)[1] == *CmdBuf;
+        const Ctx = view.params(f)[0];
+        const Comps = view.Tuple(view.params(f)[if (acquire_cb) 2 else 1..]);
+
+        ctx: Ctx,
+        tp: *std.Thread.Pool,
+        wg: *std.Thread.WaitGroup,
+        cp: ?*CmdPool,
+    };
+}
+
+/// Similar to `forEach`, but spawns each chunk's work as a thread pool task. Optionally, you may
+/// add an argument of type `*CmdBuf` as the first argument to get a command buffer if `cp` is set
+/// in `options`.
+///
+/// Keep in mind that this is unlikely to be a performance win unless your update function is very
+/// expensive. Iteration is cheap.
+pub fn forEachThreaded(
+    self: *@This(),
+    comptime name: [:0]const u8,
+    comptime updateEntity: anytype,
+    options: ForEachThreadedOptions(@TypeOf(updateEntity)),
+) void {
+    const zone = Zone.begin(.{ .src = @src(), .name = name });
+    defer zone.end();
+
+    const Opt = @TypeOf(options);
+
+    assert(!Opt.acquire_cb or options.cp != null);
+
+    const Wrapped = struct {
+        fn processChunk(
+            es: *const Entities,
+            chunk: *Chunk,
+            ctx: @FieldType(@TypeOf(options), "ctx"),
+        ) void {
+            const batch_zone = Zone.begin(.{ .src = @src(), .name = name });
+            defer batch_zone.end();
+
+            const slices = chunk.view(es, view.Slice(Opt.Comps)).?;
+            for (0..chunk.header().len) |i| {
+                const vw = view.index(Opt.Comps, es, slices, @intCast(i));
+                @call(.auto, updateEntity, .{ctx} ++ vw);
+            }
+        }
+
+        fn processChunkCb(
+            es: *const Entities,
+            cp: *CmdPool,
+            chunk: *Chunk,
+            ctx: @FieldType(@TypeOf(options), "ctx"),
+        ) void {
+            const batch_zone = Zone.begin(.{ .src = @src(), .name = name });
+            defer batch_zone.end();
+
+            const cb = cp.acquire();
+            defer cp.release(cb);
+
+            const slices = chunk.view(es, view.Slice(Opt.Comps)).?;
+            for (0..chunk.header().len) |i| {
+                const vw = view.index(Opt.Comps, es, slices, @intCast(i));
+                @call(.auto, updateEntity, .{ ctx, cb } ++ vw);
+            }
+        }
+    };
+
+    const required_comps = view.comps(Opt.Comps, .{ .size = .one }) orelse return;
+    var chunks = self.chunkIterator(required_comps);
+    while (chunks.next(self)) |chunk| {
+        if (Opt.acquire_cb) {
+            options.tp.spawnWg(options.wg, Wrapped.processChunkCb, .{
+                self,
+                options.cp.?,
+                chunk,
+                options.ctx,
+            });
+        } else {
+            options.tp.spawnWg(options.wg, Wrapped.processChunk, .{
+                self,
+                chunk,
+                options.ctx,
+            });
+        }
+    }
+}
+
+/// Options for `forEachChunkThreaded`.
+pub fn ForEachChunkThreadedOptions(f: type) type {
+    return struct {
+        const Ctx = view.params(f)[0];
+        const Comps = view.Tuple(view.params(f)[1..]);
+
+        ctx: Ctx,
+        tp: *std.Thread.Pool,
+        wg: *std.Thread.WaitGroup,
+    };
+}
+
+/// Similar to `forEach`, but with the threading model from `forEachThreaded`.
+pub fn forEachChunkThreaded(
+    self: *@This(),
+    comptime name: [:0]const u8,
+    comptime updateChunk: anytype,
+    options: ForEachChunkThreadedOptions(@TypeOf(updateChunk)),
+) void {
+    const zone = Zone.begin(.{ .src = @src(), .name = name });
+    defer zone.end();
+
+    const Opt = @TypeOf(options);
+
+    const Wrapped = struct {
+        fn processChunk(
+            es: *const Entities,
+            chunk: *Chunk,
+            ctx: @FieldType(@TypeOf(options), "ctx"),
+        ) void {
+            const batch_zone = Zone.begin(.{ .src = @src(), .name = name });
+            defer batch_zone.end();
+
+            const slices = chunk.view(es, view.Slice(Opt.Comps)).?;
+            @call(.auto, updateChunk, .{ctx} ++ slices);
+        }
+    };
+
+    const required_comps = view.comps(Opt.Comps, .{ .size = .slice }) orelse return;
+    var chunks = self.chunkIterator(required_comps);
+    while (chunks.next(self)) |chunk| {
+        std.Thread.Pool.spawnWg(options.tp, options.wg, Wrapped.processChunk, .{
+            self,
+            chunk,
+            options.ctx,
+        });
     }
 }
 

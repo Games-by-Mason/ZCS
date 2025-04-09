@@ -19,7 +19,7 @@
 //! chunk, you call `release`.
 //!
 //! This distribution of load results in comparable command buffer usage regardless of core counts,
-//! lessoning the Q&A burden when tuning your game.
+//! lessening the Q&A burden when tuning your game.
 
 const std = @import("std");
 const zcs = @import("root.zig");
@@ -32,7 +32,6 @@ const Mutex = std.Thread.Mutex;
 
 const CmdBuf = zcs.CmdBuf;
 const Entities = zcs.Entities;
-const ThreadId = zcs.ThreadId;
 
 const Allocator = std.mem.Allocator;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;

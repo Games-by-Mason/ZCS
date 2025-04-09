@@ -28,11 +28,6 @@ pub const meta = @import("meta.zig");
 /// Returns the component ID for the given type.
 pub const typeId = TypeInfo.init;
 
-/// A thread ID.
-///
-/// Wraps the thread IDs given out by `std.Thread.Pool`.
-pub const ThreadId = enum(usize) { _ };
-
 /// A handle table that associates persistent entity keys with values that point to their storage.
 pub const HandleTab = slot_map.SlotMap(Entity.Location, .{});
 

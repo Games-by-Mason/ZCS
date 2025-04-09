@@ -125,18 +125,11 @@ test "cb execImmediate" {
     es.updateStats(.{ .emit_warnings = false });
 }
 
-fn incrementId(
-    thread_id: zcs.ThreadId,
-    ctx: struct {
-        by: u8,
-        cp: *CmdPool,
-    },
+fn incrementCb(
+    ctx: struct { by: u8 },
+    cb: *CmdBuf,
     counter: *u32,
 ) void {
-    _ = thread_id; // Not actually tested, just forwarded from std so this is probably fine
-    const cb = ctx.cp.acquire();
-    defer ctx.cp.release(cb);
-
     const e = Entity.reserve(cb);
     e.add(cb, u8, 0);
 
@@ -153,17 +146,10 @@ fn incrementChunk(ctx: struct { by: u8 }, counters: []u32) void {
     }
 }
 
-fn incrementChunkId(thread_id: zcs.ThreadId, ctx: struct { by: u8 }, counters: []u32) void {
-    _ = thread_id; // Not actually tested, just forwarded from std so this is probably fine
-    for (counters) |*counter| {
-        counter.* += ctx.by;
-    }
-}
-
 test "threading" {
     defer CompFlag.unregisterAll();
 
-    const max_entities = 524288;
+    const max_entities = 131072;
     const create_entities = 1024;
     var es: Entities = try .init(gpa, .{
         .max_entities = max_entities,
@@ -198,6 +184,7 @@ test "threading" {
             .ctx = .{ .by = 1 },
             .tp = &tp,
             .wg = &wg,
+            .cp = null,
         });
         tp.waitAndWork(&wg);
 
@@ -206,7 +193,7 @@ test "threading" {
         }
     }
 
-    // Per entity with thread IDs
+    // Per entity with command buffer acquisition
     {
         var tp: std.Thread.Pool = undefined;
         try std.Thread.Pool.init(&tp, .{ .allocator = gpa, .track_ids = true, .n_jobs = 4 });
@@ -214,17 +201,17 @@ test "threading" {
 
         var cp: CmdPool = try .init(gpa, &es, .{
             .reserved = 256,
-            .cb = .{ .cmds = 512 },
-            .headroom = 0.0,
+            .cb = .{ .cmds = 256 },
         });
         defer cp.deinit(gpa, &es);
 
         var wg: std.Thread.WaitGroup = .{};
 
-        es.forEachThreaded("incrementId", incrementId, .{
-            .ctx = .{ .by = 1, .cp = &cp },
+        es.forEachThreaded("incrementCb", incrementCb, .{
+            .ctx = .{ .by = 1 },
             .tp = &tp,
             .wg = &wg,
+            .cp = &cp,
         });
         tp.waitAndWork(&wg);
 
@@ -233,6 +220,10 @@ test "threading" {
         }
 
         for (cp.written()) |*cb| CmdBuf.Exec.immediate(&es, cb, .{ .name = "threaded" });
+
+        // Quick smoke test to make sure we aren't acquiring too many command buffers, just checks
+        // that we're not over a rough estimate
+        try expect(cp.written().len <= 16);
 
         var count: usize = 0;
         var iter = es.iterator(struct { n: *const u8 });
@@ -245,7 +236,7 @@ test "threading" {
         cp.reset();
     }
 
-    // Per chunk without thread IDs
+    // Per chunk
     {
         var tp: std.Thread.Pool = undefined;
         try std.Thread.Pool.init(&tp, .{ .allocator = gpa, .track_ids = false });
@@ -262,26 +253,6 @@ test "threading" {
 
         for (entities.items, 0..) |e, i| {
             try std.testing.expectEqual(i + 3, e.get(&es, u32).?.*);
-        }
-    }
-
-    // Per chunk without thread IDs
-    {
-        var tp: std.Thread.Pool = undefined;
-        try std.Thread.Pool.init(&tp, .{ .allocator = gpa, .track_ids = true });
-        defer tp.deinit();
-
-        var wg: std.Thread.WaitGroup = .{};
-
-        es.forEachChunkThreaded("incrementChunkId", incrementChunkId, .{
-            .ctx = .{ .by = 1 },
-            .tp = &tp,
-            .wg = &wg,
-        });
-        tp.waitAndWork(&wg);
-
-        for (entities.items, 0..) |e, i| {
-            try std.testing.expectEqual(i + 4, e.get(&es, u32).?.*);
         }
     }
 }

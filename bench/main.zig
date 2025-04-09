@@ -290,6 +290,7 @@ pub fn main() !void {
                 .tp = &tp,
                 .wg = &wg,
                 .ctx = .{},
+                .cp = null,
             });
             tp.waitAndWork(&wg);
         }
