@@ -29,6 +29,7 @@ const log = std.log;
 const assert = std.debug.assert;
 
 const Mutex = std.Thread.Mutex;
+const Condition = std.Thread.Condition;
 
 const CmdBuf = zcs.CmdBuf;
 const Entities = zcs.Entities;
@@ -36,10 +37,19 @@ const Entities = zcs.Entities;
 const Allocator = std.mem.Allocator;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
+/// Reserved command buffers that have not yet been acquired.
 reserved: ArrayListUnmanaged(CmdBuf),
+/// Locked when modifying internal state.
 mutex: Mutex,
+/// Signaled when command buffers are returned, broadcasted when all command buffers have been
+/// retired.
+condition: Condition,
+/// Command buffers that have been released.
 released: ArrayListUnmanaged(*CmdBuf),
-filled: usize,
+/// The number of retired command buffers. Command buffers are retired when they are returned with
+/// with less than the requested headroom available.
+retired: usize,
+/// Measured in units of `CmdBuf.worstCastUsage`, ranges from `0` to `1`.
 headroom: f32,
 
 /// The capacity of the command pool.
@@ -52,6 +62,7 @@ pub const Capacity = struct {
     headroom: f32 = 0.5,
 };
 
+/// Initializes a command pool.
 pub fn init(
     gpa: Allocator,
     es: *Entities,
@@ -68,8 +79,9 @@ pub fn init(
     return .{
         .reserved = reserved,
         .mutex = .{},
+        .condition = .{},
         .released = released,
-        .filled = 0,
+        .retired = 0,
         .headroom = capacity.headroom,
     };
 }
@@ -85,11 +97,15 @@ pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
 
 /// Acquire a command buffer with at least `Capacity.headroom` capacity remaining. Call `release`
 /// when done.
+///
+/// This function may block if all command buffers are currently in use. You can mitigate this by
+/// reserving more command buffers up front.
 pub fn acquire(self: *@This()) *CmdBuf {
     return self.acquireOrErr() catch |err|
         @panic(@errorName(err));
 }
 
+/// Similar to `acquire`, but returns an error when out of command buffers.
 pub fn acquireOrErr(self: *@This()) error{ZcsCmdPoolUnderflow}!*CmdBuf {
     self.mutex.lock();
     defer self.mutex.unlock();
@@ -105,7 +121,20 @@ pub fn acquireOrErr(self: *@This()) error{ZcsCmdPoolUnderflow}!*CmdBuf {
         return result;
     }
 
-    // We're out of command buffers, return an error
+    // There are no command buffers available. Wait until one becomes available, or all are
+    // retired.
+    while (self.released.items.len == 0 and self.retired < self.reserved.capacity) {
+        self.condition.wait(&self.mutex);
+    }
+
+    // Try to reacquire the released command buffer
+    if (self.released.pop()) |cb| {
+        assert(self.retired < self.reserved.capacity);
+        return cb;
+    }
+
+    // If no command buffer was released, we're out of command buffers, return an error
+    assert(self.retired == self.reserved.capacity);
     return error.ZcsCmdPoolUnderflow;
 }
 
@@ -114,10 +143,19 @@ pub fn release(self: *@This(), cb: *CmdBuf) void {
     self.mutex.lock();
     defer self.mutex.unlock();
 
-    if (cb.worstCaseUsage() >= self.headroom) {
+    // Release the command buffer if it has enough headroom left, otherwise retire it
+    if (cb.worstCaseUsage() < self.headroom) {
         self.released.appendAssumeCapacity(cb);
     } else {
-        self.filled += 1;
+        self.retired += 1;
+    }
+
+    // If all command buffers are retired, broadcast our condition so all pending acquires return an
+    // error. Otherwise signal at least one pending acquire to continue.
+    if (self.retired == self.reserved.capacity) {
+        self.condition.broadcast();
+    } else {
+        self.condition.signal();
     }
 }
 
@@ -133,10 +171,10 @@ pub fn reset(self: *@This()) void {
     if (std.debug.runtime_safety) for (self.written()) |cb| assert(cb.isEmpty());
     self.reserved.items.len = self.reserved.capacity;
     self.released.items.len = 0;
-    self.filled = 0;
+    self.retired = 0;
 }
 
 /// Asserts that all command buffers have been released.
 pub fn checkAssertions(self: *@This()) void {
-    assert(self.released.items.len + self.filled == self.reserved.capacity - self.reserved.items.len);
+    assert(self.released.items.len + self.retired == self.reserved.capacity - self.reserved.items.len);
 }
