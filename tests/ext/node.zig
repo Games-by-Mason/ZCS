@@ -29,25 +29,37 @@ const cmds_capacity = 10000;
 test "immediate" {
     defer CompFlag.unregisterAll();
 
-    var es = try Entities.init(gpa, .{ .max_entities = 128, .comp_bytes = 256 });
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = 128,
+            .arches = 8,
+            .chunks = 8,
+            .chunk = 512,
+        },
+    });
     defer es.deinit(gpa);
 
     const empty = Entity.reserveImmediate(&es);
-    try expect(empty.changeArchImmediate(&es, .{ .add = &.{
-        .init(Node, &.{}),
-        .init(Model, &Model.interned[0]),
-    } }));
+    try expect(empty.changeArchImmediate(
+        &es,
+        struct { Node, Model },
+        .{ .add = .{
+            Node{},
+            Model.interned[0],
+        } },
+    ));
     const parent = Entity.reserveImmediate(&es);
-    try expect(parent.changeArchImmediate(&es, .{ .add = &.{.init(Node, &.{})} }));
+    try expect(parent.changeArchImmediate(&es, struct { Node }, .{ .add = .{Node{}} }));
     const child_1 = Entity.reserveImmediate(&es);
-    try expect(child_1.changeArchImmediate(&es, .{ .add = &.{.init(Node, &.{})} }));
+    try expect(child_1.changeArchImmediate(&es, struct { Node }, .{ .add = .{Node{}} }));
     const child_2 = Entity.reserveImmediate(&es);
-    try expect(child_2.changeArchImmediate(&es, .{ .add = &.{.init(Node, &.{})} }));
+    try expect(child_2.changeArchImmediate(&es, struct { Node }, .{ .add = .{Node{}} }));
     const descendant = Entity.reserveImmediate(&es);
-    try expect(descendant.changeArchImmediate(&es, .{ .add = &.{.init(Node, &.{})} }));
+    try expect(descendant.changeArchImmediate(&es, struct { Node }, .{ .add = .{Node{}} }));
 
     // Make sure this compiles
-    try expectEqual(empty.get(&es, Node).?.getEntity(&es).get(&es, Model), empty.get(&es, Model).?);
+    try expectEqual(es.getEntity(empty.get(&es, Node).?).get(&es, Model), empty.get(&es, Model).?);
 
     child_2.get(&es, Node).?.setParentImmediate(&es, parent.get(&es, Node).?);
     child_1.get(&es, Node).?.setParentImmediate(&es, parent.get(&es, Node).?);
@@ -67,8 +79,8 @@ test "immediate" {
     try expect(!child_1.get(&es, Node).?.isAncestorOf(&es, child_2.get(&es, Node).?));
 
     var children = parent.get(&es, Node).?.childIterator();
-    try expectEqualEntity(child_1, children.next(&es).?.getEntity(&es));
-    try expectEqualEntity(child_2, children.next(&es).?.getEntity(&es));
+    try expectEqualEntity(child_1, es.getEntity(children.next(&es).?));
+    try expectEqualEntity(child_2, es.getEntity(children.next(&es).?));
     try expectEqual(null, children.next(&es));
 
     parent.get(&es, Node).?.destroyImmediate(&es);
@@ -230,13 +242,15 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
     var o: Oracle = .init();
     defer o.deinit();
 
-    var cb: CmdBuf = try .initGranularCapacity(gpa, &fz.es, b: {
-        var cap: CmdBuf.GranularCapacity = .init(.{
+    var cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &fz.es,
+        .cap = .{
             .cmds = cmds_capacity,
-            .avg_cmd_bytes = @sizeOf(Node),
-        });
-        cap.reserved = 0;
-        break :b cap;
+            .data = .{ .bytes_per_cmd = @sizeOf(Node) },
+            .reserved_entities = 0,
+        },
     });
     defer cb.deinit(gpa, &fz.es);
 
@@ -257,9 +271,8 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
             }
         }
 
-        Node.Exec.immediate(&fz.es, cb);
+        Node.Exec.immediate(&fz.es, &cb);
         try checkOracle(&fz, &o);
-        cb.clear(&fz.es);
     }
 }
 
@@ -272,13 +285,15 @@ fn fuzzNodeCyclesCmdBuf(_: void, input: []const u8) !void {
     var o: Oracle = .init();
     defer o.deinit();
 
-    var cb: CmdBuf = try .initGranularCapacity(gpa, &fz.es, b: {
-        var cap: CmdBuf.GranularCapacity = .init(.{
+    var cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &fz.es,
+        .cap = .{
             .cmds = cmds_capacity,
-            .avg_cmd_bytes = @sizeOf(Node),
-        });
-        cap.reserved = 0;
-        break :b cap;
+            .data = .{ .bytes_per_cmd = @sizeOf(Node) },
+            .reserved_entities = 0,
+        },
     });
     defer cb.deinit(gpa, &fz.es);
 
@@ -291,9 +306,8 @@ fn fuzzNodeCyclesCmdBuf(_: void, input: []const u8) !void {
             try setParentCmd(&fz, &o, &cb);
         }
 
-        Node.Exec.immediate(&fz.es, cb);
+        Node.Exec.immediate(&fz.es, &cb);
         try checkOracle(&fz, &o);
-        cb.clear(&fz.es);
     }
 }
 
@@ -310,10 +324,10 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
         });
 
         // Check for entities the oracle is missing
-        var iter = fz.es.iterator(.{});
-        while (iter.next()) |e| {
-            if (!o.entities.contains(e)) {
-                std.debug.print("oracle missing {}\n", .{e});
+        var iter = fz.es.iterator(struct { e: Entity });
+        while (iter.next(&fz.es)) |vw| {
+            if (!o.entities.contains(vw.e)) {
+                std.debug.print("oracle missing {}\n", .{vw.e});
             }
         }
 
@@ -346,7 +360,7 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
             for (0..keys.len) |i| {
                 const expected = keys[keys.len - i - 1];
                 const child = children.next(&fz.es).?;
-                const child_entity = child.getEntity(&fz.es);
+                const child_entity = fz.es.getEntity(child);
                 try expectEqualEntity(expected, child_entity);
 
                 // Validate prev pointers to catch issues sooner
@@ -387,7 +401,7 @@ fn checkPostOrderInner(
         } else {
             try expectEqualEntity(
                 curr,
-                (iter.next(&fz.es) orelse return error.ExpectedNext).getEntity(&fz.es),
+                fz.es.getEntity(iter.next(&fz.es) orelse return error.ExpectedNext),
             );
         }
     } else {
@@ -414,7 +428,7 @@ fn checkPreOrderInner(
         const actual = iter.next(&fz.es);
         try expectEqualEntity(
             curr,
-            (actual orelse return error.ExpectedNext).getEntity(&fz.es),
+            fz.es.getEntity(actual orelse return error.ExpectedNext),
         );
     }
     if (o.entities.get(curr).?.node) |node| {
@@ -469,7 +483,7 @@ fn setParentCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
     const child = fz.randomEntity().unwrap() orelse return;
     if (log) std.debug.print("{}.parent = {}\n", .{ child, parent });
 
-    child.cmd(cb, SetParent, .{parent});
+    cb.ext(SetParent, .{ .child = child, .parent = parent });
     if (o.entities.getPtr(child) != null) {
         try setParentInOracle(fz, o, child, parent);
     }
@@ -546,7 +560,8 @@ fn remove(fz: *Fuzzer, o: *Oracle) !void {
     // Remove from the real entity
     if (entity.get(&fz.es, Node)) |node| {
         _ = node.destroyChildrenAndUnparentImmediate(&fz.es);
-        _ = entity.changeArchImmediate(&fz.es, .{
+        _ = entity.changeArchImmediate(&fz.es, struct {}, .{
+            .add = .{},
             .remove = CompFlag.Set.initOne(CompFlag.registerImmediate(typeId(Node))),
         });
     }

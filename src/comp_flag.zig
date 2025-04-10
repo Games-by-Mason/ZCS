@@ -26,7 +26,10 @@ pub const CompFlag = enum(FlagInt) {
     /// Not thread safe.
     pub fn registerImmediate(id: TypeId) CompFlag {
         // Early out if we're already registered
-        if (id.comp_flag) |f| return f;
+        if (id.comp_flag) |f| {
+            @branchHint(.likely);
+            return f;
+        }
 
         // Debug log that we're registering the component
         std.log.scoped(.zcs).debug("register comp: {s}", .{id.name});
@@ -40,7 +43,7 @@ pub const CompFlag = enum(FlagInt) {
         }
 
         // Fail if we're out of component types
-        if (registered.len >= registered.buffer.len) {
+        if (registered.len > registered.buffer.len) {
             @panic("component type overflow");
         }
 

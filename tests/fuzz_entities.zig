@@ -23,6 +23,8 @@ const expectEqual = std.testing.expectEqual;
 const cmds_capacity = 1000;
 const change_cap = 16;
 
+const log = false;
+
 test "fuzz cb" {
     try std.testing.fuzz({}, fuzzCmdBuf, .{ .corpus = &.{} });
 }
@@ -63,9 +65,17 @@ fn run(input: []const u8, saturated: bool) !void {
     var fz: Fuzzer = try .init(input);
     defer fz.deinit();
 
-    var cb: CmdBuf = try .init(gpa, &fz.es, .{
-        .cmds = cmds_capacity,
-        .avg_cmd_bytes = @sizeOf(RigidBody),
+    try fz.checkIterators();
+
+    var cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &fz.es,
+        .cap = .{
+            .cmds = cmds_capacity,
+            .data = .{ .bytes_per_cmd = @sizeOf(RigidBody) },
+        },
+        .warn_ratio = 1.0,
     });
     defer cb.deinit(gpa, &fz.es);
 
@@ -74,10 +84,10 @@ fn run(input: []const u8, saturated: bool) !void {
     for (0..saturated_count) |_| {
         const e = Entity.reserveImmediate(&fz.es);
         try expect(e.destroyImmediate(&fz.es));
-        const Key = @FieldType(Entities, "slots").Key;
+        const Key = @FieldType(Entities, "handle_tab").Key;
         const Generation = @FieldType(Key, "generation");
         const invalid = @intFromEnum(Generation.invalid);
-        fz.es.slots.generations[e.key.index] = @enumFromInt(invalid - 1);
+        fz.es.handle_tab.slots[e.key.index].generation = @enumFromInt(invalid -% 1);
         const e2 = Entity.reserveImmediate(&fz.es);
         try expect(e2.destroyImmediate(&fz.es));
         try expect(!e.exists(&fz.es));
@@ -85,7 +95,7 @@ fn run(input: []const u8, saturated: bool) !void {
         try expect(!e.committed(&fz.es));
         try expect(!e2.committed(&fz.es));
     }
-    try expectEqual(saturated_count, fz.es.slots.saturated_generations);
+    try expectEqual(saturated_count, fz.es.handle_tab.saturated);
 
     while (!fz.smith.isEmpty()) {
         // Modify the entities via a command buffer
@@ -102,8 +112,7 @@ fn run(input: []const u8, saturated: bool) !void {
             }
         }
 
-        cb.execImmediate(&fz.es);
-        cb.clear(&fz.es);
+        CmdBuf.Exec.immediate(&fz.es, &cb);
         try checkOracle(&fz, &cb);
 
         // Modify the entities directly. We do this later since interspersing it with the
@@ -116,9 +125,9 @@ fn run(input: []const u8, saturated: bool) !void {
         try checkOracle(&fz, &cb);
     }
 
-    try expect(fz.es.slots.saturated_generations >= saturated_count);
+    try expect(fz.es.handle_tab.saturated >= saturated_count);
     for (0..saturated_count) |i| {
-        try expectEqual(.invalid, fz.es.slots.generations[i + cb.reserved.capacity]);
+        try expectEqual(.invalid, fz.es.handle_tab.slots[i + cb.reserved.capacity].generation);
     }
 }
 
@@ -146,6 +155,29 @@ fn checkOracle(fz: *Fuzzer, cb: *const CmdBuf) !void {
         try expectEqual(expected.rb, if (entity.get(&fz.es, RigidBody)) |v| v.* else null);
         try expectEqual(expected.model, if (entity.get(&fz.es, Model)) |v| v.* else null);
         try expectEqual(expected.tag, if (entity.get(&fz.es, Tag)) |v| v.* else null);
+
+        // Test entity views
+        const vw = entity.view(&fz.es, struct {
+            rb: ?*RigidBody,
+            model: ?*Model,
+            tag: ?*Tag,
+        }).?;
+        try expectEqual(expected.rb, if (vw.rb) |v| v.* else null);
+        try expectEqual(expected.model, if (vw.model) |v| v.* else null);
+        try expectEqual(expected.tag, if (vw.tag) |v| v.* else null);
+        try expectEqual(null, entity.view(&fz.es, struct { unique: *struct { unique: void } }));
+        const view_all = entity.view(&fz.es, struct {
+            rb: *const RigidBody,
+            model: *const Model,
+            tag: *const Tag,
+        });
+        if (view_all) |vwa| {
+            try expectEqual(expected.rb, vwa.rb.*);
+            try expectEqual(expected.model, vwa.model.*);
+            try expectEqual(expected.tag, vwa.tag.*);
+        } else {
+            try expect(expected.rb == null or expected.model == null or expected.tag == null);
+        }
     }
 
     // Check the tracked deleted entities
@@ -165,12 +197,13 @@ fn checkOracle(fz: *Fuzzer, cb: *const CmdBuf) !void {
 
 fn reserve(fz: *Fuzzer, cb: *CmdBuf) !void {
     // Skip reserve if we already have a lot of entities to avoid overflowing
-    if (fz.es.count() + fz.es.reserved() > fz.es.slots.capacity / 2) {
+    if (fz.es.count() + fz.es.reserved() > fz.es.handle_tab.capacity / 2) {
         return;
     }
 
     // Reserve an entity and update the oracle
     const entity = Entity.reserve(cb);
+    if (log) std.debug.print("reserve {}\n", .{entity});
     try fz.reserved.putNoClobber(gpa, entity, {});
 }
 
@@ -179,6 +212,7 @@ fn destroy(fz: *Fuzzer, cb: *CmdBuf) !void {
 
     // Destroy a random entity
     const entity = fz.randomEntity().unwrap() orelse return;
+    if (log) std.debug.print("destroy {}\n", .{entity});
     entity.destroy(cb);
 
     // Destroy the entity in the oracle as well, displacing an existing
@@ -196,6 +230,7 @@ fn destroy(fz: *Fuzzer, cb: *CmdBuf) !void {
 fn changeArch(fz: *Fuzzer, cb: *CmdBuf) !void {
     // Get a random entity
     const entity = fz.randomEntity().unwrap() orelse return;
+    if (log) std.debug.print("changeArch {}\n", .{entity});
 
     // Get the oracle if any, committing it if needed
     if (fz.reserved.swapRemove(entity)) {
@@ -214,14 +249,17 @@ fn changeArch(fz: *Fuzzer, cb: *CmdBuf) !void {
                 .rb => {
                     const rb = try addRandomComp(fz, cb, entity, RigidBody);
                     if (expected) |e| e.rb = rb;
+                    if (log) std.debug.print("{}.rb = {}\n", .{ entity, rb });
                 },
                 .model => {
                     const model = try addRandomComp(fz, cb, entity, Model);
                     if (expected) |e| e.model = model;
+                    if (log) std.debug.print("{}.model = {}\n", .{ entity, model });
                 },
                 .tag => {
                     const tag = try addRandomComp(fz, cb, entity, Tag);
                     if (expected) |e| e.tag = tag;
+                    if (log) std.debug.print("{}.tag = {}\n", .{ entity, tag });
                 },
             }
         } else {
@@ -232,18 +270,22 @@ fn changeArch(fz: *Fuzzer, cb: *CmdBuf) !void {
                 commit,
             })) {
                 .rb => {
+                    if (log) std.debug.print("remove rb\n", .{});
                     entity.remove(cb, RigidBody);
                     if (expected) |e| e.rb = null;
                 },
                 .model => {
+                    if (log) std.debug.print("remove model\n", .{});
                     entity.remove(cb, Model);
                     if (expected) |e| e.model = null;
                 },
                 .tag => {
+                    if (log) std.debug.print("remove tag\n", .{});
                     entity.remove(cb, Tag);
                     if (expected) |e| e.tag = null;
                 },
                 .commit => {
+                    if (log) std.debug.print("commit\n", .{});
                     entity.commit(cb);
                 },
             }
@@ -260,7 +302,7 @@ fn addRandomComp(fz: *Fuzzer, cb: *CmdBuf, e: Entity, T: type) !T {
         switch (i % T.interned.len) {
             inline 0...(T.interned.len - 1) => |n| {
                 const val = T.interned[n];
-                try e.addAnyPtr(cb, .init(T, &val));
+                try e.addPtr(cb, T, &val);
                 return val;
             },
             else => unreachable,

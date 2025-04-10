@@ -28,71 +28,79 @@ const log = false;
 
 const cmds_capacity = 100;
 const max_entities = 100000;
-const comp_bytes = 1000000;
 
-test "fuzz cb single thread" {
-    try std.testing.fuzz(SyncMode.single_threaded, fuzzTransformsCmdBuf, .{ .corpus = &.{} });
-}
-
-test "rand cb single thread" {
-    var xoshiro_256: std.Random.Xoshiro256 = .init(0);
-    const rand = xoshiro_256.random();
-    const input: []u8 = try gpa.alloc(u8, 262144);
-    defer gpa.free(input);
-    rand.bytes(input);
-    try fuzzTransformsCmdBuf(SyncMode.single_threaded, input);
-}
-
-test "fuzz cb deferred" {
-    try std.testing.fuzz(SyncMode.deferred, fuzzTransformsCmdBuf, .{ .corpus = &.{} });
-}
-
-test "rand cb deferred" {
-    var xoshiro_256: std.Random.Xoshiro256 = .init(0);
-    const rand = xoshiro_256.random();
-    const input: []u8 = try gpa.alloc(u8, 262144);
-    defer gpa.free(input);
-    rand.bytes(input);
-    try fuzzTransformsCmdBuf(SyncMode.deferred, input);
-}
-
-test "fuzz cb threaded" {
-    try std.testing.fuzz(SyncMode.threaded, fuzzTransformsCmdBuf, .{ .corpus = &.{} });
-}
-
-test "rand cb threaded" {
-    var xoshiro_256: std.Random.Xoshiro256 = .init(0);
-    const rand = xoshiro_256.random();
-    const input: []u8 = try gpa.alloc(u8, 262144);
-    defer gpa.free(input);
-    rand.bytes(input);
-    try fuzzTransformsCmdBuf(SyncMode.threaded, input);
-}
-
-const SyncMode = enum {
-    single_threaded,
-    deferred,
-    threaded,
-};
-
-fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
+// Smoke test to verify that the transform exec does actually call the node exec
+test "exec" {
     defer CompFlag.unregisterAll();
 
-    var tp: std.Thread.Pool = undefined;
-    if (sync_mode == .threaded) try std.Thread.Pool.init(&tp, .{ .allocator = gpa });
-    defer if (sync_mode == .threaded) tp.deinit();
-
-    var smith: Smith = .init(input);
-
-    var es: Entities = try .init(gpa, .{
-        .max_entities = max_entities,
-        .comp_bytes = comp_bytes,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = 128,
+            .arches = 8,
+            .chunks = 8,
+        },
     });
     defer es.deinit(gpa);
 
-    var cb: CmdBuf = try .init(gpa, &es, .{
-        .cmds = cmds_capacity,
-        .avg_cmd_bytes = @sizeOf(Node),
+    var cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &es,
+        .cap = .{
+            .cmds = 2,
+            .data = .{ .bytes_per_cmd = @sizeOf(SetParent) },
+        },
+        .warn_ratio = 1.0,
+    });
+    defer cb.deinit(gpa, &es);
+
+    const child: Entity = .reserve(&cb);
+    const parent: Entity = .reserve(&cb);
+    cb.ext(SetParent, .{ .child = child, .parent = parent.toOptional() });
+    Transform.Exec.immediate(&es, &cb);
+
+    const child_node = child.get(&es, Node).?;
+    try expectEqual(child_node.parent, parent.toOptional());
+}
+
+test "fuzz cb" {
+    try std.testing.fuzz({}, fuzzTransformsCmdBuf, .{ .corpus = &.{} });
+}
+
+test "rand cb" {
+    var xoshiro_256: std.Random.Xoshiro256 = .init(0);
+    const rand = xoshiro_256.random();
+    const input: []u8 = try gpa.alloc(u8, 262144);
+    defer gpa.free(input);
+    rand.bytes(input);
+    try fuzzTransformsCmdBuf({}, input);
+}
+
+fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
+    defer CompFlag.unregisterAll();
+
+    var smith: Smith = .init(input);
+
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = max_entities,
+            .arches = 8,
+            .chunks = 1024,
+        },
+    });
+    defer es.deinit(gpa);
+
+    var cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &es,
+        .cap = .{
+            .cmds = cmds_capacity,
+            .data = .{ .bytes_per_cmd = @sizeOf(Node) },
+        },
+        .warn_ratio = 1.0,
     });
     defer cb.deinit(gpa, &es);
 
@@ -109,9 +117,9 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
         // Get a list of all the entities
         {
             all.clearRetainingCapacity();
-            var iter = es.iterator(.{});
-            while (iter.next()) |e| {
-                try all.append(gpa, e);
+            var iter = es.iterator(struct { e: Entity });
+            while (iter.next(&es)) |vw| {
+                try all.append(gpa, vw.e);
             }
         }
 
@@ -124,19 +132,19 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
 
                     const child = Entity.reserve(&cb);
                     if (log) std.debug.print("  reserve {}\n", .{child});
-                    child.add(&cb, Transform, .initLocal(.{
+                    child.add(&cb, Transform, .{
                         .pos = .{
                             .x = smith.nextBetween(f32, -100.0, 100.0),
                             .y = smith.nextBetween(f32, -100.0, 100.0),
                         },
-                        .orientation = .fromAngle(smith.next(f32)),
+                        .rot = .fromAngle(smith.next(f32)),
                         .relative = smith.next(u8) > 25 or true,
-                    }));
+                    });
                     try all.append(gpa, child);
                     if (smith.next(u8) > 40) {
                         const parent: Entity.Optional = all.items[smith.nextLessThan(usize, all.items.len)].toOptional();
                         if (log) std.debug.print("  {}.parent = {}\n", .{ child, parent });
-                        child.cmd(&cb, SetParent, .{parent});
+                        cb.ext(SetParent, .{ .child = child, .parent = parent });
                     }
                 }
                 mode = .{ .mutate = .{ .steps = 5 } };
@@ -150,19 +158,19 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
                             if (smith.next(bool)) {
                                 const child = Entity.reserve(&cb);
                                 if (log) std.debug.print("  reserve {}\n", .{child});
-                                child.add(&cb, Transform, .initLocal(.{
+                                child.add(&cb, Transform, .{
                                     .pos = .{
                                         .x = smith.nextBetween(f32, -100.0, 100.0),
                                         .y = smith.nextBetween(f32, -100.0, 100.0),
                                     },
-                                    .orientation = .fromAngle(smith.next(f32)),
+                                    .rot = .fromAngle(smith.next(f32)),
                                     .relative = smith.next(u8) > 25,
-                                }));
+                                });
                                 try all.append(gpa, child);
                                 if (smith.next(u8) > 40) {
                                     const parent: Entity.Optional = all.items[smith.nextLessThan(usize, all.items.len)].toOptional();
                                     if (log) std.debug.print("  {}.parent = {}\n", .{ child, parent });
-                                    child.cmd(&cb, SetParent, .{parent});
+                                    cb.ext(SetParent, .{ .child = child, .parent = parent });
                                 }
                             }
                         },
@@ -172,7 +180,7 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
                             } else .none;
                             const child = all.items[smith.nextLessThan(usize, all.items.len)];
                             if (log) std.debug.print("  {}.parent = {}\n", .{ child, parent });
-                            child.cmd(&cb, SetParent, .{parent});
+                            cb.ext(SetParent, .{ .child = child, .parent = parent });
                         },
                         .remove => {
                             // Sometimes destroy entities, but not too often
@@ -198,14 +206,19 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
                             const e = all.items[smith.nextLessThan(usize, all.items.len)];
                             const transform = e.get(&es, Transform) orelse continue;
                             if (smith.next(bool)) {
-                                transform.setLocalPos(&es, &cb, .{
+                                transform.setPos(&es, .{
                                     .x = smith.nextBetween(f32, -100.0, 100.0),
                                     .y = smith.nextBetween(f32, -100.0, 100.0),
                                 });
                             }
                             if (smith.next(bool)) {
-                                transform.setLocalOrientation(&es, &cb, .fromAngle(smith.next(f32)));
-                                if (log) std.debug.print("  {} local_pos = {}, local_orientation = {}\n", .{
+                                if (smith.next(bool)) {
+                                    transform.setRot(&es, .fromAngle(smith.next(f32)));
+                                } else {
+                                    // Mainly making sure it compiles
+                                    transform.rotate(&es, .fromTo(.x_pos, .y_pos));
+                                }
+                                if (log) std.debug.print("  {} pos = {}, rot = {}\n", .{
                                     e,
                                     transform.getLocalPos(),
                                     transform.getLocalOrientation(),
@@ -222,111 +235,29 @@ fn fuzzTransformsCmdBuf(sync_mode: SyncMode, input: []const u8) !void {
             },
         }
 
-        exec(&es, &cb);
-        switch (sync_mode) {
-            // Test the single threaded sync
-            .single_threaded => Transform.syncAllImmediate(&es),
-            // Test deferring the sync for later, this exercises many of the code paths that would
-            // be executed by a threaded sync, but deterministically. We reverse the order for
-            // to make sure we aren't relying on them being executed in order.
-            .deferred => {
-                // Track visited nodes to make sure we aren't revisiting anything
-                var visited: std.AutoArrayHashMapUnmanaged(Entity, void) = .empty;
-                defer visited.deinit(gpa);
-
-                // Accumulate the dirty subtrees
-                var deferred: std.ArrayListUnmanaged(Transform.Subtree) = .{};
-                defer deferred.deinit(gpa);
-
-                var subtrees = Transform.dirtySubtreeIterator(&es);
-                while (subtrees.next(&es)) |subtree| {
-                    try deferred.append(gpa, subtree);
-                }
-
-                // Sync the dirty subtrees
-                for (0..deferred.items.len) |i| {
-                    const subtree = deferred.items[deferred.items.len - 1 - i];
-                    // Synchronize the subtree. This work could be moved to a separate thread if
-                    // desired, since all subtrees are independent!
-                    var transforms = subtree.preOrderIterator(&es);
-                    var first = true;
-                    while (transforms.next(&es)) |transform| {
-                        if (first) {
-                            first = false;
-                            try expect(transform.cache == .dirty_visited);
-                        }
-                        try visited.putNoClobber(gpa, Entity.from(&es, transform), {});
-                        transform.syncImmediate(transform.getRelativeWorldFromModel(&es));
-                    }
-                }
-
-                // Clean up and check assertions
-                Transform.finishSyncAllImmediate(&es);
-            },
-            .threaded => {
-                var wg: std.Thread.WaitGroup = .{};
-                Transform.syncAllThreadPool(&es, &tp, &wg, .{ .chunk_size = 2 });
-                tp.waitAndWork(&wg);
-                Transform.finishSyncAllImmediate(&es);
-            },
-        }
+        Transform.Exec.immediate(&es, &cb);
         try checkOracle(&es);
     }
-}
-
-pub fn exec(es: *Entities, cb: *CmdBuf) void {
-    var batches = cb.iterator();
-    while (batches.next()) |batch| {
-        var node_exec: Node.Exec = .{};
-
-        var arch_change = batch.getArchChangeImmediate(es);
-        {
-            var iter = batch.iterator();
-            while (iter.next()) |cmd| {
-                node_exec.beforeCmdImmediate(es, batch, &arch_change, cmd);
-            }
-        }
-
-        _ = batch.execImmediate(es, arch_change);
-
-        {
-            var iter = batch.iterator();
-            while (iter.next()) |cmd| {
-                node_exec.afterCmdImmediate(es, batch, arch_change, cmd) catch |err|
-                    @panic(@errorName(err));
-                Transform.Exec.afterCmdImmediate(es, batch, cmd);
-            }
-        }
-    }
-
-    cb.clear(es);
 }
 
 fn checkOracle(es: *const Entities) !void {
     if (log) std.debug.print("check oracle\n", .{});
 
-    // All dirty events should have been cleared by now
-    var dirty_events = es.viewIterator(struct { dirty: *const Transform.Dirty });
-    try std.testing.expectEqual(null, dirty_events.next());
-
     var path: std.ArrayListUnmanaged(*const Transform) = .{};
     defer path.deinit(gpa);
 
-    var iter = es.viewIterator(struct {
+    var iter = es.iterator(struct {
         node: ?*const Node,
         transform: *const Transform,
     });
-    while (iter.next()) |vw| {
-        // The cache should be clean
-        try std.testing.expectEqual(.clean, vw.transform.cache);
-
+    while (iter.next(es)) |vw| {
         // Get the path
         try path.append(gpa, vw.transform);
         if (vw.transform.relative) {
             if (vw.node) |node| {
                 var ancestors = node.ancestorIterator();
                 while (ancestors.next(es)) |ancestor| {
-                    const transform = ancestor.get(es, Transform) orelse break;
+                    const transform = es.getComp(ancestor, Transform) orelse break;
                     try path.append(gpa, transform);
                     if (!transform.relative) break;
                 }
@@ -338,12 +269,13 @@ fn checkOracle(es: *const Entities) !void {
         var world_from_model: Mat2x3 = .identity;
         var sum: Vec2 = .zero;
         while (path.pop()) |ancestor| {
-            const rotation: Mat2x3 = .rotation(ancestor.getLocalOrientation());
-            const translation: Mat2x3 = .translation(ancestor.getLocalPos());
+            const rotation: Mat2x3 = .rotation(ancestor.rot);
+            const translation: Mat2x3 = .translation(ancestor.pos);
             world_from_model = rotation.applied(translation).applied(world_from_model);
-            sum.add(ancestor.getLocalPos());
+            sum.add(ancestor.pos);
         }
-        try expectMat2x3Equal(world_from_model, vw.transform.getWorldFromModel());
+        try expectMat2x3Equal(world_from_model, vw.transform.world_from_model);
+        try expectEqual(world_from_model.getTranslation(), vw.transform.getWorldPos());
     }
 }
 

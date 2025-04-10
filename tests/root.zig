@@ -17,6 +17,7 @@ pub fn expectEqualEntity(expected: anytype, actual: anytype) !void {
 test {
     _ = @import("unit.zig");
     _ = @import("fuzz_entities.zig");
+    _ = @import("fuzz_entities_threaded.zig");
     _ = @import("fuzz_cmdbuf_encoding.zig");
     _ = @import("events.zig");
     _ = @import("ext.zig");

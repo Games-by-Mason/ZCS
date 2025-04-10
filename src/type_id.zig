@@ -44,7 +44,14 @@ pub const TypeInfo = struct {
         // There's no reason these couldn't be allowed for `Any` in general, but we want to get
         // compile time errors when trying to use bad types, so we just rule them out for any use of
         // `Any` instead.
-        if (@typeInfo(T) == .optional or T == zcs.Entity) {
+        //
+        // `Entity.Index` and `CmdBuf` are likely indicative of a mistake and so are ruled
+        // out.
+        if (@typeInfo(T) == .optional or
+            T == zcs.Entity or
+            T == zcs.Entity.Index or
+            T == zcs.CmdBuf)
+        {
             @compileError("unsupported component type '" ++ @typeName(T) ++ "'; consider wrapping in struct");
         }
 

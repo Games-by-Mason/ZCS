@@ -29,7 +29,6 @@ pub const ExpectedEntity = struct {
 
 /// Tests random command buffers against an oracle.
 pub const max_entities = 100000;
-pub const comp_bytes = 1000000;
 
 es: Entities,
 smith: Smith,
@@ -41,9 +40,15 @@ destroyed: std.AutoArrayHashMapUnmanaged(Entity, void),
 found_buf: std.AutoArrayHashMapUnmanaged(Entity, void),
 
 pub fn init(input: []const u8) !@This() {
-    var es: Entities = try .init(gpa, .{
-        .max_entities = max_entities,
-        .comp_bytes = comp_bytes,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = max_entities,
+            .arches = 32,
+            .chunks = 2048,
+            // We set a fairly small chunk size for better test coverage
+            .chunk = 512,
+        },
     });
     errdefer es.deinit(gpa);
 
@@ -84,79 +89,296 @@ pub fn deinit(self: *@This()) void {
     self.* = undefined;
 }
 
+fn countEntities(count: *usize) void {
+    count.* += 1;
+}
+
+fn countEntitiesChunkedWithHandles(
+    self: *@This(),
+    entity_indices: []const Entity.Index,
+) void {
+    for (entity_indices) |entity_index| {
+        const entity = entity_index.toEntity(&self.es);
+        assert(entity.exists(&self.es));
+        assert(entity.committed(&self.es));
+        self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
+            @panic(@errorName(err));
+    }
+}
+
+fn countEntitiesWithHandle(
+    self: *@This(),
+    entity: Entity,
+) void {
+    assert(entity.exists(&self.es));
+    assert(entity.committed(&self.es));
+    self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
+        @panic(@errorName(err));
+}
+
+fn checkRigidBodies(
+    self: *@This(),
+    rb: *const RigidBody,
+) void {
+    const entity = self.es.getEntity(rb);
+    assert(entity.get(&self.es, RigidBody).? == rb);
+    self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
+        @panic(@errorName(err));
+}
+
+fn checkRigidBodiesWithHandle(
+    self: *@This(),
+    rb: *const RigidBody,
+    entity: Entity,
+) void {
+    assert(entity == self.es.getEntity(rb));
+    assert(entity.get(&self.es, RigidBody).? == rb);
+    self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
+        @panic(@errorName(err));
+}
+
+fn checkRigidBodiesChunked(
+    self: *@This(),
+    rbs: []const RigidBody,
+) void {
+    for (rbs) |*rb| {
+        const entity = self.es.getEntity(rb);
+        assert(entity.get(&self.es, RigidBody).? == rb);
+        self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
+            @panic(@errorName(err));
+    }
+}
+
+fn checkRigidBodiesChunkedWithHandles(
+    self: *@This(),
+    rbs: []const RigidBody,
+    entity_indices: []const Entity.Index,
+) void {
+    for (rbs, entity_indices) |*rb, entity_index| {
+        const entity = entity_index.toEntity(&self.es);
+        assert(entity == self.es.getEntity(rb));
+        assert(entity.get(&self.es, RigidBody).? == rb);
+        self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
+            @panic(@errorName(err));
+    }
+}
+
+fn checkModelsWithHandle(
+    self: *@This(),
+    model: *Model,
+    entity: Entity,
+) void {
+    assert(entity == self.es.getEntity(model));
+    assert(entity.get(&self.es, Model).? == model);
+    self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
+        @panic(@errorName(err));
+}
+
+fn checkTagsWithHandle(
+    self: *@This(),
+    tag: *Tag,
+    entity: Entity,
+) void {
+    // https://github.com/ziglang/zig/issues/23405
+    // assert(entity.get(&self.es, Tag).? == tag);
+    _ = tag;
+    self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
+        @panic(@errorName(err));
+}
+
+fn checkAllWithHandle(
+    self: *@This(),
+    tag: *const Tag,
+    rb: *const RigidBody,
+    model: *const Model,
+    entity: Entity,
+) void {
+    _ = tag;
+    assert(rb == entity.get(&self.es, RigidBody).?);
+    assert(model == entity.get(&self.es, Model).?);
+    // https://github.com/ziglang/zig/issues/23405
+    // assert(tag == entity.get(&self.es, Tag).?);
+    assert(entity == self.es.getEntity(rb));
+    assert(entity == self.es.getEntity(model));
+    self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
+        @panic(@errorName(err));
+
+    assert(self.es.getComp(rb, RigidBody) == rb);
+    assert(self.es.getComp(rb, Model) == model);
+    // https://github.com/ziglang/zig/issues/23405
+    // assert(self.es.getComp(rb, Tag) == tag);
+}
+
+fn checkAllOptionalWithHandle(
+    self: *@This(),
+    tag: ?*Tag,
+    rb_opt: ?*const RigidBody,
+    model_opt: ?*Model,
+    entity: Entity,
+) void {
+    _ = tag;
+    assert(rb_opt == entity.get(&self.es, RigidBody));
+    assert(model_opt == entity.get(&self.es, Model));
+    // https://github.com/ziglang/zig/issues/23405
+    // try expectEqual(tag_opt, e.get(&self.es, Tag));
+    if (rb_opt) |rb| assert(entity == self.es.getEntity(rb));
+    if (model_opt) |model| assert(entity == self.es.getEntity(model));
+    self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
+        @panic(@errorName(err));
+
+    if (model_opt) |model| {
+        assert(self.es.getComp(model, RigidBody) == rb_opt);
+        assert(self.es.getComp(model, Model) == model);
+        // https://github.com/ziglang/zig/issues/23405
+        // assert(self.es.getComp(rb, Tag) == tag);
+    }
+}
+
+fn checkSomeOptional(
+    self: *@This(),
+    tag: ?*Tag,
+    rb: *const RigidBody,
+    model: *Model,
+) void {
+    const entity = self.es.getEntity(rb);
+    assert(entity == self.es.getEntity(model));
+    assert(rb == entity.get(&self.es, RigidBody));
+    assert(model == entity.get(&self.es, Model));
+    // https://github.com/ziglang/zig/issues/23405
+    // try expectEqual(tag, e.get(&self.es, Tag));
+    _ = tag;
+    assert(entity == self.es.getEntity(model));
+    self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
+        @panic(@errorName(err));
+}
+
+fn checkSomeOptionalWithHandle(
+    self: *@This(),
+    tag: *Tag,
+    rb: *const RigidBody,
+    model_opt: ?*Model,
+    entity: Entity,
+) void {
+    assert(rb == entity.get(&self.es, RigidBody));
+    assert(model_opt == entity.get(&self.es, Model));
+    // https://github.com/ziglang/zig/issues/23405
+    // try expectEqual(tag_opt, e.get(&self.es, Tag));
+    _ = tag;
+    assert(entity == self.es.getEntity(rb));
+    if (model_opt) |model| assert(entity == self.es.getEntity(model));
+    self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
+        @panic(@errorName(err));
+}
+
+fn checkSomeOptionalChunked(
+    self: *@This(),
+    tags_opt: ?[]Tag,
+    rbs: []const RigidBody,
+    models: []Model,
+) void {
+    for (rbs, models, 0..) |*rb, *model, i| {
+        const entity = self.es.getEntity(rb);
+        assert(entity == self.es.getEntity(model));
+        assert(rb == entity.get(&self.es, RigidBody));
+        assert(model == entity.get(&self.es, Model));
+        // https://github.com/ziglang/zig/issues/23405
+        // if (tags_opt) |tags| assert(&tags[i] == entity.get(&self.es, Tag).?);
+        _ = tags_opt;
+        _ = i;
+        assert(entity == self.es.getEntity(model));
+        self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
+            @panic(@errorName(err));
+    }
+}
+
+fn checkSomeOptionalChunkedWithHandles(
+    self: *@This(),
+    tags: ?[]Tag,
+    rbs: []const RigidBody,
+    models: []Model,
+    entity_indices: []const Entity.Index,
+) void {
+    for (rbs, models, entity_indices, 0..) |*rb, *model, entity_index, i| {
+        const entity = entity_index.toEntity(&self.es);
+        assert(entity == self.es.getEntity(rb));
+        assert(entity == self.es.getEntity(model));
+        assert(rb == entity.get(&self.es, RigidBody));
+        assert(model == entity.get(&self.es, Model));
+        // https://github.com/ziglang/zig/issues/23405
+        // try expectEqual(tag_opt, e.get(&self.es, Tag));
+        _ = tags;
+        _ = i;
+        assert(entity == self.es.getEntity(model));
+        self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
+            @panic(@errorName(err));
+    }
+}
+
 pub fn checkIterators(self: *@This()) !void {
-    // All entities, no handle
+    // All entities
     {
-        // Get the actual count, checking the entities along the way
-        var count: usize = 0;
-        var iter = self.es.viewIterator(struct {});
-        while (iter.next()) |_| {
-            count += 1;
+        // Per entity, no handle
+        {
+            var count: usize = 0;
+            self.es.forEach("countEntities", countEntities, &count);
+            try expectEqual(self.committed.count(), count);
         }
 
-        // Compare them
-        try expectEqual(self.committed.count(), count);
+        // Per chunk, with handles
+        {
+            defer self.found_buf.clearRetainingCapacity();
+            self.es.forEachChunk("countEntitiesChunkedWithHandles", countEntitiesChunkedWithHandles, self);
+            try expectEqual(self.committed.count(), self.found_buf.count());
+        }
+
+        // Per entity, with handles
+        {
+            defer self.found_buf.clearRetainingCapacity();
+            self.es.forEach("countEntitiesWithHandle", countEntitiesWithHandle, self);
+            try expectEqual(self.committed.count(), self.found_buf.count());
+        }
     }
 
-    // All entities, with handle
+    // Rigid bodies
     {
-        // Get the actual count, checking the entities along the way
+        // Per entity, no handle
+        {
+            defer self.found_buf.clearRetainingCapacity();
+            self.es.forEach("checkRigidBodies", checkRigidBodies, self);
+            try expectEqual(self.expectedOfArch(.{ .rb = true }), self.found_buf.count());
+        }
+
+        // Per entity, with handle
+        {
+            defer self.found_buf.clearRetainingCapacity();
+            self.es.forEach("checkRigidBodiesWithHandle", checkRigidBodiesWithHandle, self);
+            try expectEqual(self.expectedOfArch(.{ .rb = true }), self.found_buf.count());
+        }
+
+        // Per chunk, without handles
+        {
+            defer self.found_buf.clearRetainingCapacity();
+            self.es.forEachChunk("checkRigidBodiesChunked", checkRigidBodiesChunked, self);
+            try expectEqual(self.expectedOfArch(.{ .rb = true }), self.found_buf.count());
+        }
+
+        // Per chunk, with handles
+        {
+            defer self.found_buf.clearRetainingCapacity();
+            self.es.forEachChunk(
+                "checkRigidBodiesChunkedWithHandles",
+                checkRigidBodiesChunkedWithHandles,
+                self,
+            );
+            try expectEqual(self.expectedOfArch(.{ .rb = true }), self.found_buf.count());
+        }
+    }
+
+    // Models
+    {
         defer self.found_buf.clearRetainingCapacity();
-        var iter = self.es.viewIterator(struct { e: Entity });
-        while (iter.next()) |vw| {
-            try self.found_buf.putNoClobber(gpa, vw.e, {});
-        }
-
-        // Compare them
-        try expectEqual(self.committed.count(), self.found_buf.count());
-    }
-
-    // Rigid bodies, without handle
-    {
-        // Get the actual count, checking the entities along the way
-        var count: usize = 0;
-        var iter = self.es.viewIterator(struct { rb: *const RigidBody });
-        while (iter.next()) |_| {
-            count += 1;
-        }
-
-        // Compare them
-        try expectEqual(
-            self.expectedOfArch(.{ .rb = true }),
-            count,
-        );
-    }
-
-    // Rigid bodies, with handle
-    {
-        // Get the actual count, checking the entities along the way
-        defer self.found_buf.clearRetainingCapacity();
-        var iter = self.es.viewIterator(struct { rb: *RigidBody, e: Entity });
-        while (iter.next()) |vw| {
-            try expectEqual(vw.rb, vw.e.get(&self.es, RigidBody).?);
-            try expectEqual(vw.e, Entity.from(&self.es, vw.rb));
-            try self.found_buf.putNoClobber(gpa, vw.e, {});
-        }
-
-        // Compare them
-        try expectEqual(
-            self.expectedOfArch(.{ .rb = true }),
-            self.found_buf.count(),
-        );
-    }
-
-    // Models, with handle
-    {
-        // Get the actual count, checking the entities along the way
-        defer self.found_buf.clearRetainingCapacity();
-        var iter = self.es.viewIterator(struct { model: *Model, e: Entity });
-        while (iter.next()) |vw| {
-            try expectEqual(vw.model, vw.e.get(&self.es, Model).?);
-            try expectEqual(vw.e, Entity.from(&self.es, vw.model));
-            try self.found_buf.putNoClobber(gpa, vw.e, {});
-        }
-
-        // Compare to the expected count
+        self.es.forEach("checkModelsWithHandle", checkModelsWithHandle, self);
+        try expectEqual(self.expectedOfArch(.{ .model = true }), self.found_buf.count());
         try expectEqual(
             self.expectedOfArch(.{ .model = true }),
             self.found_buf.count(),
@@ -165,16 +387,9 @@ pub fn checkIterators(self: *@This()) !void {
 
     // Tags, with handle
     {
-        // Get the actual count, checking the entities along the way
         defer self.found_buf.clearRetainingCapacity();
-        var iter = self.es.viewIterator(struct { tag: *const Tag, e: Entity });
-        while (iter.next()) |vw| {
-            try expectEqual(vw.tag, vw.e.get(&self.es, Tag).?);
-            try expectEqual(vw.e, Entity.from(&self.es, vw.tag));
-            try self.found_buf.putNoClobber(gpa, vw.e, {});
-        }
-
-        // Compare to the expected count
+        self.es.forEach("checkTagsWithHandle", checkTagsWithHandle, self);
+        try expectEqual(self.expectedOfArch(.{ .tag = true }), self.found_buf.count());
         try expectEqual(
             self.expectedOfArch(.{ .tag = true }),
             self.found_buf.count(),
@@ -183,25 +398,8 @@ pub fn checkIterators(self: *@This()) !void {
 
     // All three, with handle
     {
-        // Get the actual count, checking the entities along the way
         defer self.found_buf.clearRetainingCapacity();
-        var iter = self.es.viewIterator(struct {
-            rb: *const RigidBody,
-            model: *const Model,
-            tag: *const Tag,
-            e: Entity,
-        });
-        while (iter.next()) |vw| {
-            try expectEqual(vw.rb, vw.e.get(&self.es, RigidBody).?);
-            try expectEqual(vw.model, vw.e.get(&self.es, Model).?);
-            try expectEqual(vw.tag, vw.e.get(&self.es, Tag).?);
-            try expectEqual(vw.e, Entity.from(&self.es, vw.rb));
-            try expectEqual(vw.e, Entity.from(&self.es, vw.model));
-            try expectEqual(vw.e, Entity.from(&self.es, vw.tag));
-            try self.found_buf.putNoClobber(gpa, vw.e, {});
-        }
-
-        // Compare to the expected count
+        self.es.forEach("checkAllWithHandle", checkAllWithHandle, self);
         try expectEqual(
             self.expectedOfArch(.{ .rb = true, .model = true, .tag = true }),
             self.found_buf.count(),
@@ -210,53 +408,66 @@ pub fn checkIterators(self: *@This()) !void {
 
     // All optional
     {
-        // Get the actual count, checking the entities along the way
         defer self.found_buf.clearRetainingCapacity();
-        var iter = self.es.viewIterator(struct {
-            rb: ?*const RigidBody,
-            model: ?*Model,
-            tag: ?*Tag,
-            e: Entity,
-        });
-        while (iter.next()) |vw| {
-            try expectEqual(vw.rb, vw.e.get(&self.es, RigidBody));
-            try expectEqual(vw.model, vw.e.get(&self.es, Model));
-            try expectEqual(vw.tag, vw.e.get(&self.es, Tag));
-            if (vw.rb) |rb| try expectEqual(vw.e, Entity.from(&self.es, rb));
-            if (vw.model) |model| try expectEqual(vw.e, Entity.from(&self.es, model));
-            if (vw.tag) |tag| try expectEqual(vw.e, Entity.from(&self.es, tag));
-            try self.found_buf.putNoClobber(gpa, vw.e, {});
-        }
-
-        // Compare to the expected count
+        self.es.forEach("checkAllOptionalWithHandle", checkAllOptionalWithHandle, self);
         try expectEqual(self.committed.count(), self.found_buf.count());
     }
 
     // Some optional
     {
-        // Get the actual count, checking the entities along the way
-        defer self.found_buf.clearRetainingCapacity();
-        var iter = self.es.viewIterator(struct {
-            rb: *const RigidBody,
-            model: ?*Model,
-            tag: *Tag,
-            e: Entity,
-        });
-        while (iter.next()) |vw| {
-            try expectEqual(vw.rb, vw.e.get(&self.es, RigidBody));
-            try expectEqual(vw.model, vw.e.get(&self.es, Model));
-            try expectEqual(vw.tag, vw.e.get(&self.es, Tag));
-            try expectEqual(vw.e, Entity.from(&self.es, vw.rb));
-            if (vw.model) |model| try expectEqual(vw.e, Entity.from(&self.es, model));
-            try expectEqual(vw.e, Entity.from(&self.es, vw.tag));
-            try self.found_buf.putNoClobber(gpa, vw.e, {});
+        // Per entity, without handle
+        {
+            defer self.found_buf.clearRetainingCapacity();
+            self.es.forEach("checkSomeOptional", checkSomeOptional, self);
+            try expectEqual(
+                self.expectedOfArch(.{ .rb = true, .model = true }),
+                self.found_buf.count(),
+            );
         }
 
-        // Compare to the expected count
-        try expectEqual(
-            self.expectedOfArch(.{ .rb = true, .tag = true }),
-            self.found_buf.count(),
-        );
+        // Per entity, with handle
+        {
+            defer self.found_buf.clearRetainingCapacity();
+            self.es.forEach("checkSomeOptionalWithHandle", checkSomeOptionalWithHandle, self);
+            try expectEqual(
+                self.expectedOfArch(.{ .rb = true, .tag = true }),
+                self.found_buf.count(),
+            );
+        }
+
+        // Per entity, without handles chunked
+        {
+            defer self.found_buf.clearRetainingCapacity();
+            self.es.forEachChunk("checkSomeOptionalChunked", checkSomeOptionalChunked, self);
+            try expectEqual(
+                self.expectedOfArch(.{ .rb = true, .model = true }),
+                self.found_buf.count(),
+            );
+        }
+
+        // Per entity, with handles chunked
+        {
+            defer self.found_buf.clearRetainingCapacity();
+            self.es.forEachChunk(
+                "checkSomeOptionalChunkedWithHandles",
+                checkSomeOptionalChunkedWithHandles,
+                self,
+            );
+            try expectEqual(
+                self.expectedOfArch(.{ .rb = true, .model = true }),
+                self.found_buf.count(),
+            );
+        }
+    }
+
+    // Regression test, optional unregistered components
+    {
+        const Unregistered = struct { foo: u8 };
+        var iter = self.es.iterator(struct { foo: ?*Unregistered, e: Entity });
+        if (iter.next(&self.es)) |vw| {
+            _ = vw.e.view(&self.es, struct { foo: ?*Unregistered });
+        }
+        try expectEqual(null, typeId(Unregistered).comp_flag);
     }
 }
 
@@ -286,7 +497,7 @@ pub fn expectedOfArch(self: *@This(), arch: Arch) usize {
 
 pub fn reserveImmediate(self: *@This()) !Entity.Optional {
     // Skip reserve if we already have a lot of entities to avoid overflowing
-    if (self.es.count() + self.es.reserved() > self.es.slots.capacity / 2) {
+    if (self.es.count() + self.es.reserved() > self.es.handle_tab.capacity / 2) {
         return .none;
     }
 
@@ -348,7 +559,7 @@ pub fn randomEntity(self: *@This()) Entity.Optional {
 // If we're at less than half capacity, give a slight bias against destroying
 // entities so that we don't just hover near zero entities for the whole test
 pub fn shouldSkipDestroy(self: *@This()) bool {
-    return (self.es.count() < self.es.slots.capacity / 2 and (self.smith.next(bool)));
+    return (self.es.count() < self.es.handle_tab.capacity / 2 and (self.smith.next(bool)));
 }
 
 pub fn destroyInOracle(self: *@This(), entity: Entity) !void {
