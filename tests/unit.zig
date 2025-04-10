@@ -26,6 +26,8 @@ const FooExt = types.FooExt;
 const BarExt = types.BarExt;
 const BazExt = types.BazExt;
 
+const log = false;
+
 const Components = struct {
     model: ?Model = null,
     rb: ?RigidBody = null,
@@ -175,7 +177,7 @@ test "threading" {
     // Per entity without thread IDs
     {
         var tp: std.Thread.Pool = undefined;
-        try std.Thread.Pool.init(&tp, .{ .allocator = gpa, .track_ids = false });
+        try std.Thread.Pool.init(&tp, .{ .allocator = gpa });
         defer tp.deinit();
 
         var wg: std.Thread.WaitGroup = .{};
@@ -196,7 +198,7 @@ test "threading" {
     // Per entity with command buffer acquisition
     {
         var tp: std.Thread.Pool = undefined;
-        try std.Thread.Pool.init(&tp, .{ .allocator = gpa, .track_ids = true, .n_jobs = 4 });
+        try std.Thread.Pool.init(&tp, .{ .allocator = gpa, .n_jobs = 4 });
         defer tp.deinit();
 
         var cp: CmdPool = try .init(gpa, &es, .{
@@ -239,7 +241,7 @@ test "threading" {
     // Per chunk
     {
         var tp: std.Thread.Pool = undefined;
-        try std.Thread.Pool.init(&tp, .{ .allocator = gpa, .track_ids = false });
+        try std.Thread.Pool.init(&tp, .{ .allocator = gpa });
         defer tp.deinit();
 
         var wg: std.Thread.WaitGroup = .{};
@@ -254,6 +256,177 @@ test "threading" {
         for (entities.items, 0..) |e, i| {
             try std.testing.expectEqual(i + 3, e.get(&es, u32).?.*);
         }
+    }
+}
+
+const TestBlockingTask = struct {
+    acquire: bool = false,
+    acquired: bool = false,
+    release: bool = false,
+    released: bool = false,
+};
+
+fn testBlocking(name: []const u8, cp: *CmdPool, options: *TestBlockingTask) void {
+    // Acquire a command buffer
+    if (log) std.debug.print("{s}: waiting on test...\n", .{name});
+    while (!@atomicLoad(bool, &options.acquire, .acquire)) {
+        std.Thread.yield() catch |err| @panic(@errorName(err));
+    }
+    if (log) std.debug.print("{s}: acquiring...\n", .{name});
+    const cb = cp.acquire();
+    if (log) std.debug.print("{s}: acquired...\n", .{name});
+    @atomicStore(bool, &options.acquired, true, .release);
+    std.Thread.yield() catch |err| @panic(@errorName(err));
+
+    // Release the command buffer
+    if (log) std.debug.print("{s}: waiting on test...\n", .{name});
+    while (!@atomicLoad(bool, &options.release, .acquire)) {
+        std.Thread.yield() catch |err| @panic(@errorName(err));
+    }
+    if (log) std.debug.print("{s}: release...\n", .{name});
+    cp.release(cb);
+    @atomicStore(bool, &options.released, true, .release);
+    if (log) std.debug.print("{s}: done\n", .{name});
+}
+
+fn testBlockingFill(name: []const u8, cp: *CmdPool, options: *TestBlockingTask) void {
+    // Acquire a command buffer
+    if (log) std.debug.print("{s}: waiting on test...\n", .{name});
+    while (!@atomicLoad(bool, &options.acquire, .acquire)) {
+        std.Thread.yield() catch |err| @panic(@errorName(err));
+    }
+    if (log) std.debug.print("{s}: acquiring...\n", .{name});
+    const cb = cp.acquire();
+    if (log) std.debug.print("{s}: acquired...\n", .{name});
+    @atomicStore(bool, &options.acquired, true, .release);
+    std.Thread.yield() catch |err| @panic(@errorName(err));
+
+    // Fill the command buffer to at least 50% worst case usage
+    while (cb.worstCaseUsage() < 0.5) {
+        cb.ext(u8, 0);
+    }
+
+    // Release the command buffer
+    if (log) std.debug.print("{s}: waiting on test...\n", .{name});
+    while (!@atomicLoad(bool, &options.release, .acquire)) {
+        std.Thread.yield() catch |err| @panic(@errorName(err));
+    }
+    if (log) std.debug.print("{s}: release...\n", .{name});
+    cp.release(cb);
+    @atomicStore(bool, &options.released, true, .release);
+    if (log) std.debug.print("{s}: done\n", .{name});
+}
+
+fn testBlockingUnderflow(name: []const u8, cp: *CmdPool, options: *TestBlockingTask) void {
+    // Acquire a command buffer
+    if (log) std.debug.print("{s}: waiting on test...\n", .{name});
+    while (!@atomicLoad(bool, &options.acquire, .acquire)) {
+        std.Thread.yield() catch |err| @panic(@errorName(err));
+    }
+    if (log) std.debug.print("{s}: acquiring...\n", .{name});
+    assert(cp.acquireOrErr() == error.ZcsCmdPoolUnderflow);
+}
+
+test "cmd pool blocking" {
+    defer CompFlag.unregisterAll();
+
+    // Init
+    var es: Entities = try .init(gpa, .{
+        .max_entities = 1024,
+        .max_archetypes = 1,
+        .max_chunks = 2,
+        .chunk_size = 1024,
+    });
+    defer es.deinit(gpa);
+
+    var cp: CmdPool = try .init(gpa, &es, .{
+        .reserved = 1,
+        .cb = .{ .cmds = 10 },
+    });
+    defer cp.deinit(gpa, &es);
+
+    var tp: std.Thread.Pool = undefined;
+    try std.Thread.Pool.init(&tp, .{ .allocator = gpa, .n_jobs = 3 });
+    defer tp.deinit();
+
+    // Cause one thread to wait for another to release a command buffer
+    {
+        if (log) std.debug.print("test blocking\n", .{});
+
+        var task_1: TestBlockingTask = .{ .acquire = true };
+        var task_2: TestBlockingTask = .{};
+
+        var wg: std.Thread.WaitGroup = .{};
+        tp.spawnWg(&wg, testBlocking, .{ "task 1", &cp, &task_1 });
+        tp.spawnWg(&wg, testBlocking, .{ "task 2", &cp, &task_2 });
+
+        // Allow task 1 to acquire the command buffer
+        while (!@atomicLoad(bool, &task_1.acquired, .acquire)) {}
+
+        // Attempt to acquire the command buffer in task 2, this should block
+        @atomicStore(bool, &task_2.acquire, true, .release);
+        try expect(!@atomicLoad(bool, &task_2.acquired, .acquire));
+
+        // Allow task 1 to finish, unblocking task 2
+        @atomicStore(bool, &task_1.release, true, .release);
+        while (!@atomicLoad(bool, &task_1.released, .acquire)) {}
+
+        // Once task 2 acquires the command buffer, allow it to release it
+        while (!@atomicLoad(bool, &task_2.acquired, .acquire)) {}
+        @atomicStore(bool, &task_2.release, true, .release);
+        while (!@atomicLoad(bool, &task_2.released, .acquire)) {}
+
+        // Allow the wait group to finish
+        wg.wait();
+
+        // Check that we acquired and returned one command buffer
+        try std.testing.expectEqual(1, cp.written().len);
+        cp.reset();
+
+        if (log) std.debug.print("\n", .{});
+    }
+
+    // Spawn multiple threads waiting on a command buffer, and check that they all fail when it's
+    // retired
+    {
+        if (log) std.debug.print("test retiring all\n", .{});
+
+        var task_1: TestBlockingTask = .{ .acquire = true };
+        var task_2: TestBlockingTask = .{};
+        var task_3: TestBlockingTask = .{};
+
+        var wg: std.Thread.WaitGroup = .{};
+        tp.spawnWg(&wg, testBlockingFill, .{ "task 1", &cp, &task_1 });
+        tp.spawnWg(&wg, testBlockingUnderflow, .{ "task 2", &cp, &task_2 });
+        tp.spawnWg(&wg, testBlockingUnderflow, .{ "task 3", &cp, &task_3 });
+
+        // Allow task 1 to acquire and fill the command buffer
+        while (!@atomicLoad(bool, &task_1.acquired, .acquire)) {}
+
+        // Attempt to acquire the command buffer in task 2 and 3, this should block
+        @atomicStore(bool, &task_2.acquire, true, .release);
+        @atomicStore(bool, &task_3.acquire, true, .release);
+        try expect(!@atomicLoad(bool, &task_2.acquired, .acquire));
+        try expect(!@atomicLoad(bool, &task_3.acquired, .acquire));
+
+        // Allow task 1 to finish, this should broadcast to all tasks that all command buffers are
+        // retired, causing them all to trip the expected error
+        @atomicStore(bool, &task_1.release, true, .release);
+        while (!@atomicLoad(bool, &task_1.released, .acquire)) {}
+
+        // Allow the wait group to finish
+        wg.wait();
+
+        // Check that trying to acquire another command buffer after the broadcast fails without
+        // blocking
+        try expectError(error.ZcsCmdPoolUnderflow, cp.acquireOrErr());
+
+        // Check that we acquired and returned one command buffer
+        try std.testing.expectEqual(1, cp.written().len);
+        for (cp.written()) |*cb| cb.clear(&es);
+        cp.reset();
+
+        if (log) std.debug.print("\n", .{});
     }
 }
 
@@ -528,7 +701,7 @@ test "cb overflow" {
             Entity.reserveImmediate(&es).destroyOrErr(&cb),
         );
 
-        try expectEqual(1.0, cb.worstCaseUsage());
+        try expectEqual(0.0, cb.worstCaseUsage());
     }
 
     // Comp data overflow

@@ -185,7 +185,7 @@ pub fn isEmpty(self: @This()) bool {
 }
 
 /// Returns the ratio of length to capacity for the internal buffer that is the nearest to being
-/// full.
+/// full. Ignores buffers explicitly initialized with 0 capacity.
 pub fn worstCaseUsage(self: @This()) f32 {
     const reserved_used: f32 = @floatFromInt(self.reserved.capacity - self.reserved.items.len);
     const reserved_usage = if (self.reserved.capacity == 0)
@@ -202,7 +202,7 @@ pub fn worstCaseUsage(self: @This()) f32 {
 
 /// Calculates the usage of a list as a ratio.
 fn usage(list: anytype) f32 {
-    if (list.capacity == 0) return 1.0;
+    if (list.capacity == 0) return 0.0;
     return @as(f32, @floatFromInt(list.items.len)) / @as(f32, @floatFromInt(list.capacity));
 }
 
