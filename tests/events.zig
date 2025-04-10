@@ -155,3 +155,48 @@ test "many events" {
         Event.recycleImmediate(&es);
     }
 }
+
+test "recycle single" {
+    defer CompFlag.unregisterAll();
+
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = 100000,
+            .arches = 4,
+            .chunks = 4,
+            .chunk = 4096,
+        },
+    });
+    defer es.deinit(gpa);
+
+    const e0: Entity = .reserveImmediate(&es);
+    try expect(e0.exists(&es));
+    try expect(!e0.committed(&es));
+    try expect(e0.changeArchImmediate(
+        &es,
+        struct { Event },
+        .{
+            .add = .{
+                .{ .payload = 0 },
+            },
+        },
+    ));
+    try expect(e0.committed(&es));
+
+    es.recycleArchImmediate(.initOne(.registerImmediate(typeId(Event))));
+    try expect(e0.exists(&es));
+    try expect(e0.committed(&es));
+
+    const e1: Entity = .reserveImmediate(&es);
+    try std.testing.expectEqual(e0, e1);
+    try std.testing.expect(e1.exists(&es));
+    try expect(!e1.committed(&es));
+    try expect(e1.changeArchImmediate(&es, struct {}, .{}));
+    try expect(e1.committed(&es));
+
+    es.recycleArchImmediate(.initOne(.registerImmediate(typeId(Event))));
+    es.recycleArchImmediate(.initOne(.registerImmediate(typeId(Event))));
+    try expect(e1.exists(&es));
+    try expect(e1.committed(&es));
+}

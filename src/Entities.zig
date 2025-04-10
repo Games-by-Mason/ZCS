@@ -108,7 +108,8 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
     self.* = undefined;
 }
 
-/// Recycles all entities compatible with the given archetype.
+/// Recycles all entities compatible with the given archetype. This causes their handles to be
+/// dangling, prefer destroying entities unless you're implementing a high throughput event system.
 ///
 /// Invalidates pointers.
 pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {

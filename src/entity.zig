@@ -170,25 +170,7 @@ pub const Entity = packed struct {
                 es.reserved_entities -= 1;
             }
             es.handle_tab.remove(self.key);
-            return true;
-        } else {
-            return false;
-        }
-    }
-
-    /// Similar to `destroyImmediate`, allows the key to be reused.
-    ///
-    /// Invalidates pointers.
-    pub fn recycleImmediate(self: @This(), es: *Entities) bool {
-        es.pointer_generation.increment();
-        if (es.handle_tab.get(self.key)) |entity_loc| {
-            if (entity_loc.chunk) |chunk| {
-                chunk.swapRemove(&es.handle_tab, entity_loc.index_in_chunk);
-            } else {
-                es.reserved_entities -= 1;
-            }
-            es.live.unset(self.key.index);
-            es.handle_tab.recycle(self.key);
+            entity_loc.* = undefined;
             return true;
         } else {
             return false;
