@@ -58,6 +58,7 @@ test "cb execImmediate" {
         .reserved_entities = 0,
     });
     defer cb.deinit(gpa, &es);
+    cb.warn_ratio = 1.0;
 
     try expectEqual(0, es.count());
 
@@ -73,7 +74,7 @@ test "cb execImmediate" {
     e2.add(&cb, RigidBody, rb);
     try expectEqual(4, es.reserved());
     try expectEqual(0, es.count());
-    CmdBuf.Exec.immediate(&es, &cb, .{ .name = "cb execImmediate", .emit_warnings = false });
+    CmdBuf.Exec.immediate(&es, &cb, .{ .name = "cb execImmediate" });
     try expectEqual(0, es.reserved());
     try expectEqual(3, es.count());
 
@@ -107,7 +108,7 @@ test "cb execImmediate" {
     e1.remove(&cb, RigidBody);
     e2.add(&cb, Model, model);
     e2.remove(&cb, RigidBody);
-    CmdBuf.Exec.immediate(&es, &cb, .{ .name = "cb exec immediate", .emit_warnings = false });
+    CmdBuf.Exec.immediate(&es, &cb, .{ .name = "cb exec immediate" });
 
     try expectEqual(3, es.count());
 
@@ -1288,9 +1289,10 @@ test "chunk pool overflow" {
     {
         var cb: CmdBuf = try .init(gpa, &es, .{ .cmds = n + 1 });
         defer cb.deinit(gpa, &es);
+        cb.warn_ratio = 1.0;
         var it = es.iterator(struct { e: Entity });
         while (it.next(&es)) |vw| vw.e.destroy(&cb);
-        CmdBuf.Exec.immediate(&es, &cb, .{ .name = "chunk pool overflow", .emit_warnings = false });
+        CmdBuf.Exec.immediate(&es, &cb, .{ .name = "chunk pool overflow" });
         try expectEqual(0, es.count());
     }
 
@@ -1323,9 +1325,10 @@ test "chunk pool overflow" {
     {
         var cb: CmdBuf = try .init(gpa, &es, .{ .cmds = n + 1 });
         defer cb.deinit(gpa, &es);
+        cb.warn_ratio = 1.0;
         var it = es.iterator(struct { e: Entity });
         while (it.next(&es)) |vw| vw.e.destroy(&cb);
-        CmdBuf.Exec.immediate(&es, &cb, .{ .name = "destroy all", .emit_warnings = false });
+        CmdBuf.Exec.immediate(&es, &cb, .{ .name = "destroy all" });
         try expectEqual(0, es.count());
     }
 

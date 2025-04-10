@@ -71,11 +71,17 @@ pub fn init(
     es: *Entities,
     capacity: Capacity,
 ) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
+    // Reserve the command buffers
     var reserved: ArrayListUnmanaged(CmdBuf) = try .initCapacity(gpa, capacity.reserved);
     errdefer reserved.deinit(gpa);
     errdefer for (reserved.items) |*cb| cb.deinit(gpa, es);
-    for (0..reserved.capacity) |_| reserved.appendAssumeCapacity(try CmdBuf.init(gpa, es, capacity.cb));
+    for (0..reserved.capacity) |_| {
+        var cb: CmdBuf = try .init(gpa, es, capacity.cb);
+        cb.warn_ratio = 1.0; // We handle the warnings ourselves
+        reserved.appendAssumeCapacity(cb);
+    }
 
+    // Reserve the released list
     var released: ArrayListUnmanaged(*CmdBuf) = try .initCapacity(gpa, capacity.reserved);
     errdefer released.deinit(gpa);
 

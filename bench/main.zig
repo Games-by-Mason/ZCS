@@ -203,6 +203,7 @@ pub fn main() !void {
             .reserved_entities = max_entities,
         });
         defer cb.deinit(allocator, &es);
+        cb.warn_ratio = 1.0;
         alloc_cb_zone.end();
 
         alloc_zone.end();
@@ -248,7 +249,7 @@ pub fn main() !void {
                     }
                 }
             }
-            CmdBuf.Exec.immediate(&es, &cb, .{ .name = "exec fill", .emit_warnings = false });
+            CmdBuf.Exec.immediate(&es, &cb, .{ .name = "exec fill" });
         }
 
         {

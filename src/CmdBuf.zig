@@ -52,8 +52,10 @@ args: std.ArrayListUnmanaged(u64),
 data: std.ArrayListAlignedUnmanaged(u8, zcs.TypeInfo.max_align),
 binding: Binding = .{ .entity = .none },
 reserved: std.ArrayListUnmanaged(Entity),
-warned_capacity: bool = false,
 invalid: if (std.debug.runtime_safety) bool else void,
+/// If more than this ratio of the command buffer is used as measured by `worstCaseUsage`, a
+/// warning will be emitted.
+warn_ratio: f32 = 0.2,
 
 /// Initializes a command buffer.
 pub fn init(
@@ -213,20 +215,17 @@ pub fn iterator(self: *const @This()) Iterator {
 }
 
 pub const Exec = struct {
-    emit_warnings: bool,
     emit_plots: bool,
     name: [:0]const u8,
     tags_plot_name: [:0]const u8,
     args_plot_name: [:0]const u8,
     data_plot_name: [:0]const u8,
-    warned_capacity: bool = false,
     zone: Zone,
 
     zone_cmd_exec: zcs.ext.ZoneCmd.Exec = .{},
 
     /// Execution options.
     pub const Options = struct {
-        emit_warnings: bool = true,
         emit_plots: bool = true,
         name: [:0]const u8,
     };
@@ -237,7 +236,6 @@ pub const Exec = struct {
             .tags_plot_name = std.fmt.comptimePrint("{s}: tags", .{options.name}),
             .args_plot_name = std.fmt.comptimePrint("{s}: args", .{options.name}),
             .data_plot_name = std.fmt.comptimePrint("{s}: data", .{options.name}),
-            .emit_warnings = options.emit_warnings,
             .emit_plots = options.emit_plots,
             .zone = Zone.begin(.{
                 .src = @src(),
@@ -317,10 +315,7 @@ pub const Exec = struct {
             });
         }
 
-        if (self.emit_warnings and
-            !self.warned_capacity and
-            cb.worstCaseUsage() > 0.5)
-        {
+        if (cb.worstCaseUsage() > cb.warn_ratio) {
             log.warn("{?s}: command buffer past 50% capacity", .{self.name});
         }
     }
