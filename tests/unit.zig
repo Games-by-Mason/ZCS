@@ -1553,3 +1553,27 @@ test "smoke test" {
     try expectEqual(null, e0.get(&es, bool));
     try expectEqual(2, e0.get(&es, u8).?.*);
 }
+
+// Check that the default capacities don't overflow
+test "default capacities" {
+    defer CompFlag.unregisterAll();
+
+    {
+        var es: Entities = try .init(.{ .gpa = gpa });
+        defer es.deinit(gpa);
+
+        var cb: CmdBuf = try .init(.{
+            .name = null,
+            .gpa = gpa,
+            .es = &es,
+        });
+        defer cb.deinit(gpa, &es);
+
+        var cp: CmdPool = try .init(.{
+            .name = null,
+            .gpa = gpa,
+            .es = &es,
+        });
+        defer cp.deinit(gpa, &es);
+    }
+}

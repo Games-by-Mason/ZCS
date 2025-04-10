@@ -59,9 +59,11 @@ warn_ratio: f32 = 0.2,
 /// The capacity of a command pool.
 pub const Capacity = struct {
     /// The capacity of a single command buffer.
-    buffer: CmdBuf.Capacity,
+    buffer: CmdBuf.Capacity = .{
+        .cmds = 100000 / 256,
+    },
     /// The total number of command buffers to reserve.
-    buffers: usize,
+    buffers: usize = 256,
 };
 
 /// Options for `init`.
@@ -76,7 +78,7 @@ pub const InitOptions = struct {
     /// Entities are reserved from here.
     es: *Entities,
     /// The capacity.
-    cap: Capacity,
+    cap: Capacity = .{},
     /// `acquire` only returns command buffers with a `worstCaseUsage` greater than this value.
     headroom: f32 = 0.5,
     /// Warn if a single acquire exceeds this ratio of the headroom, or if more than this ratio of the

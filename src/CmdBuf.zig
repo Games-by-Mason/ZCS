@@ -67,7 +67,7 @@ pub const InitOptions = struct {
     /// Entities are reserved from here.
     es: *Entities,
     /// The capacity of the buffer.
-    cap: Capacity,
+    cap: Capacity = .{},
     /// If more than this ratio of the command buffer is used as measured by `worstCaseUsage`, a
     /// warning will be emitted by `Exec.checkStats`.
     warn_ratio: f32 = 0.2,
@@ -76,7 +76,7 @@ pub const InitOptions = struct {
 /// The capacity of a command buffer.
 pub const Capacity = struct {
     /// Space for at least this many commands will be reserved.
-    cmds: usize,
+    cmds: usize = 100000,
     /// Space for at least this much command data will be reserved. Keep in mind that padding may
     /// vary per platform.
     data: union(enum) {

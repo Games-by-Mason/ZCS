@@ -48,7 +48,7 @@ pub const InitOptions = struct {
     /// Used to allocate the entity storage.
     gpa: Allocator,
     /// The capacity of the entity storage.
-    cap: Capacity,
+    cap: Capacity = .{},
     /// When usage of preallocated buffers exceeds this ratio of full capacity, emit a warning.
     warn_ratio: f32 = 0.2,
 };
