@@ -54,7 +54,7 @@ retired: usize,
 /// Measured in units of `CmdBuf.worstCastUsage`, ranges from `0` to `1`.
 headroom: f32,
 /// See `InitOptions.warn_ratio`.
-warn_ratio: f32 = 0.2,
+warn_ratio: f32,
 
 /// The capacity of a command pool.
 pub const Capacity = struct {
@@ -128,6 +128,7 @@ pub fn init(options: InitOptions) error{ OutOfMemory, ZcsEntityOverflow }!@This(
         .retired = 0,
         .headroom = options.headroom,
         .name = options.name,
+        .warn_ratio = options.warn_ratio,
     };
 }
 
