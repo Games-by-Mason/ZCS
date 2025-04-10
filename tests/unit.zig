@@ -40,11 +40,15 @@ test "cb execImmediate" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es: Entities = try .init(gpa, .{
-        .max_entities = 100,
-        .max_archetypes = 8,
-        .max_chunks = 8,
-        .chunk_size = 512,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = 100,
+            .arches = 8,
+            .chunks = 8,
+            .chunk = 512,
+        },
+        .warn_ratio = 1.0,
     });
     defer es.deinit(gpa);
 
@@ -130,7 +134,7 @@ test "cb execImmediate" {
     try expectEqual(null, e2.get(&es, Tag));
 
     // Make sure this compiles
-    es.updateStats(.{ .emit_warnings = false });
+    es.updateStats();
 }
 
 fn incrementCb(
@@ -159,11 +163,14 @@ test "threading" {
 
     const max_entities = 67584;
     const create_entities = 1024;
-    var es: Entities = try .init(gpa, .{
-        .max_entities = max_entities,
-        .max_archetypes = 2,
-        .max_chunks = 256,
-        .chunk_size = 1024,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = max_entities,
+            .arches = 2,
+            .chunks = 256,
+            .chunk = 1024,
+        },
     });
     defer es.deinit(gpa);
 
@@ -345,11 +352,14 @@ test "cmd pool blocking" {
     defer CompFlag.unregisterAll();
 
     // Init
-    var es: Entities = try .init(gpa, .{
-        .max_entities = 1024,
-        .max_archetypes = 1,
-        .max_chunks = 2,
-        .chunk_size = 1024,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = 1024,
+            .arches = 1,
+            .chunks = 2,
+            .chunk = 1024,
+        },
     });
     defer es.deinit(gpa);
 
@@ -476,11 +486,14 @@ test "cb interning" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es: Entities = try .init(gpa, .{
-        .max_entities = 100,
-        .max_archetypes = 8,
-        .max_chunks = 8,
-        .chunk_size = 512,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = 100,
+            .arches = 8,
+            .chunks = 8,
+            .chunk = 512,
+        },
     });
     defer es.deinit(gpa);
 
@@ -705,11 +718,14 @@ test "cb overflow" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
 
-    var es: Entities = try .init(gpa, .{
-        .max_entities = 100,
-        .max_archetypes = 8,
-        .max_chunks = 8,
-        .chunk_size = 512,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = 100,
+            .arches = 8,
+            .chunks = 8,
+            .chunk = 512,
+        },
     });
     defer es.deinit(gpa);
 
@@ -847,11 +863,14 @@ test "cb capacity" {
 
     const cb_capacity = 600;
 
-    var es: Entities = try .init(gpa, .{
-        .max_entities = cb_capacity * 10,
-        .max_archetypes = 8,
-        .max_chunks = 8,
-        .chunk_size = 512,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = cb_capacity * 10,
+            .arches = 8,
+            .chunks = 8,
+            .chunk = 512,
+        },
     });
     defer es.deinit(gpa);
 
@@ -1050,11 +1069,14 @@ test "format entity" {
 
 test "change arch immediate" {
     defer CompFlag.unregisterAll();
-    var es: Entities = try .init(gpa, .{
-        .max_entities = 100,
-        .max_archetypes = 8,
-        .max_chunks = 8,
-        .chunk_size = 512,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = 100,
+            .arches = 8,
+            .chunks = 8,
+            .chunk = 512,
+        },
     });
     defer es.deinit(gpa);
 
@@ -1127,10 +1149,13 @@ test "change arch immediate" {
 
 test "getAll" {
     defer CompFlag.unregisterAll();
-    var es: Entities = try .init(gpa, .{
-        .max_entities = 100,
-        .max_archetypes = 8,
-        .max_chunks = 8,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = 100,
+            .arches = 8,
+            .chunks = 8,
+        },
     });
     defer es.deinit(gpa);
     const e = Entity.reserveImmediate(&es);
@@ -1175,14 +1200,16 @@ test "getAll" {
         } else std.debug.panic("unexpected registration: {}", .{id.*});
     }
 }
-
 test "entity overflow" {
     defer CompFlag.unregisterAll();
-    var es: Entities = try .init(gpa, .{
-        .max_entities = 3,
-        .max_archetypes = 8,
-        .max_chunks = 8,
-        .chunk_size = 512,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = 3,
+            .arches = 8,
+            .chunks = 8,
+            .chunk = 512,
+        },
     });
     defer es.deinit(gpa);
 
@@ -1212,11 +1239,14 @@ test "entity overflow" {
 
 test "archetype overflow" {
     defer CompFlag.unregisterAll();
-    var es: Entities = try .init(gpa, .{
-        .max_entities = 3,
-        .max_archetypes = 2,
-        .max_chunks = 4,
-        .chunk_size = 512,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = 3,
+            .arches = 2,
+            .chunks = 4,
+            .chunk = 512,
+        },
     });
     defer es.deinit(gpa);
 
@@ -1259,11 +1289,14 @@ test "archetype overflow" {
 
 test "chunk pool overflow" {
     defer CompFlag.unregisterAll();
-    var es: Entities = try .init(gpa, .{
-        .max_entities = 4096,
-        .max_archetypes = 5,
-        .max_chunks = 1,
-        .chunk_size = 512,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = 4096,
+            .arches = 5,
+            .chunks = 1,
+            .chunk = 512,
+        },
     });
     defer es.deinit(gpa);
 
@@ -1428,11 +1461,15 @@ test "chunk overflow" {
 
     // Not even enough room for the header
     {
-        var es: Entities = try .init(gpa, .{
-            .max_entities = 4096,
-            .max_archetypes = 5,
-            .max_chunks = 1,
-            .chunk_size = 16,
+        var es: Entities = try .init(.{
+            .gpa = gpa,
+            .cap = .{
+                .entities = 4096,
+                .arches = 5,
+                .chunks = 1,
+                .chunk = 16,
+            },
+            .warn_ratio = 1.0,
         });
         defer es.deinit(gpa);
 
@@ -1454,11 +1491,15 @@ test "chunk overflow" {
 
     // Enough room for the header, but a component is too big
     {
-        var es: Entities = try .init(gpa, .{
-            .max_entities = 4096,
-            .max_archetypes = 5,
-            .max_chunks = 1,
-            .chunk_size = 4096,
+        var es: Entities = try .init(.{
+            .gpa = gpa,
+            .cap = .{
+                .entities = 4096,
+                .arches = 5,
+                .chunks = 1,
+                .chunk = 4096,
+            },
+            .warn_ratio = 1.0,
         });
         defer es.deinit(gpa);
 
@@ -1484,11 +1525,14 @@ test "chunk overflow" {
 // test to hit the failure than to debug the more complex test directly.
 test "smoke test" {
     defer CompFlag.unregisterAll();
-    var es: Entities = try .init(gpa, .{
-        .max_entities = 3,
-        .max_archetypes = 3,
-        .max_chunks = 3,
-        .chunk_size = 512,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = 3,
+            .arches = 3,
+            .chunks = 3,
+            .chunk = 512,
+        },
     });
     defer es.deinit(gpa);
 

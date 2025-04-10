@@ -41,35 +41,46 @@ warned_saturated: u64 = 0,
 warned_capacity: bool = false,
 warned_chunk_pool: bool = false,
 warned_arches: bool = false,
+warn_ratio: f32,
 
 /// Options for `init`.
-pub const Options = struct {
+pub const InitOptions = struct {
+    /// Used to allocate the entity storage.
+    gpa: Allocator,
+    /// The capacity of the entity storage.
+    cap: Capacity,
+    /// When usage of preallocated buffers exceeds this ratio of full capacity, emit a warning.
+    warn_ratio: f32 = 0.2,
+};
+
+/// The capacity of `Entities`.
+pub const Capacity = struct {
     /// The max number of entities.
-    max_entities: u32 = 1000000,
+    entities: u32 = 1000000,
     /// The max number of archetypes.
-    max_archetypes: u32 = 64,
+    arches: u32 = 64,
     /// The number of chunks to allocate.
-    max_chunks: u16 = 4096,
-    /// The size of each chunk.
-    chunk_size: u32 = 65536,
+    chunks: u16 = 4096,
+    /// The size of a single chunk in bytes.
+    chunk: u32 = 65536,
 };
 
 /// Initializes the entity storage with the given capacity.
-pub fn init(gpa: Allocator, options: Options) Allocator.Error!@This() {
+pub fn init(options: InitOptions) Allocator.Error!@This() {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
 
-    var handle_tab: HandleTab = try .init(gpa, options.max_entities);
-    errdefer handle_tab.deinit(gpa);
+    var handle_tab: HandleTab = try .init(options.gpa, options.cap.entities);
+    errdefer handle_tab.deinit(options.gpa);
 
-    var chunk_pool: ChunkPool = try .init(gpa, .{
-        .capacity = options.max_chunks,
-        .chunk_size = options.chunk_size,
+    var chunk_pool: ChunkPool = try .init(options.gpa, .{
+        .chunks = options.cap.chunks,
+        .chunk = options.cap.chunk,
     });
-    errdefer chunk_pool.deinit(gpa);
+    errdefer chunk_pool.deinit(options.gpa);
 
-    var arches: Arches = try .init(gpa, options.max_archetypes);
-    errdefer arches.deinit(gpa);
+    var arches: Arches = try .init(options.gpa, options.cap.arches);
+    errdefer arches.deinit(options.gpa);
 
     if (tracy.enabled) {
         var buf: [1024]u8 = undefined;
@@ -85,6 +96,7 @@ pub fn init(gpa: Allocator, options: Options) Allocator.Error!@This() {
         .handle_tab = handle_tab,
         .arches = arches,
         .chunk_pool = chunk_pool,
+        .warn_ratio = options.warn_ratio,
     };
 }
 
@@ -425,14 +437,11 @@ pub fn forEachChunkThreaded(
     }
 }
 
-/// Options for `updateStats`.
-pub const UpdateStatsOptions = struct {
-    emit_warnings: bool = true,
-};
-
-/// If Tracy is enabled, sends usage statistics to Tracy. If `warn` is true, emits warning if
-/// storage is past 50% capacity. It's recommended that you call this once a frame.
-pub fn updateStats(self: *@This(), options: UpdateStatsOptions) void {
+/// Emits a warning if any preallocated buffers are past `warn_ratio` capacity, or if any entity
+/// slots have become saturated. If Tracy is enabled, sends usage statistics to Tracy.
+///
+/// It's recommended that you call this once a frame.
+pub fn updateStats(self: *@This()) void {
     if (tracy.enabled) {
         tracy.plot(.{
             .name = "entities",
@@ -456,28 +465,32 @@ pub fn updateStats(self: *@This(), options: UpdateStatsOptions) void {
         });
     }
 
-    if (options.emit_warnings) {
-        if (!self.warned_capacity and self.handle_tab.count() > self.handle_tab.capacity / 2) {
-            self.warned_capacity = true;
-            log.warn("entities past 50% capacity", .{});
-        }
-
+    if (self.warn_ratio < 1.0) {
         if (self.handle_tab.saturated > self.warned_saturated) {
             self.warned_saturated = self.handle_tab.saturated;
             log.warn("{} entity slots have been saturated", .{self.warned_saturated});
         }
 
-        const chunk_pool_cap = self.chunk_pool.buf.len / self.chunk_pool.size_align.toByteUnits();
-        if (!self.warned_chunk_pool and self.chunk_pool.reserved > chunk_pool_cap / 2) {
-            self.warned_chunk_pool = true;
-            log.warn("chunk pool past 50% capacity", .{});
+        const handles: f32 = @floatFromInt(self.handle_tab.count());
+        const handles_cap: f32 = @floatFromInt(self.handle_tab.capacity);
+        if (!self.warned_capacity and handles > handles_cap * self.warn_ratio) {
+            self.warned_capacity = true;
+            log.warn("entities past {d}% capacity", .{self.warn_ratio * 100.0});
         }
 
-        if (!self.warned_arches and
-            self.arches.map.count() > self.arches.map.capacity() / 2)
-        {
+        const chunks: f32 = @floatFromInt(self.chunk_pool.reserved);
+        const chunks_cap_int = self.chunk_pool.buf.len / self.chunk_pool.size_align.toByteUnits();
+        const chunks_cap: f32 = @floatFromInt(chunks_cap_int);
+        if (!self.warned_chunk_pool and chunks > chunks_cap * self.warn_ratio) {
+            self.warned_chunk_pool = true;
+            log.warn("chunk pool past {d}% capacity", .{self.warn_ratio * 100.0});
+        }
+
+        const arches: f32 = @floatFromInt(self.arches.map.count());
+        const arhces_cap: f32 = @floatFromInt(self.arches.map.capacity());
+        if (!self.warned_arches and arches > arhces_cap * self.warn_ratio) {
             self.warned_arches = true;
-            log.warn("archetypes past 50% capacity", .{});
+            log.warn("archetypes past {d}% capacity", .{self.warn_ratio * 100.0});
         }
     }
 }

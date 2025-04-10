@@ -154,11 +154,14 @@ fn appendArchChange(oracle: *Oracle, e: Entity) *OracleBatch.ArchChange {
 fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
     var smith: Smith = .init(input);
 
-    var es: Entities = try .init(gpa, .{
-        .max_entities = max_entities,
-        .max_archetypes = 8,
-        .max_chunks = 8,
-        .chunk_size = 65536,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = max_entities,
+            .arches = 8,
+            .chunks = 8,
+            .chunk = 65536,
+        },
     });
     defer es.deinit(gpa);
 

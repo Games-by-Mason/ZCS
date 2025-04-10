@@ -275,7 +275,7 @@ pub fn updateStats(self: *const CmdBuf) void {
         if (self.name) |name| {
             tracy.plot(.{
                 .name = name,
-                .value = .{ .f32 = currentUsage },
+                .value = .{ .f32 = currentUsage * 100.0 },
             });
         }
     }

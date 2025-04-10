@@ -33,10 +33,13 @@ const max_entities = 100000;
 test "exec" {
     defer CompFlag.unregisterAll();
 
-    var es: Entities = try .init(gpa, .{
-        .max_entities = 128,
-        .max_archetypes = 8,
-        .max_chunks = 8,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = 128,
+            .arches = 8,
+            .chunks = 8,
+        },
     });
     defer es.deinit(gpa);
 
@@ -79,10 +82,13 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
 
     var smith: Smith = .init(input);
 
-    var es: Entities = try .init(gpa, .{
-        .max_entities = max_entities,
-        .max_archetypes = 8,
-        .max_chunks = 1024,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = max_entities,
+            .arches = 8,
+            .chunks = 1024,
+        },
     });
     defer es.deinit(gpa);
 

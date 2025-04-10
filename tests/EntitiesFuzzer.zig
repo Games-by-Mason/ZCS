@@ -40,12 +40,15 @@ destroyed: std.AutoArrayHashMapUnmanaged(Entity, void),
 found_buf: std.AutoArrayHashMapUnmanaged(Entity, void),
 
 pub fn init(input: []const u8) !@This() {
-    var es: Entities = try .init(gpa, .{
-        .max_entities = max_entities,
-        .max_archetypes = 32,
-        .max_chunks = 2048,
-        // We set a fairly small chunk size for better test coverage
-        .chunk_size = 512,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = max_entities,
+            .arches = 32,
+            .chunks = 2048,
+            // We set a fairly small chunk size for better test coverage
+            .chunk = 512,
+        },
     });
     errdefer es.deinit(gpa);
 

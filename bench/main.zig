@@ -39,11 +39,15 @@ pub fn main() !void {
     var expected_ra_total: ?u256 = null;
 
     for (0..iterations) |_| {
-        var es: Entities = try .init(allocator, .{
-            .max_entities = max_entities,
-            .max_archetypes = 1,
-            .max_chunks = 4096,
-            .chunk_size = 65536,
+        var es: Entities = try .init(.{
+            .gpa = allocator,
+            .cap = .{
+                .entities = max_entities,
+                .arches = 1,
+                .chunks = 4096,
+                .chunk = 65536,
+            },
+            .warn_ratio = 1.0,
         });
         defer es.deinit(allocator);
 
@@ -66,17 +70,21 @@ pub fn main() !void {
     }
 
     for (0..iterations) |_| {
-        var es: Entities = try .init(allocator, .{
-            .max_entities = max_entities,
-            .max_archetypes = 1,
-            .max_chunks = 4096,
-            .chunk_size = 65536,
+        var es: Entities = try .init(.{
+            .gpa = allocator,
+            .cap = .{
+                .entities = max_entities,
+                .arches = 1,
+                .chunks = 4096,
+                .chunk = 65536,
+            },
+            .warn_ratio = 1.0,
         });
         defer es.deinit(allocator);
 
         // also compare interning vs not etc
         {
-            es.updateStats(.{ .emit_warnings = false });
+            es.updateStats();
             const fill_zone = Zone.begin(.{ .name = "fill immediate", .src = @src() });
             for (0..max_entities) |i| {
                 const e = Entity.reserveImmediate(&es);
@@ -89,7 +97,7 @@ pub fn main() !void {
                 ));
             }
             fill_zone.end();
-            es.updateStats(.{ .emit_warnings = false });
+            es.updateStats();
         }
     }
 
@@ -158,11 +166,15 @@ pub fn main() !void {
     }
 
     for (0..iterations) |_| {
-        var es: Entities = try .init(allocator, .{
-            .max_entities = max_entities,
-            .max_archetypes = 64,
-            .max_chunks = 4096,
-            .chunk_size = 65536,
+        var es: Entities = try .init(.{
+            .gpa = allocator,
+            .cap = .{
+                .entities = max_entities,
+                .arches = 64,
+                .chunks = 4096,
+                .chunk = 65536,
+            },
+            .warn_ratio = 1.0,
         });
         defer es.deinit(allocator);
 
@@ -193,11 +205,15 @@ pub fn main() !void {
         const alloc_zone = Zone.begin(.{ .name = "alloc", .src = @src() });
 
         const alloc_es_zone = Zone.begin(.{ .name = "es", .src = @src() });
-        var es: Entities = try .init(allocator, .{
-            .max_entities = max_entities,
-            .max_archetypes = 64,
-            .max_chunks = 4096,
-            .chunk_size = 65536,
+        var es: Entities = try .init(.{
+            .gpa = allocator,
+            .cap = .{
+                .entities = max_entities * 2,
+                .arches = 64,
+                .chunks = 4096,
+                .chunk = 65536,
+            },
+            .warn_ratio = 1.0,
         });
         defer es.deinit(allocator);
         alloc_es_zone.end();
@@ -208,12 +224,12 @@ pub fn main() !void {
             .gpa = allocator,
             .es = &es,
             .cap = .{
-                .cmds = max_entities * 3,
+                .cmds = max_entities * 4,
                 .reserved_entities = max_entities,
             },
+            .warn_ratio = 1.0,
         });
         defer cb.deinit(allocator, &es);
-        cb.warn_ratio = 1.0;
         alloc_cb_zone.end();
 
         alloc_zone.end();
@@ -352,7 +368,7 @@ pub fn main() !void {
             {
                 const iter_zone = Zone.begin(.{ .name = "es.random access", .src = @src() });
                 defer iter_zone.end();
-                for (0..max_entities) |_| {
+                for (0..max_entities / 2) |_| {
                     const ei: Entity.Index = @enumFromInt(rand.uintLessThan(u32, max_entities));
                     const e = ei.toEntity(&es);
                     const comps = e.view(&es, struct {
@@ -376,11 +392,15 @@ pub fn main() !void {
         defer zone.end();
 
         const es_init_zone = Zone.begin(.{ .name = "es init", .src = @src() });
-        var es: Entities = try .init(allocator, .{
-            .max_entities = max_entities,
-            .max_archetypes = 64,
-            .max_chunks = 4096,
-            .chunk_size = 65536,
+        var es: Entities = try .init(.{
+            .gpa = allocator,
+            .cap = .{
+                .entities = max_entities,
+                .arches = 64,
+                .chunks = 4096,
+                .chunk = 65536,
+            },
+            .warn_ratio = 1.0,
         });
         defer es.deinit(allocator);
         es_init_zone.end();

@@ -29,11 +29,14 @@ const cmds_capacity = 10000;
 test "immediate" {
     defer CompFlag.unregisterAll();
 
-    var es: Entities = try .init(gpa, .{
-        .max_entities = 128,
-        .max_archetypes = 8,
-        .max_chunks = 8,
-        .chunk_size = 512,
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = 128,
+            .arches = 8,
+            .chunks = 8,
+            .chunk = 512,
+        },
     });
     defer es.deinit(gpa);
 

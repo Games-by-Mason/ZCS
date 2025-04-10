@@ -7,6 +7,7 @@ const tracy = @import("tracy");
 const Chunk = zcs.Chunk;
 const Entities = zcs.Entities;
 const ChunkList = zcs.ChunkList;
+const Entity = zcs.Entity;
 
 const assert = std.debug.assert;
 const math = std.math;
@@ -35,27 +36,27 @@ size_align: Alignment,
 /// Freed chunks, connected by the `next` field. All other fields are undefined.
 free: Chunk.Index = .none,
 
-/// Options for `init`.
-pub const Options = struct {
+/// The pool's capcity.
+pub const Capacity = struct {
     /// The number of chunks to reserve. Supports the range `[0, math.maxInt(u32))`, max int
     /// is reserved for the none index.
-    capacity: u16,
+    chunks: u16,
     /// The size of each chunk.
-    chunk_size: u32,
+    chunk: u32,
 };
 
 /// Allocates a chunk pool.
-pub fn init(gpa: Allocator, options: Options) Allocator.Error!@This() {
+pub fn init(gpa: Allocator, cap: Capacity) Allocator.Error!@This() {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
 
     // The max size is reserved for invalid indices.
-    assert(options.capacity < math.maxInt(u32));
-    assert(options.chunk_size >= zcs.TypeInfo.max_align);
+    assert(cap.chunks < math.maxInt(u32));
+    assert(cap.chunk >= zcs.TypeInfo.max_align);
 
     // Allocate the chunk data, aligned to the size of a chunk
-    const alignment = Alignment.fromByteUnits(options.chunk_size);
-    const len = @as(usize, options.chunk_size) * @as(usize, options.capacity);
+    const alignment = Alignment.fromByteUnits(cap.chunk);
+    const len = @as(usize, cap.chunk) * @as(usize, cap.chunks);
     const buf = (gpa.rawAlloc(
         len,
         alignment,

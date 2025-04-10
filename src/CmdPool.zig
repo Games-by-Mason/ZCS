@@ -255,7 +255,7 @@ pub fn reset(self: *@This()) void {
     if (self.name) |name| {
         tracy.plot(.{
             .name = name,
-            .value = .{ .f32 = usage },
+            .value = .{ .f32 = usage * 100.0 },
         });
     }
 
