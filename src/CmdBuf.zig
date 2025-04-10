@@ -47,32 +47,71 @@ const Binding = struct {
     destroyed: bool = false,
 };
 
+name: ?[:0]const u8,
 tags: std.ArrayListUnmanaged(Subcmd.Tag),
 args: std.ArrayListUnmanaged(u64),
 data: std.ArrayListAlignedUnmanaged(u8, zcs.TypeInfo.max_align),
 binding: Binding = .{ .entity = .none },
 reserved: std.ArrayListUnmanaged(Entity),
 invalid: if (std.debug.runtime_safety) bool else void,
-/// If more than this ratio of the command buffer is used as measured by `worstCaseUsage`, a
-/// warning will be emitted by `Exec.checkStats`.
-warn_ratio: f32 = 0.2,
+warn_ratio: f32,
+
+/// Options for `init`.
+pub const InitOptions = struct {
+    /// The debug name for this command buffer.
+    ///
+    /// Used in warnings and plots, see `updateStats`.
+    name: ?[:0]const u8,
+    /// Used to allocate the command buffer.
+    gpa: Allocator,
+    /// Entities are reserved from here.
+    es: *Entities,
+    /// The capacity of the buffer.
+    cap: Capacity,
+    /// If more than this ratio of the command buffer is used as measured by `worstCaseUsage`, a
+    /// warning will be emitted by `Exec.checkStats`.
+    warn_ratio: f32 = 0.2,
+};
+
+/// The capacity of a command buffer.
+pub const Capacity = struct {
+    /// Space for at least this many commands will be reserved.
+    cmds: usize,
+    /// Space for at least this much command data will be reserved. Keep in mind that padding may
+    /// vary per platform.
+    data: union(enum) {
+        bytes: usize,
+        bytes_per_cmd: u32,
+    } = .{ .bytes_per_cmd = 2 * 16 * @sizeOf(f32) },
+    /// Sets the number of entities to reserve up front. If `null`, `cmds` entities are reserved.
+    reserved_entities: ?usize = null,
+
+    /// Returns the number of data bytes requested.
+    fn dataBytes(self: @This()) usize {
+        return switch (self.data) {
+            .bytes => |bytes| bytes,
+            .bytes_per_cmd => |bytes_per_cmd| self.cmds * bytes_per_cmd,
+        };
+    }
+
+    /// Returns the number of reserved entities requested.
+    fn reservedEntities(self: @This()) usize {
+        return self.reserved_entities orelse self.cmds;
+    }
+};
 
 /// Initializes a command buffer.
-pub fn init(
-    gpa: Allocator,
-    es: *Entities,
-    capacity: Capacity,
-) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
+pub fn init(options: InitOptions) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
     comptime assert(CompFlag.max < std.math.maxInt(u64));
 
     // Each command can have at most two tags
     _ = Subcmd.rename_when_changing_encoding;
-    const cmds_cap = capacity.cmds * 2;
+    const cmds_cap = options.cap.cmds * 2;
     const tags_zone = Zone.begin(.{ .name = "tags", .src = @src() });
-    var tags: std.ArrayListUnmanaged(Subcmd.Tag) = try .initCapacity(gpa, cmds_cap);
-    errdefer tags.deinit(gpa);
+    var tags: std.ArrayListUnmanaged(Subcmd.Tag) = try .initCapacity(options.gpa, cmds_cap);
+    errdefer tags.deinit(options.gpa);
     tags_zone.end();
 
     // Each command can have at most 3 args (the add ptr subcommand does a bind which has one
@@ -81,35 +120,48 @@ pub fn init(
     _ = Subcmd.rename_when_changing_encoding;
     const args_zone = Zone.begin(.{ .name = "args", .src = @src() });
     const args_cap = cmds_cap * 3;
-    var args: std.ArrayListUnmanaged(u64) = try .initCapacity(gpa, args_cap);
-    errdefer args.deinit(gpa);
+    var args: std.ArrayListUnmanaged(u64) = try .initCapacity(options.gpa, args_cap);
+    errdefer args.deinit(options.gpa);
     args_zone.end();
 
     const any_bytes_zone = Zone.begin(.{ .name = "any bytes", .src = @src() });
     var data: std.ArrayListAlignedUnmanaged(u8, zcs.TypeInfo.max_align) = try .initCapacity(
-        gpa,
-        capacity.dataBytes(),
+        options.gpa,
+        options.cap.dataBytes(),
     );
-    errdefer data.deinit(gpa);
+    errdefer data.deinit(options.gpa);
     any_bytes_zone.end();
 
     const reserved_zone = Zone.begin(.{ .name = "reserved", .src = @src() });
     var reserved: std.ArrayListUnmanaged(Entity) = try .initCapacity(
-        gpa,
-        capacity.reservedEntities(),
+        options.gpa,
+        options.cap.reservedEntities(),
     );
-    errdefer reserved.deinit(gpa);
+    errdefer reserved.deinit(options.gpa);
     for (0..reserved.capacity) |_| {
-        reserved.appendAssumeCapacity(try Entity.reserveImmediateOrErr(es));
+        reserved.appendAssumeCapacity(try Entity.reserveImmediateOrErr(options.es));
     }
     reserved_zone.end();
 
+    if (tracy.enabled) {
+        if (options.name) |name| {
+            tracy.plotConfig(.{
+                .name = name,
+                .format = .percentage,
+                .mode = .line,
+                .fill = true,
+            });
+        }
+    }
+
     return .{
+        .name = options.name,
         .reserved = reserved,
         .tags = tags,
         .args = args,
         .data = data,
         .invalid = if (std.debug.runtime_safety) false else {},
+        .warn_ratio = options.warn_ratio,
     };
 }
 
@@ -214,32 +266,33 @@ pub fn iterator(self: *const @This()) Iterator {
     return .{ .decoder = .{ .cb = self } };
 }
 
-pub const Exec = struct {
-    emit_plots: bool,
-    name: [:0]const u8,
-    tags_plot_name: [:0]const u8,
-    args_plot_name: [:0]const u8,
-    data_plot_name: [:0]const u8,
-    zone: Zone,
+/// Emits a warning if over `warn_ratio`. If Tracy is enabled and this command buffer has a name,
+/// update its plots. Called automatically by `Exec`.
+pub fn updateStats(self: *const CmdBuf) void {
+    const currentUsage = self.worstCaseUsage();
 
+    if (tracy.enabled) {
+        if (self.name) |name| {
+            tracy.plot(.{
+                .name = name,
+                .value = .{ .f32 = currentUsage },
+            });
+        }
+    }
+
+    if (currentUsage > self.warn_ratio) {
+        log.warn("command buffer past 50% capacity (buffer name = {?s})", .{self.name});
+    }
+}
+
+pub const Exec = struct {
+    zone: Zone,
     zone_cmd_exec: zcs.ext.ZoneCmd.Exec = .{},
 
-    /// Execution options.
-    pub const Options = struct {
-        emit_plots: bool = true,
-        name: [:0]const u8,
-    };
-
-    pub fn init(comptime options: Options) @This() {
+    pub fn init() @This() {
         return .{
-            .name = options.name,
-            .tags_plot_name = std.fmt.comptimePrint("{s}: tags", .{options.name}),
-            .args_plot_name = std.fmt.comptimePrint("{s}: args", .{options.name}),
-            .data_plot_name = std.fmt.comptimePrint("{s}: data", .{options.name}),
-            .emit_plots = options.emit_plots,
             .zone = Zone.begin(.{
                 .src = @src(),
-                .name = options.name.ptr,
             }),
         };
     }
@@ -247,12 +300,8 @@ pub const Exec = struct {
     /// Executes the command buffer and then clears it.
     ///
     /// Invalidates pointers.
-    pub fn immediate(
-        es: *Entities,
-        cb: *CmdBuf,
-        comptime options: Options,
-    ) void {
-        immediateOrErr(es, cb, options) catch |err|
+    pub fn immediate(es: *Entities, cb: *CmdBuf) void {
+        immediateOrErr(es, cb) catch |err|
             @panic(@errorName(err));
     }
 
@@ -261,9 +310,8 @@ pub const Exec = struct {
     pub fn immediateOrErr(
         es: *Entities,
         cb: *CmdBuf,
-        comptime options: Options,
     ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow, ZcsEntityOverflow }!void {
-        var self: @This() = .init(options);
+        var self: @This() = .init();
 
         es.pointer_generation.increment();
         var iter = cb.iterator();
@@ -284,74 +332,11 @@ pub const Exec = struct {
         self.zone_cmd_exec.extImmediate(payload);
     }
 
-    pub fn updateStats(self: *@This(), cb: *const CmdBuf) void {
-        if (tracy.enabled and self.emit_plots) {
-            for ([_][:0]const u8{
-                self.tags_plot_name,
-                self.args_plot_name,
-                self.data_plot_name,
-            }) |name| {
-                tracy.plotConfig(.{
-                    .name = name,
-                    .format = .percentage,
-                    .mode = .line,
-                    .fill = true,
-                });
-            }
-
-            tracy.plot(.{
-                .name = self.tags_plot_name,
-                .value = .{ .f32 = usage(cb.tags) },
-            });
-
-            tracy.plot(.{
-                .name = self.args_plot_name,
-                .value = .{ .f32 = usage(cb.args) },
-            });
-
-            tracy.plot(.{
-                .name = self.data_plot_name,
-                .value = .{ .f32 = usage(cb.data) },
-            });
-        }
-
-        if (cb.worstCaseUsage() > cb.warn_ratio) {
-            log.warn("{?s}: command buffer past 50% capacity", .{self.name});
-        }
-    }
-
     pub fn finish(self: *@This(), cb: *CmdBuf, es: *Entities) error{ZcsEntityOverflow}!void {
-        self.updateStats(cb);
+        cb.updateStats();
         cb.clear(es);
         self.zone_cmd_exec.finish();
         self.zone.end();
-    }
-};
-
-/// Worst case capacity for a command buffer.
-pub const Capacity = struct {
-    /// Space for at least this many commands will be reserved.
-    cmds: usize,
-    /// Space for at least this much command data will be reserved. Keep in mind that padding may
-    /// vary per platform.
-    data: union(enum) {
-        bytes: usize,
-        bytes_per_cmd: u32,
-    } = .{ .bytes_per_cmd = 2 * 16 * @sizeOf(f32) },
-    /// Sets the number of entities to reserve up front. If `null`, `cmds` entities are reserved.
-    reserved_entities: ?usize = null,
-
-    /// Returns the number of data bytes requested.
-    fn dataBytes(self: @This()) usize {
-        return switch (self.data) {
-            .bytes => |bytes| bytes,
-            .bytes_per_cmd => |bytes_per_cmd| self.cmds * bytes_per_cmd,
-        };
-    }
-
-    /// Returns the number of reserved entities requested.
-    fn reservedEntities(self: @This()) usize {
-        return self.reserved_entities orelse self.cmds;
     }
 };
 

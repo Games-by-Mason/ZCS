@@ -166,9 +166,14 @@ pub fn main() !void {
         });
         defer es.deinit(allocator);
 
-        var cb: CmdBuf = try .init(allocator, &es, .{
-            .cmds = max_entities * 3,
-            .reserved_entities = max_entities,
+        var cb: CmdBuf = try .init(.{
+            .name = "cmd buf",
+            .gpa = allocator,
+            .es = &es,
+            .cap = .{
+                .cmds = max_entities * 3,
+                .reserved_entities = max_entities,
+            },
         });
         defer cb.deinit(allocator, &es);
 
@@ -198,9 +203,14 @@ pub fn main() !void {
         alloc_es_zone.end();
 
         const alloc_cb_zone = Zone.begin(.{ .name = "cb", .src = @src() });
-        var cb: CmdBuf = try .init(allocator, &es, .{
-            .cmds = max_entities * 3,
-            .reserved_entities = max_entities,
+        var cb: CmdBuf = try .init(.{
+            .name = "cmd buf",
+            .gpa = allocator,
+            .es = &es,
+            .cap = .{
+                .cmds = max_entities * 3,
+                .reserved_entities = max_entities,
+            },
         });
         defer cb.deinit(allocator, &es);
         cb.warn_ratio = 1.0;
@@ -249,7 +259,7 @@ pub fn main() !void {
                     }
                 }
             }
-            CmdBuf.Exec.immediate(&es, &cb, .{ .name = "exec fill" });
+            CmdBuf.Exec.immediate(&es, &cb);
         }
 
         {

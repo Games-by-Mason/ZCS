@@ -239,10 +239,15 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
     var o: Oracle = .init();
     defer o.deinit();
 
-    var cb: CmdBuf = try .init(gpa, &fz.es, .{
-        .cmds = cmds_capacity,
-        .data = .{ .bytes_per_cmd = @sizeOf(Node) },
-        .reserved_entities = 0,
+    var cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &fz.es,
+        .cap = .{
+            .cmds = cmds_capacity,
+            .data = .{ .bytes_per_cmd = @sizeOf(Node) },
+            .reserved_entities = 0,
+        },
     });
     defer cb.deinit(gpa, &fz.es);
 
@@ -263,7 +268,7 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
             }
         }
 
-        Node.Exec.immediate(&fz.es, &cb, .{ .name = "fuzzNodesCmdBuf" });
+        Node.Exec.immediate(&fz.es, &cb);
         try checkOracle(&fz, &o);
     }
 }
@@ -277,10 +282,15 @@ fn fuzzNodeCyclesCmdBuf(_: void, input: []const u8) !void {
     var o: Oracle = .init();
     defer o.deinit();
 
-    var cb: CmdBuf = try .init(gpa, &fz.es, .{
-        .cmds = cmds_capacity,
-        .data = .{ .bytes_per_cmd = @sizeOf(Node) },
-        .reserved_entities = 0,
+    var cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &fz.es,
+        .cap = .{
+            .cmds = cmds_capacity,
+            .data = .{ .bytes_per_cmd = @sizeOf(Node) },
+            .reserved_entities = 0,
+        },
     });
     defer cb.deinit(gpa, &fz.es);
 
@@ -293,7 +303,7 @@ fn fuzzNodeCyclesCmdBuf(_: void, input: []const u8) !void {
             try setParentCmd(&fz, &o, &cb);
         }
 
-        Node.Exec.immediate(&fz.es, &cb, .{ .name = "fuzz cycles" });
+        Node.Exec.immediate(&fz.es, &cb);
         try checkOracle(&fz, &o);
     }
 }

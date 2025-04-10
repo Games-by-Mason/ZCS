@@ -40,17 +40,22 @@ test "exec" {
     });
     defer es.deinit(gpa);
 
-    var cb: CmdBuf = try .init(gpa, &es, .{
-        .cmds = 2,
-        .data = .{ .bytes_per_cmd = @sizeOf(SetParent) },
+    var cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &es,
+        .cap = .{
+            .cmds = 2,
+            .data = .{ .bytes_per_cmd = @sizeOf(SetParent) },
+        },
+        .warn_ratio = 1.0,
     });
     defer cb.deinit(gpa, &es);
-    cb.warn_ratio = 1.0;
 
     const child: Entity = .reserve(&cb);
     const parent: Entity = .reserve(&cb);
     cb.ext(SetParent, .{ .child = child, .parent = parent.toOptional() });
-    Transform.Exec.immediate(&es, &cb, .{ .name = "exec" });
+    Transform.Exec.immediate(&es, &cb);
 
     const child_node = child.get(&es, Node).?;
     try expectEqual(child_node.parent, parent.toOptional());
@@ -81,12 +86,17 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
     });
     defer es.deinit(gpa);
 
-    var cb: CmdBuf = try .init(gpa, &es, .{
-        .cmds = cmds_capacity,
-        .data = .{ .bytes_per_cmd = @sizeOf(Node) },
+    var cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &es,
+        .cap = .{
+            .cmds = cmds_capacity,
+            .data = .{ .bytes_per_cmd = @sizeOf(Node) },
+        },
+        .warn_ratio = 1.0,
     });
     defer cb.deinit(gpa, &es);
-    cb.warn_ratio = 1.0;
 
     var all: std.ArrayListUnmanaged(Entity) = .{};
     defer all.deinit(gpa);
@@ -219,7 +229,7 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
             },
         }
 
-        Transform.Exec.immediate(&es, &cb, .{ .name = "fuzzTransformsCmdBuf" });
+        Transform.Exec.immediate(&es, &cb);
         try checkOracle(&es);
     }
 }

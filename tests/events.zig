@@ -44,9 +44,14 @@ test "events" {
     });
     defer es.deinit(gpa);
 
-    var cb: CmdBuf = try .init(gpa, &es, .{
-        .cmds = 10,
-        .data = .{ .bytes_per_cmd = @sizeOf(Event) },
+    var cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &es,
+        .cap = .{
+            .cmds = 10,
+            .data = .{ .bytes_per_cmd = @sizeOf(Event) },
+        },
     });
     defer cb.deinit(gpa, &es);
 
@@ -54,7 +59,7 @@ test "events" {
     _ = Event.emit(&cb, 'a');
     _ = Event.emit(&cb, 'b');
 
-    CmdBuf.Exec.immediate(&es, &cb, .{ .name = "events" });
+    CmdBuf.Exec.immediate(&es, &cb);
 
     // Check that we received them in the expected order
     {
@@ -80,7 +85,7 @@ test "events" {
     _ = Event.emit(&cb, 'c');
     _ = Event.emit(&cb, 'd');
 
-    CmdBuf.Exec.immediate(&es, &cb, .{ .name = "events" });
+    CmdBuf.Exec.immediate(&es, &cb);
 
     // Check that we received them in order
     {

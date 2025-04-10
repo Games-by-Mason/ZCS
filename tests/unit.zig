@@ -52,13 +52,18 @@ test "cb execImmediate" {
     try expect(Entity.Optional.none == Entity.Optional.none);
     try expectEqual(null, Entity.Optional.none.unwrap());
 
-    var cb: CmdBuf = try .init(gpa, &es, .{
-        .cmds = 4,
-        .data = .{ .bytes_per_cmd = @sizeOf(RigidBody) },
-        .reserved_entities = 0,
+    var cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &es,
+        .cap = .{
+            .cmds = 4,
+            .data = .{ .bytes_per_cmd = @sizeOf(RigidBody) },
+            .reserved_entities = 0,
+        },
+        .warn_ratio = 1.0,
     });
     defer cb.deinit(gpa, &es);
-    cb.warn_ratio = 1.0;
 
     try expectEqual(0, es.count());
 
@@ -74,7 +79,7 @@ test "cb execImmediate" {
     e2.add(&cb, RigidBody, rb);
     try expectEqual(4, es.reserved());
     try expectEqual(0, es.count());
-    CmdBuf.Exec.immediate(&es, &cb, .{ .name = "cb execImmediate" });
+    CmdBuf.Exec.immediate(&es, &cb);
     try expectEqual(0, es.reserved());
     try expectEqual(3, es.count());
 
@@ -108,7 +113,7 @@ test "cb execImmediate" {
     e1.remove(&cb, RigidBody);
     e2.add(&cb, Model, model);
     e2.remove(&cb, RigidBody);
-    CmdBuf.Exec.immediate(&es, &cb, .{ .name = "cb exec immediate" });
+    CmdBuf.Exec.immediate(&es, &cb);
 
     try expectEqual(3, es.count());
 
@@ -202,9 +207,14 @@ test "threading" {
         try std.Thread.Pool.init(&tp, .{ .allocator = gpa, .n_jobs = 4 });
         defer tp.deinit();
 
-        var cp: CmdPool = try .init(gpa, &es, .{
-            .reserved = 32,
-            .cb = .{ .cmds = 1024 },
+        var cp: CmdPool = try .init(.{
+            .gpa = gpa,
+            .es = &es,
+            .cap = .{
+                .buffers = 32,
+                .buffer = .{ .cmds = 1024 },
+            },
+            .name = null,
         });
         defer cp.deinit(gpa, &es);
 
@@ -222,7 +232,7 @@ test "threading" {
             try std.testing.expectEqual(i + 2, e.get(&es, u32).?.*);
         }
 
-        for (cp.written()) |*cb| CmdBuf.Exec.immediate(&es, cb, .{ .name = "threaded" });
+        for (cp.written()) |*cb| CmdBuf.Exec.immediate(&es, cb);
 
         // Quick smoke test to make sure we aren't acquiring too many command buffers, just checks
         // that we're not over a rough estimate
@@ -343,9 +353,14 @@ test "cmd pool blocking" {
     });
     defer es.deinit(gpa);
 
-    var cp: CmdPool = try .init(gpa, &es, .{
-        .reserved = 1,
-        .cb = .{ .cmds = 10 },
+    var cp: CmdPool = try .init(.{
+        .gpa = gpa,
+        .es = &es,
+        .cap = .{
+            .buffers = 1,
+            .buffer = .{ .cmds = 10 },
+        },
+        .name = null,
     });
     defer cp.deinit(gpa, &es);
 
@@ -469,7 +484,12 @@ test "cb interning" {
     });
     defer es.deinit(gpa);
 
-    var cb: CmdBuf = try .init(gpa, &es, .{ .cmds = 24 });
+    var cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &es,
+        .cap = .{ .cmds = 24 },
+    });
     defer cb.deinit(gpa, &es);
 
     const rb_interned: RigidBody = .{
@@ -695,10 +715,15 @@ test "cb overflow" {
 
     // Cmd overflow
     {
-        var cb: CmdBuf = try .init(gpa, &es, .{
-            .cmds = 0,
-            .data = .{ .bytes = 100 },
-            .reserved_entities = 0,
+        var cb: CmdBuf = try .init(.{
+            .name = null,
+            .gpa = gpa,
+            .es = &es,
+            .cap = .{
+                .cmds = 0,
+                .data = .{ .bytes = 100 },
+                .reserved_entities = 0,
+            },
         });
         defer cb.deinit(gpa, &es);
 
@@ -716,10 +741,15 @@ test "cb overflow" {
 
     // Comp data overflow
     {
-        var cb: CmdBuf = try .init(gpa, &es, .{
-            .cmds = 50,
-            .data = .{ .bytes = @sizeOf(RigidBody) * 2 - 1 },
-            .reserved_entities = 0,
+        var cb: CmdBuf = try .init(.{
+            .name = null,
+            .gpa = gpa,
+            .es = &es,
+            .cap = .{
+                .cmds = 50,
+                .data = .{ .bytes = @sizeOf(RigidBody) * 2 - 1 },
+                .reserved_entities = 0,
+            },
         });
         defer cb.deinit(gpa, &es);
 
@@ -742,10 +772,15 @@ test "cb overflow" {
 
     // Extension data overflow
     {
-        var cb: CmdBuf = try .init(gpa, &es, .{
-            .cmds = 50,
-            .data = .{ .bytes = @sizeOf(FooExt) * 2 - 1 },
-            .reserved_entities = 0,
+        var cb: CmdBuf = try .init(.{
+            .name = null,
+            .gpa = gpa,
+            .es = &es,
+            .cap = .{
+                .cmds = 50,
+                .data = .{ .bytes = @sizeOf(FooExt) * 2 - 1 },
+                .reserved_entities = 0,
+            },
         });
         defer cb.deinit(gpa, &es);
 
@@ -764,10 +799,15 @@ test "cb overflow" {
 
     // Reserved underflow
     {
-        var cb: CmdBuf = try .init(gpa, &es, .{
-            .cmds = 50,
-            .data = .{ .bytes = @sizeOf(RigidBody) * 2 - 1 },
-            .reserved_entities = 2,
+        var cb: CmdBuf = try .init(.{
+            .name = null,
+            .gpa = gpa,
+            .es = &es,
+            .cap = .{
+                .cmds = 50,
+                .data = .{ .bytes = @sizeOf(RigidBody) * 2 - 1 },
+                .reserved_entities = 2,
+            },
         });
         defer cb.deinit(gpa, &es);
 
@@ -777,10 +817,15 @@ test "cb overflow" {
     }
 
     // Calling some things just to make sure they compile that we don't test elsewhere
-    var cb: CmdBuf = try .init(gpa, &es, .{
-        .cmds = 50,
-        .data = .{ .bytes = @sizeOf(RigidBody) * 2 - 1 },
-        .reserved_entities = 0,
+    var cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &es,
+        .cap = .{
+            .cmds = 50,
+            .data = .{ .bytes = @sizeOf(RigidBody) * 2 - 1 },
+            .reserved_entities = 0,
+        },
     });
     defer cb.deinit(gpa, &es);
     const e = Entity.reserveImmediate(&es);
@@ -810,9 +855,14 @@ test "cb capacity" {
     });
     defer es.deinit(gpa);
 
-    var cb: CmdBuf = try .init(gpa, &es, .{
-        .cmds = cb_capacity,
-        .data = .{ .bytes_per_cmd = 22 },
+    var cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &es,
+        .cap = .{
+            .cmds = cb_capacity,
+            .data = .{ .bytes_per_cmd = 22 },
+        },
     });
     defer cb.deinit(gpa, &es);
 
@@ -1095,10 +1145,15 @@ test "getAll" {
     ));
     // Should not result in a registration
     _ = typeId(i32);
-    var cb: CmdBuf = try .init(gpa, &es, .{ .cmds = 24 });
+    var cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &es,
+        .cap = .{ .cmds = 24 },
+    });
     defer cb.deinit(gpa, &es);
     cb.ext(BarExt, .{ .bar = 1 });
-    CmdBuf.Exec.immediate(&es, &cb, .{ .name = "getAll" });
+    CmdBuf.Exec.immediate(&es, &cb);
 
     const registered = CompFlag.getAll();
     try std.testing.expectEqual(2, registered.len);
@@ -1287,12 +1342,17 @@ test "chunk pool overflow" {
 
     // Destroy all the entities we created
     {
-        var cb: CmdBuf = try .init(gpa, &es, .{ .cmds = n + 1 });
+        var cb: CmdBuf = try .init(.{
+            .name = null,
+            .gpa = gpa,
+            .es = &es,
+            .cap = .{ .cmds = n + 1 },
+            .warn_ratio = 1.0,
+        });
         defer cb.deinit(gpa, &es);
-        cb.warn_ratio = 1.0;
         var it = es.iterator(struct { e: Entity });
         while (it.next(&es)) |vw| vw.e.destroy(&cb);
-        CmdBuf.Exec.immediate(&es, &cb, .{ .name = "chunk pool overflow" });
+        CmdBuf.Exec.immediate(&es, &cb);
         try expectEqual(0, es.count());
     }
 
@@ -1323,12 +1383,17 @@ test "chunk pool overflow" {
 
     // Destroy all the entities we created
     {
-        var cb: CmdBuf = try .init(gpa, &es, .{ .cmds = n + 1 });
+        var cb: CmdBuf = try .init(.{
+            .name = null,
+            .gpa = gpa,
+            .es = &es,
+            .cap = .{ .cmds = n + 1 },
+            .warn_ratio = 1.0,
+        });
         defer cb.deinit(gpa, &es);
-        cb.warn_ratio = 1.0;
         var it = es.iterator(struct { e: Entity });
         while (it.next(&es)) |vw| vw.e.destroy(&cb);
-        CmdBuf.Exec.immediate(&es, &cb, .{ .name = "destroy all" });
+        CmdBuf.Exec.immediate(&es, &cb);
         try expectEqual(0, es.count());
     }
 

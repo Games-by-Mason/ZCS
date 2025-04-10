@@ -67,12 +67,17 @@ fn run(input: []const u8, saturated: bool) !void {
 
     try fz.checkIterators();
 
-    var cb: CmdBuf = try .init(gpa, &fz.es, .{
-        .cmds = cmds_capacity,
-        .data = .{ .bytes_per_cmd = @sizeOf(RigidBody) },
+    var cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &fz.es,
+        .cap = .{
+            .cmds = cmds_capacity,
+            .data = .{ .bytes_per_cmd = @sizeOf(RigidBody) },
+        },
+        .warn_ratio = 1.0,
     });
     defer cb.deinit(gpa, &fz.es);
-    cb.warn_ratio = 1.0;
 
     const saturated_count = if (saturated) fz.smith.nextLessThan(u16, 10000) else 0;
 
@@ -107,7 +112,7 @@ fn run(input: []const u8, saturated: bool) !void {
             }
         }
 
-        CmdBuf.Exec.immediate(&fz.es, &cb, .{ .name = "run" });
+        CmdBuf.Exec.immediate(&fz.es, &cb);
         try checkOracle(&fz, &cb);
 
         // Modify the entities directly. We do this later since interspersing it with the

@@ -37,8 +37,10 @@ const Entities = zcs.Entities;
 const Allocator = std.mem.Allocator;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
+/// The debug name for this command pool. See `InitOptions.name`.
+name: ?[:0]const u8,
 /// Reserved command buffers that have not yet been acquired.
-reserved: ArrayListUnmanaged(CmdBuf),
+buffers: ArrayListUnmanaged(CmdBuf),
 /// Locked when modifying internal state.
 mutex: Mutex,
 /// Signaled when command buffers are returned, broadcasted when all command buffers have been
@@ -51,56 +53,88 @@ released: ArrayListUnmanaged(*CmdBuf),
 retired: usize,
 /// Measured in units of `CmdBuf.worstCastUsage`, ranges from `0` to `1`.
 headroom: f32,
-/// Warn if a single acquire exceeds this ratio of the headroom, or if more than this ratio of the
-/// total command buffers are written.
+/// See `InitOptions.warn_ratio`.
 warn_ratio: f32 = 0.2,
 
-/// The capacity of the command pool.
+/// The capacity of a command pool.
 pub const Capacity = struct {
+    /// The capacity of a single command buffer.
+    buffer: CmdBuf.Capacity,
     /// The total number of command buffers to reserve.
-    reserved: usize,
-    /// The size of a single command buffer.
-    cb: CmdBuf.Capacity,
+    buffers: usize,
+};
+
+/// Options for `init`.
+pub const InitOptions = struct {
+    /// The debug name for this command pool.
+    ///
+    /// If non-null and Tracy is enabled, this command pool's usage is graphed under this name on
+    /// reset.
+    name: ?[:0]const u8,
+    /// Used to allocate the command pool.
+    gpa: Allocator,
+    /// Entities are reserved from here.
+    es: *Entities,
+    /// The capacity.
+    cap: Capacity,
     /// `acquire` only returns command buffers with a `worstCaseUsage` greater than this value.
     headroom: f32 = 0.5,
+    /// Warn if a single acquire exceeds this ratio of the headroom, or if more than this ratio of the
+    /// total command buffers are written.
+    warn_ratio: f32 = 0.2,
 };
 
 /// Initializes a command pool.
-pub fn init(
-    gpa: Allocator,
-    es: *Entities,
-    capacity: Capacity,
-) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
+pub fn init(options: InitOptions) error{ OutOfMemory, ZcsEntityOverflow }!@This() {
     // Reserve the command buffers
-    var reserved: ArrayListUnmanaged(CmdBuf) = try .initCapacity(gpa, capacity.reserved);
-    errdefer reserved.deinit(gpa);
-    errdefer for (reserved.items) |*cb| cb.deinit(gpa, es);
-    for (0..reserved.capacity) |_| {
-        var cb: CmdBuf = try .init(gpa, es, capacity.cb);
-        cb.warn_ratio = 1.0; // We handle the warnings ourselves
-        reserved.appendAssumeCapacity(cb);
+    var buffers: ArrayListUnmanaged(CmdBuf) = try .initCapacity(options.gpa, options.cap.buffers);
+    errdefer buffers.deinit(options.gpa);
+    errdefer for (buffers.items) |*cb| cb.deinit(options.gpa, options.es);
+    for (0..options.cap.buffers) |_| {
+        const cb: CmdBuf = try .init(.{
+            .name = null,
+            .gpa = options.gpa,
+            .es = options.es,
+            .cap = options.cap.buffer,
+            // We handle the warnings ourselves
+            .warn_ratio = 1.0,
+        });
+        buffers.appendAssumeCapacity(cb);
     }
 
     // Reserve the released list
-    var released: ArrayListUnmanaged(*CmdBuf) = try .initCapacity(gpa, capacity.reserved);
-    errdefer released.deinit(gpa);
+    var released: ArrayListUnmanaged(*CmdBuf) = try .initCapacity(options.gpa, options.cap.buffers);
+    errdefer released.deinit(options.gpa);
+
+    // If Tracy is enabled and we have a name, configure our plot.
+    if (tracy.enabled) {
+        if (options.name) |name| {
+            tracy.plotConfig(.{
+                .name = name,
+                .format = .percentage,
+                .mode = .line,
+                .fill = true,
+            });
+        }
+    }
 
     return .{
-        .reserved = reserved,
+        .buffers = buffers,
         .mutex = .{},
         .condition = .{},
         .released = released,
         .retired = 0,
-        .headroom = capacity.headroom,
+        .headroom = options.headroom,
+        .name = options.name,
     };
 }
 
 /// Destroys the command pool.
 pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
     self.checkAssertions();
-    self.reserved.items.len = self.reserved.capacity;
-    for (self.reserved.items) |*cb| cb.deinit(gpa, es);
-    self.reserved.deinit(gpa);
+    self.buffers.items.len = self.buffers.capacity;
+    for (self.buffers.items) |*cb| cb.deinit(gpa, es);
+    self.buffers.deinit(gpa);
     self.released.deinit(gpa);
 }
 
@@ -139,27 +173,27 @@ pub fn acquireOrErr(self: *@This()) error{ZcsCmdPoolUnderflow}!AcquireResult {
     if (self.released.pop()) |popped| return .init(popped);
 
     // Try to get a reserved command buffer
-    if (self.reserved.items.len > 0) {
-        const new_len = self.reserved.items.len - 1;
-        const result = &self.reserved.items[new_len];
-        self.reserved.items.len = new_len;
+    if (self.buffers.items.len > 0) {
+        const new_len = self.buffers.items.len - 1;
+        const result = &self.buffers.items[new_len];
+        self.buffers.items.len = new_len;
         return .init(result);
     }
 
     // There are no command buffers available. Wait until one becomes available, or all are
     // retired.
-    while (self.released.items.len == 0 and self.retired < self.reserved.capacity) {
+    while (self.released.items.len == 0 and self.retired < self.buffers.capacity) {
         self.condition.wait(&self.mutex);
     }
 
     // Try to reacquire the released command buffer
     if (self.released.pop()) |cb| {
-        assert(self.retired < self.reserved.capacity);
+        assert(self.retired < self.buffers.capacity);
         return .init(cb);
     }
 
     // If no command buffer was released, we're out of command buffers, return an error
-    assert(self.retired == self.reserved.capacity);
+    assert(self.retired == self.buffers.capacity);
     return error.ZcsCmdPoolUnderflow;
 }
 
@@ -187,7 +221,7 @@ pub fn release(self: *@This(), ar: AcquireResult) void {
 
     // If all command buffers are retired, broadcast our condition so all pending acquires return an
     // error. Otherwise signal at least one pending acquire to continue.
-    if (self.retired == self.reserved.capacity) {
+    if (self.retired == self.buffers.capacity) {
         self.condition.broadcast();
     } else {
         self.condition.signal();
@@ -197,7 +231,7 @@ pub fn release(self: *@This(), ar: AcquireResult) void {
 /// Gets a slice of all command buffers that may have been written to since the last reset.
 pub fn written(self: *@This()) []CmdBuf {
     self.checkAssertions();
-    return self.reserved.items.ptr[self.reserved.items.len..self.reserved.capacity];
+    return self.buffers.items.ptr[self.buffers.items.len..self.buffers.capacity];
 }
 
 /// Resets the command pool. Asserts that all command buffers have already been reset.
@@ -207,7 +241,7 @@ pub fn reset(self: *@This()) void {
     if (std.debug.runtime_safety) for (self.written()) |cb| assert(cb.isEmpty());
 
     // Warn if we used too many command buffers
-    const cap: f32 = @floatFromInt(self.reserved.capacity);
+    const cap: f32 = @floatFromInt(self.buffers.capacity);
     const used: f32 = @floatFromInt(self.written().len);
     const usage = used / cap;
     if (usage > self.warn_ratio) {
@@ -217,13 +251,21 @@ pub fn reset(self: *@This()) void {
         );
     }
 
+    // If a name is configured, emit a Tracy plot
+    if (self.name) |name| {
+        tracy.plot(.{
+            .name = name,
+            .value = .{ .f32 = usage },
+        });
+    }
+
     // Reset the command pool
-    self.reserved.items.len = self.reserved.capacity;
+    self.buffers.items.len = self.buffers.capacity;
     self.released.items.len = 0;
     self.retired = 0;
 }
 
 /// Asserts that all command buffers have been released.
 pub fn checkAssertions(self: *@This()) void {
-    assert(self.released.items.len + self.retired == self.reserved.capacity - self.reserved.items.len);
+    assert(self.released.items.len + self.retired == self.buffers.capacity - self.buffers.items.len);
 }

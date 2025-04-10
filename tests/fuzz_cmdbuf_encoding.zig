@@ -162,9 +162,14 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
     });
     defer es.deinit(gpa);
 
-    var cb: CmdBuf = try .init(gpa, &es, .{
-        .cmds = cmds_capacity,
-        .data = .{ .bytes_per_cmd = @sizeOf(RigidBody) },
+    var cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &es,
+        .cap = .{
+            .cmds = cmds_capacity,
+            .data = .{ .bytes_per_cmd = @sizeOf(RigidBody) },
+        },
     });
     defer cb.deinit(gpa, &es);
 
