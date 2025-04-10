@@ -121,8 +121,7 @@ pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
             while (chunk_iter.next(self)) |entity| {
                 self.handle_tab.recycle(entity.key);
             }
-            // We have a mutable reference to entities, so it's fine to cast the const away here
-            @constCast(chunk).clear(self);
+            chunk.clear(self);
         }
     }
 }
