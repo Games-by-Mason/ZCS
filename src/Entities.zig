@@ -298,7 +298,7 @@ pub fn ForEachThreadedOptions(f: type) type {
 }
 
 /// Similar to `forEach`, but spawns each chunk's work as a thread pool task. Optionally, you may
-/// add an argument of type `*CmdBuf` as the first argument to get a command buffer if `cp` is set
+/// add an argument of type `*CmdBuf` as the second argument to get a command buffer if `cp` is set
 /// in `options`.
 ///
 /// Keep in mind that this is unlikely to be a performance win unless your update function is very

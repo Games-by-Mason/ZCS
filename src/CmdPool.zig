@@ -96,7 +96,7 @@ pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
 }
 
 /// Acquire a command buffer with at least `Capacity.headroom` capacity remaining. Call `release`
-/// when done.
+/// when done. Thread safe.
 ///
 /// This function may block if all command buffers are currently in use. You can mitigate this by
 /// reserving more command buffers up front.
@@ -138,7 +138,7 @@ pub fn acquireOrErr(self: *@This()) error{ZcsCmdPoolUnderflow}!*CmdBuf {
     return error.ZcsCmdPoolUnderflow;
 }
 
-/// Releases a previously acquired command buffer.
+/// Releases a previously acquired command buffer. Thread safe.
 pub fn release(self: *@This(), cb: *CmdBuf) void {
     self.mutex.lock();
     defer self.mutex.unlock();
@@ -159,7 +159,7 @@ pub fn release(self: *@This(), cb: *CmdBuf) void {
     }
 }
 
-/// Gets a slice of all command buffers acquired and released since the last reset.
+/// Gets a slice of all command buffers that may have been written to since the last reset.
 pub fn written(self: *@This()) []CmdBuf {
     self.checkAssertions();
     return self.reserved.items.ptr[self.reserved.items.len..self.reserved.capacity];

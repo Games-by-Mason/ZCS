@@ -180,8 +180,8 @@ Comparing performance with something like `MultiArrayList`:
 
 You can generate documentation with `zig build docs`.
 
-For example code, see [2Pew](https://github.com/MasonRemaley/2Pew/tree/zcs).
+I'll add examples to this repo [eventually](https://github.com/Games-by-Mason/ZCS/issues/34), for now see [2Pew](https://github.com/MasonRemaley/2Pew/tree/zcs).
 
 # Contributing
 
-Contributions are welcome! If you'd like to add a major feature, please file a proposal first.
+Contributions are welcome! If you'd like to add a major feature, please file a proposal or leave a comment on the relevant issue first.
