@@ -28,6 +28,16 @@ const Event = struct {
         return e;
     }
 
+    pub fn emitImmediate(es: *Entities, payload: u21) !Entity {
+        const e: Entity = .reserveImmediate(es);
+        try expect(e.changeArchImmediate(
+            es,
+            struct { Event },
+            .{ .add = .{.{ .payload = payload }} },
+        ));
+        return e;
+    }
+
     pub fn recycleImmediate(es: *Entities) void {
         es.recycleArchImmediate(.initOne(.registerImmediate(typeId(Event))));
     }
@@ -108,4 +118,40 @@ test "events" {
     Event.recycleImmediate(&es);
     cb.clear(&es);
     try expectEqual(0, es.count());
+}
+
+test "many events" {
+    defer CompFlag.unregisterAll();
+
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = 100000,
+            .arches = 4,
+            .chunks = 4,
+            .chunk = 4096,
+        },
+    });
+    defer es.deinit(gpa);
+
+    // Repeatedly generate a bunch of events and then recycle them, making sure they come back in
+    // order even when spanning multiple chunks
+    for (0..10) |i| {
+        // Emit events
+        for (0..1000) |j| {
+            _ = try Event.emitImmediate(&es, @intCast(i + j));
+        }
+
+        // Check that we received them in the expected order
+        {
+            var iter = es.iterator(struct { ev: *const Event });
+            for (0..1000) |j| {
+                try std.testing.expectEqual(i + j, iter.next(&es).?.ev.payload);
+            }
+            try std.testing.expectEqual(null, iter.next(&es));
+        }
+
+        // Recycle the events
+        Event.recycleImmediate(&es);
+    }
 }

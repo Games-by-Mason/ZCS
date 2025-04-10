@@ -574,8 +574,13 @@ pub const ChunkIterator = struct {
 };
 
 /// Returns an iterator over all entities that have at least the components in `required_comps` in
-/// an implementation defined order. The results are of type `View` which is a struct where each
-/// field is either a pointer to a component, an optional pointer to a component, or `Entity`.
+/// chunk order. The results are of type `View` which is a struct where each field is either a
+/// pointer to a component, an optional pointer to a component, or `Entity`.
+///
+/// In the general case, it's simplest to consider chunk order to be implementation defined.
+/// However, chunk order does have the useful guarantee that entities added to an archetype that
+/// starts out empty with no intermittent deletions will always be iterated in order. This can be
+/// useful for preserving order of transient events which are always cleared in one go.
 ///
 /// Invalidating pointers while iterating results in safety checked illegal behavior.
 pub fn iterator(self: *const @This(), View: type) Iterator(View) {
