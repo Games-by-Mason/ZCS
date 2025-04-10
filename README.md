@@ -80,7 +80,7 @@ Games often want to make sweeping, destructive changes to the game state while p
 ```zig
 
 // Allocate a command buffer
-var cb = try CmdBuf.init(allocator, &es, .{ .cmds = 8192 });
+var cb: CmdBuf = try .init(.{ .gpa = gpa, .es = &es });
 defer cb.deinit(allocator, &es);
 
 // Get the next reserved entity. By reserving entities up front, the command buffer allows you to
