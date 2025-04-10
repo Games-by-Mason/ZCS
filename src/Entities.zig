@@ -301,6 +301,10 @@ pub fn ForEachThreadedOptions(f: type) type {
 /// add an argument of type `*CmdBuf` as the second argument to get a command buffer if `cp` is set
 /// in `options`.
 ///
+/// Each chunk may be given its own command buffer in an arbitrary order. As such, the order of
+/// commands within a chunk (and therefore within an `updateEntity` callback) are guaranteed to be
+/// serial, but no guarantees are made about command execution order between chunks.
+///
 /// Keep in mind that this is unlikely to be a performance win unless your update function is very
 /// expensive. Iteration is cheap.
 pub fn forEachThreaded(

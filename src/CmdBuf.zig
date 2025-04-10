@@ -54,7 +54,7 @@ binding: Binding = .{ .entity = .none },
 reserved: std.ArrayListUnmanaged(Entity),
 invalid: if (std.debug.runtime_safety) bool else void,
 /// If more than this ratio of the command buffer is used as measured by `worstCaseUsage`, a
-/// warning will be emitted.
+/// warning will be emitted by `Exec.checkStats`.
 warn_ratio: f32 = 0.2,
 
 /// Initializes a command buffer.
