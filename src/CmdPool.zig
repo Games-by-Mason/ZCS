@@ -58,10 +58,12 @@ warn_ratio: f32,
 
 /// The capacity of a command pool.
 pub const Capacity = struct {
-    /// The capacity of a single command buffer.
-    buffer: CmdBuf.Capacity = .{
-        .cmds = 100000 / 256,
-    },
+    /// The default number of commands to reserve.
+    pub const default_cmds = CmdBuf.Capacity.default_cmds / 256;
+
+    /// The capacity of a single command buffer. Note that `default_cmds` is overridden to a lower
+    /// value than when creating a `CmdBuf` directly.
+    buffer: CmdBuf.Capacity = .{},
     /// The total number of command buffers to reserve.
     buffers: usize = 256,
 };
@@ -92,12 +94,14 @@ pub fn init(options: InitOptions) error{ OutOfMemory, ZcsEntityOverflow }!@This(
     var buffers: ArrayListUnmanaged(CmdBuf) = try .initCapacity(options.gpa, options.cap.buffers);
     errdefer buffers.deinit(options.gpa);
     errdefer for (buffers.items) |*cb| cb.deinit(options.gpa, options.es);
+    var buffer_cap = options.cap.buffer;
+    buffer_cap.cmds = buffer_cap.cmds orelse Capacity.default_cmds;
     for (0..options.cap.buffers) |_| {
         const cb: CmdBuf = try .init(.{
             .name = null,
             .gpa = options.gpa,
             .es = options.es,
-            .cap = options.cap.buffer,
+            .cap = buffer_cap,
             // We handle the warnings ourselves
             .warn_ratio = 1.0,
         });

@@ -75,28 +75,40 @@ pub const InitOptions = struct {
 
 /// The capacity of a command buffer.
 pub const Capacity = struct {
-    /// Space for at least this many commands will be reserved.
-    cmds: usize = 100000,
+    /// The default number of commands to reserve.
+    pub const default_cmds = 100000;
+    /// By default, `cmds / entities_ratio` commands are reserved.
+    pub const entities_ratio = 4;
+
+    /// Space for at least this many commands will be reserved. If `null`, allocates `default_cmds`.
+    ///
+    /// Being optional allows `CmdPool` to override this default with a lower value.
+    cmds: ?usize = null,
     /// Space for at least this much command data will be reserved. Keep in mind that padding may
     /// vary per platform.
     data: union(enum) {
         bytes: usize,
         bytes_per_cmd: u32,
     } = .{ .bytes_per_cmd = 2 * 16 * @sizeOf(f32) },
-    /// Sets the number of entities to reserve up front. If `null`, `cmds` entities are reserved.
+    /// Sets the number of entities to reserve up front. See `entities_ratio` for the `null` case.
     reserved_entities: ?usize = null,
+
+    /// Returns the number of reserved commands requested.
+    fn getCmds(self: @This()) usize {
+        return self.cmds orelse default_cmds;
+    }
 
     /// Returns the number of data bytes requested.
     fn dataBytes(self: @This()) usize {
         return switch (self.data) {
             .bytes => |bytes| bytes,
-            .bytes_per_cmd => |bytes_per_cmd| self.cmds * bytes_per_cmd,
+            .bytes_per_cmd => |bytes_per_cmd| self.getCmds() * bytes_per_cmd,
         };
     }
 
     /// Returns the number of reserved entities requested.
     fn reservedEntities(self: @This()) usize {
-        return self.reserved_entities orelse self.cmds;
+        return self.reserved_entities orelse self.getCmds() / entities_ratio;
     }
 };
 
@@ -108,7 +120,7 @@ pub fn init(options: InitOptions) error{ OutOfMemory, ZcsEntityOverflow }!@This(
 
     // Each command can have at most two tags
     _ = Subcmd.rename_when_changing_encoding;
-    const cmds_cap = options.cap.cmds * 2;
+    const cmds_cap = options.cap.getCmds() * 2;
     const tags_zone = Zone.begin(.{ .name = "tags", .src = @src() });
     var tags: std.ArrayListUnmanaged(Subcmd.Tag) = try .initCapacity(options.gpa, cmds_cap);
     errdefer tags.deinit(options.gpa);

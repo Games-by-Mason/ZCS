@@ -50,6 +50,7 @@ test "exec" {
         .cap = .{
             .cmds = 2,
             .data = .{ .bytes_per_cmd = @sizeOf(SetParent) },
+            .reserved_entities = 2,
         },
         .warn_ratio = 1.0,
     });

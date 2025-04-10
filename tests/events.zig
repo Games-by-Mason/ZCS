@@ -64,6 +64,7 @@ test "events" {
         .cap = .{
             .cmds = 10,
             .data = .{ .bytes_per_cmd = @sizeOf(Event) },
+            .reserved_entities = 10,
         },
     });
     defer cb.deinit(gpa, &es);

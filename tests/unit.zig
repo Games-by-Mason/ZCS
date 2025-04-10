@@ -219,7 +219,10 @@ test "threading" {
             .es = &es,
             .cap = .{
                 .buffers = 32,
-                .buffer = .{ .cmds = 1024 },
+                .buffer = .{
+                    .cmds = 1024,
+                    .reserved_entities = 1024,
+                },
             },
             .name = null,
         });
@@ -368,7 +371,10 @@ test "cmd pool blocking" {
         .es = &es,
         .cap = .{
             .buffers = 1,
-            .buffer = .{ .cmds = 10 },
+            .buffer = .{
+                .cmds = 10,
+                .reserved_entities = 10,
+            },
         },
         .name = null,
     });
@@ -881,6 +887,7 @@ test "cb capacity" {
         .cap = .{
             .cmds = cb_capacity,
             .data = .{ .bytes_per_cmd = 22 },
+            .reserved_entities = cb_capacity,
         },
     });
     defer cb.deinit(gpa, &es);
