@@ -176,6 +176,8 @@ Comparing performance with something like `MultiArrayList`:
 * Inserting and removing entities is O(1), but more expensive than appending/popping from a `std.MultiArrayList` since more bookkeeping is involved for the aforementioned acceleration and persistent handles
 * Random access is O(1), but more expensive than random access to `std.MultiArrayList` as the persistent handles introduce a layer of indirection
 
+No dynamic allocation is done after initialization.
+
 # Examples & Documentation
 
 You can generate documentation with `zig build docs`.
