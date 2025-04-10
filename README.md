@@ -6,15 +6,71 @@ An archetype based entity component system written in Zig.
 
 ZCS is beta software. Once I've shipped a commercial game using ZCS, I'll start to stabilize the API and remove this disclaimer.
 
-If at the time of reading you're not seeing any recent commits, this project isn't dead--I'm just working on a game!
+If there are no recent commits at the time you're reading this, the project isn't dead--I'm just working on a game!
+
+# Getting Started
+
+Here's a quick look at what code using ZCS looks like:
+
+```zig
+const std = @import("std");
+const zcs = @import("zcs");
+
+const Entities = zcs.Entities;
+const Entity = zcs.Entity;
+const Transform = zcs.ext.Transform2D;
+const Node = zcs.ext.Node;
+
+fn main() void {
+    const gpa = std.heap.smp_allocator;
+
+    // Reserve space for the entities
+    var es: Entities = try .init(.{ .gpa = gpa });
+    defer es.deinit(gpa);
+
+    // Reserve space for a command buffer
+    var cb = try CmdBuf.init(.{ .name = "cb", .gpa = gpa, .es = &es });
+    defer cb.deinit(gpa, &es);
+
+    // Create an entity, in this case using the command buffer
+    const e: Entity = .reserve(&cb);
+    e.add(&cb, Transform, .{});
+    e.add(&cb, Node, .{});
+
+    // Execute the command buffer
+    Transform.Exec.immediate(&es, &cb);
+
+    // Iterate over entities that contain both transform and node
+    var iter = es.iterator(struct { transform: *const Transform, node: *const Node });
+    while (iter.next(&es)) |vw| {
+        std.debug.print("{} {}", .{ vw.transform, vw.node });
+    }
+}
+```
+
+You can generate documentation with `zig build docs`.
+
+I'll add example projects to the repo as soon as I've set up a renderer that's easy to build without requiring various system libraries be installed etc, tracking issue [here](https://github.com/Games-by-Mason/ZCS/issues/34).
+
+For now, you're welcome to reference [2Pew](https://github.com/MasonRemaley/2Pew/tree/zcs). Just keep in mind that 2Pew is a side project I don't have a lot of time for right now, it's a decent reference but not a full game.
+
+# Philosophy
+
+An entity component system (or "ECS") is a way to manage your game objects that often resembles a relational database.
+
+An entity is an object in your game, a component is a piece of data that's associated with an entity (for example a sprite), and a system is a piece of code that iterates over entities with a set of components and processes them.
+
+A simple alternative to working with an ECS would be something like [`std.MultiArrayList`](https://ziglang.org/documentation/master/std/#std.MultiArrayList); a growable struct of arrays.
+
+A well implemented ECS is more complex than `MultiArrayList`, but that complexity buys you a lot of convenience. Performance will be comparable.
+
+For a discussion of what features are provided by this ECS see [Key Features](#Key Features), for performance information see [Performance](#Performance), and for further elaboration on my philosophy on game engines and abstraction see my talk [It's Not About The Technology - Game Engines are Art Tools](https://gamesbymason.com/blog/2023/game-engines-are-art-tools/).
 
 # Key Features
 
 ## Persistent Keys
 
-Games often feature objects with very dynamic lifetimes.
-
-ZCS features persistent keys for entities, so they're never dangling:
+Games often feature objects whose lifetimes are not only dynamic, but depend on user input. ZCS provides persistent keys for entities, so they're never dangling:
 
 ```zig
 assert(fireball.exists(es));
@@ -26,9 +82,13 @@ assert(!fireball.exists(es));
 assert(fireball.get(es, Sprite) == null);
 ```
 
+This is achieved through a 32 bit generation counter on each entity slot. Slots are retired when their generations are saturated to prevent false negatives.
+
+See [SlotMap](https://github.com/Games-by-Mason/SlotMap) for more info.
+
 ## Archetype Based Iteration
 
-Games often feature cross cutting concerns. Archetype based iteration allows you to conveniently and efficiently process entities with a given set of components:
+Game systems are often intertwined with one another. Archetype based iteration allows you to conveniently and efficiently query for entities with a given set of components:
 
 ```zig
 var iter = es.iterator(struct {
@@ -55,11 +115,11 @@ fn updateMeshWithEffect(
 es.forEach("updateMeshWithEffect", updateMeshWithEffect, {});
 ```
 
-*Lower level iterators for operating on chunks of contiguous entities instead of individual entities are also provided.*
+Lower level iterators for operating on chunks of contiguous entities instead of individual entities are also provided.
 
-## Optional Thread Pool Integration
+### Optional Thread Pool Integration
 
-Games sometimes feature expensive game logic. If you're already making use of `std.Thread.Pool`, you can operate on your chunks in parallel with `forEachThreaded`:
+If you're already making use of `std.Thread.Pool`, you can operate on your chunks in parallel with `forEachThreaded`:
 
 ```zig
 es.forEachThreaded("updateTurret", updateTurret, .{
@@ -69,13 +129,13 @@ es.forEachThreaded("updateTurret", updateTurret, .{
 });
 ```
 
-*The name string is used in debug builds for profiling, and otherwise ignored.*
-
-*If you prefer a different threading model, the primitives necessary to wire up ZCS to your threading model of choice are exposed by the API.*
+Have your own job system? No problem. `forEachThreaded` is implemented on top of ZCSs' public interface, wiring it up to your own threading model won't require a fork.
 
 ## Command Buffers
 
-Games often want to make sweeping, destructive changes to the game state while processing a frame. These changes are allowed while iterating, including in a multithreaded context, via command buffers.
+Games often want to make destructive changes to the game state while processing a frame.
+
+Command buffers allow you to make destructive changes without invalidating iterators, including in a multithreaded context.
 
 ```zig
 
@@ -95,6 +155,8 @@ e.add(&cb, Sprite, .{ .index = .cat });
 // Execute the command buffer, and then clear it for reuse. This would be done from the main thread.
 CmdBuf.Exec.immediate(&es);
 ```
+
+If you need to bypass the command buffer system and make changes directly, you can. Invalidating an iterator while it's in use is safety checked illegal behavior.
 
 ## Command Buffer Extensions
 
@@ -162,7 +224,7 @@ However, when important types become generic, it infects the whole code base--ev
 
 As such, while ZCS will use generic methods where it's convenient, types at API boundaries are typically not generic. For example, `Entities` which stores all the ECS data is not a generic type.
 
-# Performance & Memory Layout
+# Performance
 
 ZCS is archetype based.
 
@@ -177,12 +239,6 @@ Comparing performance with something like `MultiArrayList`:
 * Random access is O(1), but more expensive than random access to `std.MultiArrayList` as the persistent handles introduce a layer of indirection
 
 No dynamic allocation is done after initialization. I recommend using `std.cleanExit` to avoid unnecessary clean up in release mode.
-
-# Examples & Documentation
-
-You can generate documentation with `zig build docs`.
-
-I'll add examples to this repo [eventually](https://github.com/Games-by-Mason/ZCS/issues/34), for now see [2Pew](https://github.com/MasonRemaley/2Pew/tree/zcs).
 
 # Contributing
 
