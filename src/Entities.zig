@@ -43,6 +43,12 @@ warned_chunk_pool: bool = false,
 warned_arches: bool = false,
 warn_ratio: f32,
 
+const tracy_es_committed = "zcs: committed entities";
+const tracy_es_reserved = "zcs: reserved entities";
+const tracy_es_saturated = "zcs: saturated entities";
+const tracy_chunks = "zcs: reserved chunks";
+const tracy_arches = "zcs: archetypes";
+
 /// Options for `init`.
 pub const InitOptions = struct {
     /// Used to allocate the entity storage.
@@ -90,6 +96,21 @@ pub fn init(options: InitOptions) Allocator.Error!@This() {
             .{options},
         ) catch @panic("OOB");
         tracy.appInfo(info);
+
+        for ([_][:0]const u8{
+            tracy_es_committed,
+            tracy_es_reserved,
+            tracy_es_saturated,
+            tracy_chunks,
+            tracy_arches,
+        }) |name| {
+            tracy.plotConfig(.{
+                .name = name,
+                .format = .number,
+                .mode = .line,
+                .fill = true,
+            });
+        }
     }
 
     return .{
@@ -444,23 +465,23 @@ pub fn forEachChunkThreaded(
 pub fn updateStats(self: *@This()) void {
     if (tracy.enabled) {
         tracy.plot(.{
-            .name = "entities",
+            .name = tracy_es_committed,
             .value = .{ .i64 = @intCast(self.count()) },
         });
         tracy.plot(.{
-            .name = "reserved entities",
+            .name = tracy_es_reserved,
             .value = .{ .i64 = @intCast(self.reserved()) },
         });
         tracy.plot(.{
-            .name = "saturated entities",
+            .name = tracy_es_saturated,
             .value = .{ .i64 = @intCast(self.handle_tab.saturated) },
         });
         tracy.plot(.{
-            .name = "reserved chunks",
+            .name = tracy_chunks,
             .value = .{ .i64 = @intCast(self.chunk_pool.reserved) },
         });
         tracy.plot(.{
-            .name = "archetypes",
+            .name = tracy_arches,
             .value = .{ .i64 = @intCast(self.arches.map.count()) },
         });
     }
