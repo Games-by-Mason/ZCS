@@ -151,7 +151,7 @@ fn incrementChunk(ctx: struct { by: u8 }, counters: []u32) void {
 test "threading" {
     defer CompFlag.unregisterAll();
 
-    const max_entities = 131072;
+    const max_entities = 67584;
     const create_entities = 1024;
     var es: Entities = try .init(gpa, .{
         .max_entities = max_entities,
@@ -202,8 +202,8 @@ test "threading" {
         defer tp.deinit();
 
         var cp: CmdPool = try .init(gpa, &es, .{
-            .reserved = 256,
-            .cb = .{ .cmds = 256 },
+            .reserved = 32,
+            .cb = .{ .cmds = 1024 },
         });
         defer cp.deinit(gpa, &es);
 
@@ -273,7 +273,7 @@ fn testBlocking(name: []const u8, cp: *CmdPool, options: *TestBlockingTask) void
         std.Thread.yield() catch |err| @panic(@errorName(err));
     }
     if (log) std.debug.print("{s}: acquiring...\n", .{name});
-    const cb = cp.acquire();
+    const ar = cp.acquire();
     if (log) std.debug.print("{s}: acquired...\n", .{name});
     @atomicStore(bool, &options.acquired, true, .release);
     std.Thread.yield() catch |err| @panic(@errorName(err));
@@ -284,7 +284,7 @@ fn testBlocking(name: []const u8, cp: *CmdPool, options: *TestBlockingTask) void
         std.Thread.yield() catch |err| @panic(@errorName(err));
     }
     if (log) std.debug.print("{s}: release...\n", .{name});
-    cp.release(cb);
+    cp.release(ar);
     @atomicStore(bool, &options.released, true, .release);
     if (log) std.debug.print("{s}: done\n", .{name});
 }
@@ -296,14 +296,14 @@ fn testBlockingFill(name: []const u8, cp: *CmdPool, options: *TestBlockingTask) 
         std.Thread.yield() catch |err| @panic(@errorName(err));
     }
     if (log) std.debug.print("{s}: acquiring...\n", .{name});
-    const cb = cp.acquire();
+    const ar = cp.acquire();
     if (log) std.debug.print("{s}: acquired...\n", .{name});
     @atomicStore(bool, &options.acquired, true, .release);
     std.Thread.yield() catch |err| @panic(@errorName(err));
 
     // Fill the command buffer to at least 50% worst case usage
-    while (cb.worstCaseUsage() < 0.5) {
-        cb.ext(u8, 0);
+    while (ar.cb.worstCaseUsage() < 0.5) {
+        ar.cb.ext(u8, 0);
     }
 
     // Release the command buffer
@@ -312,7 +312,10 @@ fn testBlockingFill(name: []const u8, cp: *CmdPool, options: *TestBlockingTask) 
         std.Thread.yield() catch |err| @panic(@errorName(err));
     }
     if (log) std.debug.print("{s}: release...\n", .{name});
-    cp.release(cb);
+    const old_warn_ratio = cp.warn_ratio;
+    cp.warn_ratio = 1.0;
+    cp.release(ar);
+    cp.warn_ratio = old_warn_ratio;
     @atomicStore(bool, &options.released, true, .release);
     if (log) std.debug.print("{s}: done\n", .{name});
 }
@@ -381,7 +384,10 @@ test "cmd pool blocking" {
 
         // Check that we acquired and returned one command buffer
         try std.testing.expectEqual(1, cp.written().len);
+        const old_warn_ratio = cp.warn_ratio;
+        cp.warn_ratio = 1.0;
         cp.reset();
+        cp.warn_ratio = old_warn_ratio;
 
         if (log) std.debug.print("\n", .{});
     }
@@ -424,7 +430,10 @@ test "cmd pool blocking" {
         // Check that we acquired and returned one command buffer
         try std.testing.expectEqual(1, cp.written().len);
         for (cp.written()) |*cb| cb.clear(&es);
+        const old_warn_ratio = cp.warn_ratio;
+        cp.warn_ratio = 1.0;
         cp.reset();
+        cp.warn_ratio = old_warn_ratio;
 
         if (log) std.debug.print("\n", .{});
     }

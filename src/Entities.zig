@@ -341,13 +341,13 @@ pub fn forEachThreaded(
             const batch_zone = Zone.begin(.{ .src = @src(), .name = name });
             defer batch_zone.end();
 
-            const cb = cp.acquire();
-            defer cp.release(cb);
+            const ar = cp.acquire();
+            defer cp.release(ar);
 
             const slices = chunk.view(es, view.Slice(Opt.Comps)).?;
             for (0..chunk.header().len) |i| {
                 const vw = view.index(Opt.Comps, es, slices, @intCast(i));
-                @call(.auto, updateEntity, .{ ctx, cb } ++ vw);
+                @call(.auto, updateEntity, .{ ctx, ar.cb } ++ vw);
             }
         }
     };

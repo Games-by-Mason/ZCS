@@ -51,6 +51,9 @@ released: ArrayListUnmanaged(*CmdBuf),
 retired: usize,
 /// Measured in units of `CmdBuf.worstCastUsage`, ranges from `0` to `1`.
 headroom: f32,
+/// Warn if a single acquire exceeds this ratio of the headroom, or if more than this ratio of the
+/// total command buffers are written.
+warn_ratio: f32 = 0.2,
 
 /// The capacity of the command pool.
 pub const Capacity = struct {
@@ -95,30 +98,46 @@ pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
     self.released.deinit(gpa);
 }
 
+/// The result of `acquire`.
+pub const AcquireResult = struct {
+    /// The initial usage ratio.
+    usage: f32,
+    /// The command buffer.
+    cb: *CmdBuf,
+
+    /// Initializes an acquire result with the starting usage.
+    fn init(cb: *CmdBuf) @This() {
+        return .{
+            .usage = cb.worstCaseUsage(),
+            .cb = cb,
+        };
+    }
+};
+
 /// Acquire a command buffer with at least `Capacity.headroom` capacity remaining. Call `release`
 /// when done. Thread safe.
 ///
 /// This function may block if all command buffers are currently in use. You can mitigate this by
 /// reserving more command buffers up front.
-pub fn acquire(self: *@This()) *CmdBuf {
+pub fn acquire(self: *@This()) AcquireResult {
     return self.acquireOrErr() catch |err|
         @panic(@errorName(err));
 }
 
 /// Similar to `acquire`, but returns an error when out of command buffers.
-pub fn acquireOrErr(self: *@This()) error{ZcsCmdPoolUnderflow}!*CmdBuf {
+pub fn acquireOrErr(self: *@This()) error{ZcsCmdPoolUnderflow}!AcquireResult {
     self.mutex.lock();
     defer self.mutex.unlock();
 
     // Try to get a recently released command buffer
-    if (self.released.pop()) |popped| return popped;
+    if (self.released.pop()) |popped| return .init(popped);
 
     // Try to get a reserved command buffer
     if (self.reserved.items.len > 0) {
         const new_len = self.reserved.items.len - 1;
         const result = &self.reserved.items[new_len];
         self.reserved.items.len = new_len;
-        return result;
+        return .init(result);
     }
 
     // There are no command buffers available. Wait until one becomes available, or all are
@@ -130,7 +149,7 @@ pub fn acquireOrErr(self: *@This()) error{ZcsCmdPoolUnderflow}!*CmdBuf {
     // Try to reacquire the released command buffer
     if (self.released.pop()) |cb| {
         assert(self.retired < self.reserved.capacity);
-        return cb;
+        return .init(cb);
     }
 
     // If no command buffer was released, we're out of command buffers, return an error
@@ -139,13 +158,23 @@ pub fn acquireOrErr(self: *@This()) error{ZcsCmdPoolUnderflow}!*CmdBuf {
 }
 
 /// Releases a previously acquired command buffer. Thread safe.
-pub fn release(self: *@This(), cb: *CmdBuf) void {
+pub fn release(self: *@This(), ar: AcquireResult) void {
     self.mutex.lock();
     defer self.mutex.unlock();
 
+    // Optionally warn if a single acquire used too much headroom, this is a sign that the command
+    // buffers are too small
+    const usage = ar.cb.worstCaseUsage();
+    if (ar.cb.worstCaseUsage() - ar.usage > (1.0 - self.headroom) * self.warn_ratio) {
+        log.warn(
+            "acquire used > {d}% headroom, consider increasing command buffer size",
+            .{self.warn_ratio * 100.0},
+        );
+    }
+
     // Release the command buffer if it has enough headroom left, otherwise retire it
-    if (cb.worstCaseUsage() < self.headroom) {
-        self.released.appendAssumeCapacity(cb);
+    if (usage < self.headroom) {
+        self.released.appendAssumeCapacity(ar.cb);
     } else {
         self.retired += 1;
     }
@@ -167,8 +196,22 @@ pub fn written(self: *@This()) []CmdBuf {
 
 /// Resets the command pool. Asserts that all command buffers have already been reset.
 pub fn reset(self: *@This()) void {
+    // Check assertions
     self.checkAssertions();
     if (std.debug.runtime_safety) for (self.written()) |cb| assert(cb.isEmpty());
+
+    // Warn if we used too many command buffers
+    const cap: f32 = @floatFromInt(self.reserved.capacity);
+    const used: f32 = @floatFromInt(self.written().len);
+    const usage = used / cap;
+    if (usage > self.warn_ratio) {
+        log.warn(
+            "more than {d}% command pool buffers used, consider incresing reserved count",
+            .{self.warn_ratio},
+        );
+    }
+
+    // Reset the command pool
     self.reserved.items.len = self.reserved.capacity;
     self.released.items.len = 0;
     self.retired = 0;
