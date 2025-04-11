@@ -64,7 +64,7 @@ A simple alternative to working with an ECS would be something like [`std.MultiA
 
 A well implemented ECS is more complex than `MultiArrayList`, but that complexity buys you a lot of convenience. Performance will be comparable.
 
-For a discussion of what features are provided by this ECS see [Key Features](#Key Features), for performance information see [Performance](#Performance), and for further elaboration on my philosophy on game engines and abstraction see my talk [It's Not About The Technology - Game Engines are Art Tools](https://gamesbymason.com/blog/2023/game-engines-are-art-tools/).
+For a discussion of what features are provided by this ECS see [Key Features](#Key-Features), for performance information see [Performance](#Performance), and for further elaboration on my philosophy on game engines and abstraction see my talk [It's Not About The Technology - Game Engines are Art Tools](https://gamesbymason.com/blog/2023/game-engines-are-art-tools/).
 
 # Key Features
 
