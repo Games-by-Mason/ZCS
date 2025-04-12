@@ -73,7 +73,16 @@ pub fn build(b: *std.Build) void {
     bench_step.dependOn(&bench_run.step);
     test_step.dependOn(&bench_exe.step);
 
-    const docs = zcs_tests_exe.getEmittedDocs();
+    // We need an executable to generate docs, but we don't want to use a test executable because
+    // "test" ends up in our URLs if we do.
+    const docs_exe = b.addExecutable(.{
+        .name = "zcs",
+        .root_source_file = b.path("src/docs.zig"),
+        .target = target,
+        .optimize = optimize,
+        .use_llvm = !no_llvm,
+    });
+    const docs = docs_exe.getEmittedDocs();
     const install_docs = b.addInstallDirectory(.{
         .source_dir = docs,
         .install_dir = .prefix,
