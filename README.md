@@ -52,7 +52,7 @@ You can generate documentation with `zig build docs`.
 
 I'll add example projects to the repo as soon as I've set up a renderer that's easy to build without requiring various system libraries be installed etc, tracking issue [here](https://github.com/Games-by-Mason/ZCS/issues/34).
 
-For now, you're welcome to reference [2Pew](https://github.com/MasonRemaley/2Pew/tree/zcs). Just keep in mind that 2Pew is a side project I don't have a lot of time for right now, it's a decent reference but not a full game.
+For now, you're welcome to reference [2Pew](https://github.com/MasonRemaley/2Pew/). Just keep in mind that 2Pew is a side project I don't have a lot of time for right now, it's a decent reference but not a full game.
 
 # Philosophy
 
