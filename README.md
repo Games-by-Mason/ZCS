@@ -8,7 +8,7 @@ ZCS is beta software. Once I've shipped a commercial game using ZCS, I'll start 
 
 If there are no recent commits at the time you're reading this, the project isn't dead--I'm just working on a game!
 
-# Getting Started
+# Getting Started & Documentation
 
 Here's a quick look at what code using ZCS looks like:
 
@@ -22,33 +22,43 @@ const Transform = zcs.ext.Transform2D;
 const Node = zcs.ext.Node;
 
 fn main() void {
-    const gpa = std.heap.smp_allocator;
-
-    // Reserve space for the entities
+    // Reserve space for the game objects and for a command buffer.
+    // ZCS doesn't allocate any memory after initialization.
     var es: Entities = try .init(.{ .gpa = gpa });
     defer es.deinit(gpa);
 
-    // Reserve space for a command buffer
-    var cb = try CmdBuf.init(.{ .name = "cb", .gpa = gpa, .es = &es });
+    var cb = try CmdBuf.init(.{
+        .name = "cb",
+        .gpa = gpa,
+        .es = &es,
+    });
     defer cb.deinit(gpa, &es);
 
-    // Create an entity, in this case using the command buffer
+    // Create an entity and associate some component data with it.
+    // We could do this directly, but instead we're demonstrating the
+    // command buffer API.
     const e: Entity = .reserve(&cb);
     e.add(&cb, Transform, .{});
     e.add(&cb, Node, .{});
 
     // Execute the command buffer
+    // We're using a helper from the `transform` extension here instead of
+    // executing it directly. This is part of ZCS's support for command
+    // buffer extensions, we'll touch more on this later.
     Transform.Exec.immediate(&es, &cb);
 
     // Iterate over entities that contain both transform and node
-    var iter = es.iterator(struct { transform: *const Transform, node: *const Node });
+    var iter = es.iterator(struct {
+        transform: *Transform,
+        node: *Node,
+    });
     while (iter.next(&es)) |vw| {
-        std.debug.print("{} {}", .{ vw.transform, vw.node });
+        // You can operate on `vw.transform.*` and `vw.node.*` here!
     }
 }
 ```
 
-You can generate documentation with `zig build docs`.
+Full documentation available [here](https://docs.gamesbymason.com/zcs/), you can generate up to date docs yourself with `zig build docs`.
 
 I'll add example projects to the repo as soon as I've set up a renderer that's easy to build without requiring various system libraries be installed etc, tracking issue [here](https://github.com/Games-by-Mason/ZCS/issues/34).
 
@@ -73,22 +83,26 @@ For a discussion of what features are provided by this ECS see [Key Features](#K
 Games often feature objects whose lifetimes are not only dynamic, but depend on user input. ZCS provides persistent keys for entities, so they're never dangling:
 
 ```zig
-assert(fireball.exists(es));
-assert(fireball.get(es, Sprite) != null);
+assert(laser.exists(es));
+assert(laser.get(es, Sprite) != null);
 
-fireball.destroyImmediately(es);
+laser.destroyImmediately(es);
 
-assert(!fireball.exists(es));
-assert(fireball.get(es, Sprite) == null);
+assert(!laser.exists(es));
+assert(laser.get(es, Sprite) == null);
 ```
 
-This is achieved through a 32 bit generation counter on each entity slot. Slots are retired when their generations are saturated to prevent false negatives.
+This is achieved through a 32 bit generation counter on each entity slot. Slots are retired when their generations are saturated to prevent false negatives, see [SlotMap](https://github.com/Games-by-Mason/SlotMap) for more info.
 
-See [SlotMap](https://github.com/Games-by-Mason/SlotMap) for more info.
+This strategy allows you to safely and easily store entity handles across frames or in component data.
+
+For all allowed operations on an entity handle, see [`Entity`](https://docs.gamesbymason.com/zcs/#zcs.entity.Entity).
 
 ## Archetype Based Iteration
 
-Game systems are often intertwined with one another. Archetype based iteration allows you to conveniently and efficiently query for entities with a given set of components:
+Gameplay systems often end up coupled not due to bad coding practice, but because these interdependencies often lead to dynamic and interesting gameplay.
+
+Archetype based iteration via [`Entities.iterator`](https://docs.gamesbymason.com/zcs/#zcs.Entities.iterator) allows you to efficiently query for entities with a given set of components. This can be a convenient way to express this kind of coupling:
 
 ```zig
 var iter = es.iterator(struct {
@@ -101,7 +115,7 @@ while (iter.next()) |vw| {
 }
 ```
 
-The following syntax sugar is also provided, where the string is used as the name of a Tracy zone if Tracy is enabled:
+If you prefer, [`forEach`](https://docs.gamesbymason.com/zcs/#zcs.Entities.forEach) syntax sugar is also provided. The string argument is only used if Tracy is enabled:
 ```zig
 fn updateMeshWithEffect(
     ctx: void,
@@ -115,21 +129,13 @@ fn updateMeshWithEffect(
 es.forEach("updateMeshWithEffect", updateMeshWithEffect, {});
 ```
 
-Lower level iterators for operating on chunks of contiguous entities instead of individual entities are also provided.
+[`Entities.chunkIterator`](https://docs.gamesbymason.com/zcs/#zcs.Entities.chunkIterator) is also provided for iterating over contiguous chunks of component data instead of individual entities. This can be useful e.g. to optimize your systems with SIMD.
 
 ### Optional Thread Pool Integration
 
-If you're already making use of `std.Thread.Pool`, you can operate on your chunks in parallel with `forEachThreaded`:
+If you're already making use of [`std.Thread.Pool`](https://ziglang.org/documentation/master/std/#std.Thread.Pool), you can operate on your chunks in parallel with [`forEachThreaded`](https://docs.gamesbymason.com/zcs/#zcs.Entities.forEachThreaded).
 
-```zig
-es.forEachThreaded("updateTurret", updateTurret, .{
-    .game = game,
-    .cb = cb,
-    .delta_s = delta_s,
-});
-```
-
-Have your own job system? No problem. `forEachThreaded` is implemented on top of ZCSs' public interface, wiring it up to your own threading model won't require a fork.
+Have your own job system? No problem. [`forEachThreaded`](https://docs.gamesbymason.com/zcs/#zcs.Entities.forEachThreaded) is implemented on top of ZCS's public interface, wiring it up to your own threading model won't require a fork.
 
 ## Command Buffers
 
@@ -138,66 +144,91 @@ Games often want to make destructive changes to the game state while processing 
 Command buffers allow you to make destructive changes without invalidating iterators, including in a multithreaded context.
 
 ```zig
-
 // Allocate a command buffer
 var cb: CmdBuf = try .init(.{ .gpa = gpa, .es = &es });
 defer cb.deinit(allocator, &es);
 
-// Get the next reserved entity. By reserving entities up front, the command buffer allows you to
-// create entities on background threads safely.
+// Get the next reserved entity. By reserving entities up front, the
+// command buffer allows you to create entities from background threads
+// without contention.
 const e = Entity.reserve(&cb);
 
-// Schedule an archetype change for the reserved entity, this will assign it storage when the
-// command buffer executes.
+// Schedule an archetype change for the reserved entity, this will
+// assign it storage when the command buffer executes. If the component
+// is comptime known and larger than pointer sized, it will
+// automatically be stored by pointer instead of by value.
 e.add(&cb, RigidBody, .{ .mass = 20 });
 e.add(&cb, Sprite, .{ .index = .cat });
 
-// Execute the command buffer, and then clear it for reuse. This would be done from the main thread.
+// Execute the command buffer, and then clear it for reuse. This would
+// be done from the main thread.
 CmdBuf.Exec.immediate(&es);
 ```
 
-If you need to bypass the command buffer system and make changes directly, you can. Invalidating an iterator while it's in use is safety checked illegal behavior.
+For more information, see [`CmdBuf`](https://docs.gamesbymason.com/zcs/#zcs.CmdBuf).
+
+When working with multiple threads, you'll likely want to use [`CmdPool`](https://docs.gamesbymason.com/zcs/#zcs.CmdPool) to manage your command buffer allocations instead of creating them directly. This will allocate a large number of smaller command buffers, and hand them out on a per chunk basis.
+
+This saves you from needing to adjust the number of command buffers you allocate or their capacities based on core count or workload distribution.
+
+If you need to bypass the command buffer system and make changes directly, you can. Invalidating an iterator while it's in use due to having bypassed the command buffer system is safety checked illegal behavior.
 
 ## Command Buffer Extensions
 
-Games often feature entities that form relationships. Operations like destroying an entity may have side effects on other entities.
+Entities often have relationships to one another. As such, operations like destroying an entity may have side effects on other entities. In ZCS this is achieved through command buffer extensions.
 
-Command buffers support extension commands, and iteration via the public API. This allows your game to interpret operations like entity destruction in game specific ways, and to add new commands.
+The key idea is that external code can add [extension commands](https://docs.gamesbymason.com/zcs/#zcs.CmdBuf.ext) with arbitrary payloads to the command buffer, and then later [iterate the command buffer](https://docs.gamesbymason.com/zcs/#zcs.CmdBuf.iterator) to execute those commands or react to the standard ones.
+
+This allows extending the behavior of the command buffer executor without callbacks. This is important because the order of operation between various extensions and the default behavior is often important and very difficult to manage in a callback based system.
+
+To avoid iterating the same command buffer multiple times--and to allow extension commands to change the behavior of the built in commands--you're expected to compose extension code with the default execution functions provided under [`CmdBuf.Exec`](https://docs.gamesbymason.com/zcs/#zcs.CmdBuf.Exec).
+
+As an example of this pattern, [`zcs.ext`](https://docs.gamesbymason.com/zcs/#zcs.ext) provides a number of useful components and command buffer extensions that rely only on ZCS's public API...
 
 
 ### Node
 
-`Node` allows for linking objects to other objects in parent child relationships:
+The [`Node`](https://docs.gamesbymason.com/zcs/#zcs.ext.Node) component allows for linking objects to other objects in parent child relationships. You can modify these relationships directly, or via command buffers:
+
 ```zig
-cb.ext(Node.SetParent, .{ .child = thruster, .parent = ship.toOptional() });
-
-// ...
-
-var children = ship.get(Node).?.childIterator();
-while (children.next()) |child| {
-    // Do something with the child object
-}
-
-var parent = thruster.get(Node).?.parent;
-// Do something with the parent
+cb.ext(Node.SetParent, .{
+    .child = thruster,
+    .parent = ship.toOptional(),
+});
 ```
 
-There is no maximum child count, and adding children does *not* require allocating an array. This is possible because node has links to:
+Helper methods are provided to query parents, iterate children, etc:
+
+```zig
+var children = ship.get(Node).?.childIterator();
+while (children.next()) |child| {
+    // Do something with `child`
+}
+
+if (thruster.get(Node).?.parent.get(&es)) |parent| {
+    // Do something with `parent`
+}
+```
+
+*The full list of supported features can be found in [the docs](https://docs.gamesbymason.com/zcs/#zcs.ext.Node).*
+
+Node doesn't have a maximum child count, and adding children does not allocate an array. This is possible because each node has the following fields:
 * `parent`
 * `first_child`
 * `prev_sib`
 * `next_sib`
 
-This is an implementation detail, you do not need to keep these values in sync. You just need to either call this helper to execute your command buffer with awareness of `Node`:
+
+Deletion of child objects, cycle prevention, etc are all handled for you. You just need to use the provided helpers or command buffer extension command for setting the parent, and to call into [`Node.Exec.immediate`](https://docs.gamesbymason.com/zcs/#zcs.ext.Node.Exec.immediate) to execute your command buffer:
 ```zig
 Node.Exec.immediate(&fz.es, cb);
 ```
 
-Or to look at the documentation of this method to see how to integrate it with your own command buffer executor.
+Keep in mind that this will call the default exec behavior as well as implement the extended behavior provided by `Node`. If you're also integrating other unrelated extensions, a lower level composable API is provided in [`Node.Exec`](https://docs.gamesbymason.com/zcs/#zcs.ext.Node.Exec) for building your own executor.
 
 ### Transform2D
 
-`Transform2D` represents the position and orientation of an entity in 2D space. If an entity also has a `Node` and `relative` is `true`, its local space is relative to that of its parent if any.
+The [`Transform2D`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform2D) component represents the position and orientation of an entity in 2D space. If an entity also has a [`Node`](https://docs.gamesbymason.com/zcs/#zcs.ext.Node) and `relative` is `true`, its local space is relative to that of its parent.
 
 ```zig
 vw.transform.move(es, vw.rb.vel.scaled(delta_s));
@@ -206,15 +237,27 @@ vw.transform.rotate(es, .fromAngle(vw.rb.rotation_vel * delta_s));
 
 Transform children are immediately synchronized by these helpers, but you can defer synchronization until a later point by bypassing the helpers and then later calling `transform.sync(es)`.
 
-`Transform2D` depends on [geom](https://github.com/games-by-Mason/geom) for math.
+[`Transform2D`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform2D) depends on [geom](https://github.com/games-by-Mason/geom) for math.
 
-*It's possible to implement a multithreaded transform sync in ZCS, in fact early prototypes worked this way. However, for typical usage, it's easily 100x more costly to read this data into the cache on the background thread than it is to just do the matrix multiply immediately.*
+### ZoneCmd
+
+Deferred work can be hard to profile. As such, ZCS provides an extension [`ZoneCmd`](https://docs.gamesbymason.com/zcs/#zcs.ext.ZoneCmd) that allows you to start and end Tracy zones from within a command buffer:
+```zig
+const exec_zone = ZoneCmd.begin(&cb, .{
+    .src = @src(),
+    .name = "zombie pathfinding",
+});
+defer exec_zone.end(&cb);
+```
 
 ## Tracy Integration
 
-Buffering commands is a convenient way to mutate data while iterating or from multiple threads, but it can make profiling challenging.
-
 ZCS integrates with [Tracy](https://github.com/wolfpld/tracy) via [tracy_zig](https://github.com/Games-by-Mason/tracy_zig/). ZCS shouldn't be your bottleneck, but with this integration you can be sure of it--and you can track down where the bottleneck is.
+
+In particular, ZCS...
+* Emits its own Tracy Zones
+* Supports attaching zones to sections of command buffers via the [`ZoneCmd`](https://docs.gamesbymason.com/zcs/#zcs.ext.ZoneCmd) extension
+* Emits plots to Tracy, including information on command buffer utilization
 
 ## Generics
 
@@ -222,7 +265,7 @@ Most ECS implementations use some form of generics to provide a friendly interfa
 
 However, when important types become generic, it infects the whole code base--everything that needs to interact with the ECS also needs to become generic, or at least depend on an instantiation of a generic type. This makes it hard to write modular/library code, and presumably will hurt incremental compile times in the near future.
 
-As such, while ZCS will use generic methods where it's convenient, types at API boundaries are typically not generic. For example, `Entities` which stores all the ECS data is not a generic type.
+As such, while ZCS uses generic methods where it's convenient, types at API boundaries are typically not generic. For example, [`Entities`](https://docs.gamesbymason.com/zcs/#zcs.Entities) which stores all the ECS data is not a generic type, and libraries are free to add new component types to entities without an explicit registration step.
 
 # Performance
 
@@ -230,15 +273,22 @@ ZCS is archetype based.
 
 An "archetype" is a unique set of component types--for example, all entities that have both a `RigidBody` and a `Mesh` component share an archetype, whereas an entity that contains a `RigidBody` a `Mesh` and a `MonsterAi` has a different archetype.
 
-Archetypes are packed tightly in memory with their components laid out `AAABBBCCC` to minimize padding, and an acceleration structure makes finding all entities matching a given archetype.
+Archetypes are packed tightly in memory into [chunks](https://docs.gamesbymason.com/zcs/#zcs.chunk.Chunk) with the following layout:
+1. Chunk header
+2. Entity indices
+3. Component data
 
-Comparing performance with something like `MultiArrayList`:
+Component data is laid out in `AAABBBCCC` order within the chunk, sorted from greatest to least alignment requirements to minimize padding. Chunks size is configurable but must be a power of two, in practice this results in chunk sizes that are a multiple of the cache line size which prevents false sharing when operating on chunks in parallel.
+
+A simple [acceleration structure](https://docs.gamesbymason.com/zcs/#zcs.Arches) is provided to make finding all chunks compatible with a given archetype efficient.
+
+Comparing performance with something like [`MultiArrayList`](https://ziglang.org/documentation/master/std/#std.MultiArrayList):
 * Iterating over all data results in nearly identical performance
-* Iterating over only data that contains supersets of a given archetype is nearly equivalent to iterating a `MultiArrayList` that only contains the desired data
-* Inserting and removing entities is O(1), but more expensive than appending/popping from a `std.MultiArrayList` since more bookkeeping is involved for the aforementioned acceleration and persistent handles
-* Random access is O(1), but more expensive than random access to `std.MultiArrayList` as the persistent handles introduce a layer of indirection
+* Iterating over only data that contains supersets of a given archetype is nearly identical to if the [`MultiArrayList`](https://ziglang.org/documentation/master/std/#std.MultiArrayList) was somehow preprocessed to remove all the undesired results and then tightly packed before starting the timer
+* Inserting and removing entities is O(1), but more expensive than appending/popping from a [`MultiArrayList`](https://ziglang.org/documentation/master/std/#std.MultiArrayList) or leaving a hole in it since more bookkeeping is involved for the aforementioned acceleration and persistent handles
+* Random access is O(1), but more expensive than random access to a [`MultiArrayList`](https://ziglang.org/documentation/master/std/#std.MultiArrayList) as the persistent handles introduce a layer of indirection
 
-No dynamic allocation is done after initialization. I recommend using `std.cleanExit` to avoid unnecessary clean up in release mode.
+No dynamic allocation is done after initialization.
 
 # Contributing
 
