@@ -162,7 +162,7 @@ e.add(&cb, Sprite, .{ .index = .cat });
 
 // Execute the command buffer, and then clear it for reuse. This would
 // be done from the main thread.
-CmdBuf.Exec.immediate(&es);
+CmdBuf.Exec.immediate(&es, &cb);
 ```
 
 For more information, see [`CmdBuf`](https://docs.gamesbymason.com/zcs/#zcs.CmdBuf).
@@ -221,7 +221,7 @@ Node doesn't have a maximum child count, and adding children does not allocate a
 
 Deletion of child objects, cycle prevention, etc are all handled for you. You just need to use the provided helpers or command buffer extension command for setting the parent, and to call into [`Node.Exec.immediate`](https://docs.gamesbymason.com/zcs/#zcs.ext.Node.Exec.immediate) to execute your command buffer:
 ```zig
-Node.Exec.immediate(&fz.es, cb);
+Node.Exec.immediate(&es, &cb);
 ```
 
 Keep in mind that this will call the default exec behavior as well as implement the extended behavior provided by `Node`. If you're also integrating other unrelated extensions, a lower level composable API is provided in [`Node.Exec`](https://docs.gamesbymason.com/zcs/#zcs.ext.Node.Exec) for building your own executor.
