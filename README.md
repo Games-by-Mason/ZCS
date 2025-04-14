@@ -23,7 +23,10 @@ const Node = zcs.ext.Node;
 
 fn main() void {
     // Reserve space for the game objects and for a command buffer.
-    // ZCS doesn't allocate any memory after initialization.
+    // ZCS doesn't allocate any memory after initialization, but you
+    // can change the default capacities here if you like--or leave
+    // them at their defaults as in this example. If you ever exceed
+    // 20% capacity you'll get a warning by default.
     var es: Entities = try .init(.{ .gpa = gpa });
     defer es.deinit(gpa);
 
