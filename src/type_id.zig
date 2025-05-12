@@ -9,7 +9,7 @@ const CompFlag = zcs.CompFlag;
 /// Runtime information for a type.
 pub const TypeInfo = struct {
     /// The maximum allowed alignment.
-    pub const max_align = 16;
+    pub const max_align: std.mem.Alignment = .@"16";
 
     /// The component's type name.
     name: []const u8,
@@ -55,7 +55,7 @@ pub const TypeInfo = struct {
             @compileError("unsupported component type '" ++ @typeName(T) ++ "'; consider wrapping in struct");
         }
 
-        comptime assert(@alignOf(T) <= max_align);
+        comptime assert(@alignOf(T) <= max_align.toByteUnits());
     }
 };
 
