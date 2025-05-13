@@ -52,7 +52,7 @@ pub fn init(gpa: Allocator, cap: Capacity) Allocator.Error!@This() {
 
     // The max size is reserved for invalid indices.
     assert(cap.chunks < math.maxInt(u32));
-    assert(cap.chunk >= zcs.TypeInfo.max_align);
+    assert(cap.chunk >= zcs.TypeInfo.max_align.toByteUnits());
 
     // Allocate the chunk data, aligned to the size of a chunk
     const alignment = Alignment.fromByteUnits(cap.chunk);
