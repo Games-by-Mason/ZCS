@@ -2,6 +2,10 @@
 
 An archetype based entity component system written in Zig.
 
+# Zig Version
+
+[`main`](https://github.com/Games-by-Mason/zcs/tree/main) loosely tracks Zig master. For support for previous Zig versions, see [releases](https://github.com/Games-by-Mason/ZCS/releases).
+
 # Status
 
 ZCS is beta software. Once I've shipped a commercial game using ZCS, I'll start to stabilize the API and remove this disclaimer.

@@ -2,7 +2,7 @@
     .name = .zcs,
     .fingerprint = 0x21fb2c76fcd0125a,
     .version = "0.1.0",
-    .minimum_zig_version = "0.14.0-dev.2544+94df665fe",
+    .minimum_zig_version = "0.14.0",
     .dependencies = .{
         .slot_map = .{
             .url = "git+https://github.com/Games-By-Mason/SlotMap#b3c6ad95540df8ef53e670d743745aee6d3f1a62",
