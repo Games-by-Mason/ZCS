@@ -129,8 +129,25 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
     self.* = undefined;
 }
 
+/// Destroys all entities matching the given arch immediately.
+pub fn destroyArchImmediate(self: *@This(), arch: CompFlag.Set) void {
+    self.pointer_generation.increment();
+    var chunk_lists_iter = self.arches.iterator(self, arch);
+    while (chunk_lists_iter.next(self)) |chunk_list| {
+        var chunk_list_iter = chunk_list.iterator(self);
+        while (chunk_list_iter.next(self)) |chunk| {
+            var chunk_iter = chunk.iterator(self);
+            while (chunk_iter.next(self)) |entity| {
+                self.handle_tab.remove(entity.key);
+            }
+            chunk.clear(self);
+        }
+    }
+}
+
 /// Recycles all entities compatible with the given archetype. This causes their handles to be
-/// dangling, prefer destroying entities unless you're implementing a high throughput event system.
+/// dangling, prefer `destroyArchImmediate` unless you're implementing a high throughput event
+/// system.
 ///
 /// Invalidates pointers.
 pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {

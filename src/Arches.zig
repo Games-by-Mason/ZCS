@@ -56,6 +56,13 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
     self.* = undefined;
 }
 
+/// Resets arches back to its initial state.
+pub fn clear(self: *@This()) void {
+    self.map.unlockPointers();
+    self.map.clearRetainingCapacity();
+    self.map.lockPointers();
+}
+
 /// Gets the chunk list for the given archetype, initializing it if it doesn't exist.
 pub fn getOrPut(
     self: *@This(),

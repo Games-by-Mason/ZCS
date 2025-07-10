@@ -1584,3 +1584,74 @@ test "default capacities" {
         defer cp.deinit(gpa, &es);
     }
 }
+
+test "destroyArchImmediate" {
+    defer CompFlag.unregisterAll();
+    var es: Entities = try .init(.{
+        .gpa = gpa,
+        .cap = .{
+            .entities = 4,
+            .arches = 3,
+            .chunks = 3,
+            .chunk = 512,
+        },
+    });
+    defer es.deinit(gpa);
+
+    const e0: Entity = .reserveImmediate(&es);
+    const e1: Entity = .reserveImmediate(&es);
+    const e2: Entity = .reserveImmediate(&es);
+    const e3: Entity = .reserveImmediate(&es);
+    assert(e0.changeArchImmediate(&es, struct { x: f32 }, .{ .add = .{ .x = 1.0 } }));
+    assert(e1.changeArchImmediate(&es, struct { x: f32, y: bool }, .{ .add = .{ .x = 1.0, .y = true } }));
+    assert(e2.changeArchImmediate(&es, struct { x: f32, y: bool }, .{ .add = .{ .x = 1.5, .y = false } }));
+    assert(e3.changeArchImmediate(&es, struct { y: bool }, .{ .add = .{ .y = false } }));
+
+    es.destroyArchImmediate(.initEmpty());
+
+    const e0_2: Entity = .reserveImmediate(&es);
+    const e1_2: Entity = .reserveImmediate(&es);
+    const e2_2: Entity = .reserveImmediate(&es);
+    const e3_2: Entity = .reserveImmediate(&es);
+
+    try expectEqual(e0.key.index, e3_2.key.index);
+    try expectEqual(2, @intFromEnum(e3_2.key.generation));
+    try expectEqual(e1.key.index, e2_2.key.index);
+    try expectEqual(2, @intFromEnum(e2_2.key.generation));
+    try expectEqual(e2.key.index, e1_2.key.index);
+    try expectEqual(2, @intFromEnum(e1_2.key.generation));
+    try expectEqual(e3.key.index, e0_2.key.index);
+    try expectEqual(2, @intFromEnum(e0_2.key.generation));
+
+    try expectEqual(null, e0_2.get(&es, f32));
+    try expectEqual(null, e1_2.get(&es, f32));
+    try expectEqual(null, e2_2.get(&es, f32));
+    try expectEqual(null, e3_2.get(&es, f32));
+    try expectEqual(null, e0_2.get(&es, bool));
+    try expectEqual(null, e1_2.get(&es, bool));
+    try expectEqual(null, e2_2.get(&es, bool));
+    try expectEqual(null, e3_2.get(&es, bool));
+
+    assert(e0_2.changeArchImmediate(&es, struct { x: f32 }, .{ .add = .{ .x = 1.5 } }));
+    assert(e1_2.changeArchImmediate(&es, struct { x: f32, y: bool }, .{ .add = .{ .x = 1.2, .y = false } }));
+    assert(e2_2.changeArchImmediate(&es, struct { x: f32, y: bool }, .{ .add = .{ .x = 1.3, .y = true } }));
+    assert(e3_2.changeArchImmediate(&es, struct { y: bool }, .{ .add = .{ .y = true } }));
+
+    try expectEqual(1.5, e0_2.get(&es, f32).?.*);
+    try expectEqual(1.2, e1_2.get(&es, f32).?.*);
+    try expectEqual(1.3, e2_2.get(&es, f32).?.*);
+    try expectEqual(null, e3_2.get(&es, f32));
+    try expectEqual(null, e0_2.get(&es, bool));
+    try expectEqual(false, e1_2.get(&es, bool).?.*);
+    try expectEqual(true, e2_2.get(&es, bool).?.*);
+    try expectEqual(true, e3_2.get(&es, bool).?.*);
+
+    es.destroyArchImmediate(.initOne(.registerImmediate(typeId(f32))));
+
+    try expect(!e0_2.exists(&es));
+    try expect(!e1_2.exists(&es));
+    try expect(!e2_2.exists(&es));
+    try expect(e3_2.exists(&es));
+
+    try expectEqual(true, e3_2.get(&es, bool).?.*);
+}

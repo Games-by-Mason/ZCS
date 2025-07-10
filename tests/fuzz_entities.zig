@@ -20,7 +20,7 @@ const Tag = types.Tag;
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 
-const cmds_capacity = 1000;
+const cmds_capacity = 2000;
 const change_cap = 16;
 
 const log = false;
@@ -122,6 +122,32 @@ fn run(input: []const u8, saturated: bool) !void {
             if (fz.smith.isEmpty()) break;
             try fz.modifyImmediate();
         }
+
+        // Rarely, destroy whole arches
+        if (fz.smith.next(u8) > 190) {
+            const rb = fz.smith.next(bool);
+            const model = fz.smith.next(bool);
+            const tag = fz.smith.next(bool);
+            var arch: CompFlag.Set = .initEmpty();
+            if (rb) arch.insert(.registerImmediate(zcs.typeId(RigidBody)));
+            if (model) arch.insert(.registerImmediate(zcs.typeId(Model)));
+            if (tag) arch.insert(.registerImmediate(zcs.typeId(Tag)));
+            fz.es.destroyArchImmediate(arch);
+            var i: usize = 0;
+            while (i < fz.committed.count()) {
+                const curr = fz.committed.values()[i];
+                var match: bool = true;
+                if (rb and curr.rb == null) match = false;
+                if (model and curr.model == null) match = false;
+                if (tag and curr.tag == null) match = false;
+                if (match) {
+                    fz.committed.swapRemoveAt(i);
+                } else {
+                    i += 1;
+                }
+            }
+        }
+
         try checkOracle(&fz, &cb);
     }
 

@@ -77,6 +77,12 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
     self.* = undefined;
 }
 
+/// Resets the chunk pool back to its initial state.
+pub fn clear(self: *@This()) void {
+    self.reserved = 0;
+    self.free = .none;
+}
+
 /// Reserves a chunk from the chunk pool
 pub fn reserve(
     self: *@This(),
