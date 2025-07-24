@@ -8,7 +8,7 @@ pub fn expectEqualEntity(expected: anytype, actual: anytype) !void {
     const a = if (@TypeOf(actual) == Entity.Optional) actual else actual.toOptional();
     if (e != a) {
         if (std.testing.backend_can_print) {
-            std.debug.print("expected {}, found {}\n", .{ e, a });
+            std.debug.print("expected {f}, found {f}\n", .{ e, a });
         }
         return error.TestExpectedEqual;
     }

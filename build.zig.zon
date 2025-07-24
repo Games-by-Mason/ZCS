@@ -5,17 +5,17 @@
     .minimum_zig_version = "0.15.0-dev.388+05e217607",
     .dependencies = .{
         .slot_map = .{
-            .url = "git+https://github.com/Games-By-Mason/SlotMap#b3c6ad95540df8ef53e670d743745aee6d3f1a62",
-            .hash = "slot_map-0.0.0-xUe6_DhJAADRQ0uQklALTtc-RQAsD6Rs13ChWZJyjlLh",
+            .url = "git+https://github.com/Games-By-Mason/SlotMap#8ad7f7dbd0c029e6388d18a889f2e3f9dc73ca2e",
+            .hash = "slot_map-0.0.0-xUe6_GJHAACo9R1besOEjCWV7L3JEwJ1qevngNsB9Irb",
         },
         // Only used by extensions
         .geom = .{
-            .url = "git+https://github.com/Games-By-Mason/geom#60d8484528395db2f09cf19ba15e7a45c351dd37",
-            .hash = "geom-0.0.0-U1ma30s1AgDCk6ibs_NDhTAH3tDYq5j7NUrvlMWQ4ZYX",
+            .url = "git+https://github.com/Games-By-Mason/geom#ad7fafd743d928d154907244b041ae1ab4a9e159",
+            .hash = "geom-0.0.0-U1ma3081AgB40Ws34tLPkwtlmMGzznZc0p86EEj6mpkw",
         },
         .tracy = .{
-            .url = "git+https://github.com/Games-By-Mason/tracy_zig#0cad4646be2791982f692a7a47716ec92b62eb2e",
-            .hash = "tracy-0.0.0-R7l8BdlCAQBFp6uysnan3Alaxap65HBF1mzGdabdKe8z",
+            .url = "git+https://github.com/Games-By-Mason/tracy_zig#876c5c5371a46af5af8d4dd88904bccbf6eeae04",
+            .hash = "tracy-0.0.0-R7l8BV1DAQCm4AvfCxJirPmRXFtkf8eoNp55jPqX1jEL",
         },
     },
     .paths = .{

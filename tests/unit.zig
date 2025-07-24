@@ -1063,15 +1063,15 @@ test "cb capacity" {
 }
 
 test "format entity" {
-    try std.testing.expectFmt("0xa:0xb", "{}", Entity{ .key = .{
+    try std.testing.expectFmt("0xa:0xb", "{f}", Entity{ .key = .{
         .index = 10,
         .generation = @enumFromInt(11),
     } });
-    try std.testing.expectFmt("0xa:0xb", "{}", (Entity{ .key = .{
+    try std.testing.expectFmt("0xa:0xb", "{f}", (Entity{ .key = .{
         .index = 10,
         .generation = @enumFromInt(11),
     } }).toOptional());
-    try std.testing.expectFmt(".none", "{}", Entity.Optional.none);
+    try std.testing.expectFmt(".none", "{f}", Entity.Optional.none);
 }
 
 test "change arch immediate" {

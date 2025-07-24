@@ -327,7 +327,7 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
         var iter = fz.es.iterator(struct { e: Entity });
         while (iter.next(&fz.es)) |vw| {
             if (!o.entities.contains(vw.e)) {
-                std.debug.print("oracle missing {}\n", .{vw.e});
+                std.debug.print("oracle missing {f}\n", .{vw.e});
             }
         }
 
@@ -335,7 +335,7 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
         var keys = o.entities.keyIterator();
         while (keys.next()) |e| {
             if (!e.exists(&fz.es)) {
-                std.debug.print("entities missing {}\n", .{e});
+                std.debug.print("entities missing {f}\n", .{e.*});
             }
         }
     }
@@ -355,7 +355,7 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
         if (node) |n| {
             var children = n.childIterator();
             var prev_sibling: Entity.Optional = .none;
-            if (entry.value_ptr.node == null) std.debug.print("{} should have a node, real data does: {?}\n", .{ entry.key_ptr.*, entry.key_ptr.*.get(&fz.es, Node) });
+            if (entry.value_ptr.node == null) std.debug.print("{f} should have a node, real data does: {?}\n", .{ entry.key_ptr.*, entry.key_ptr.*.get(&fz.es, Node) });
             const keys = entry.value_ptr.node.?.children.keys();
             for (0..keys.len) |i| {
                 const expected = keys[keys.len - i - 1];
@@ -465,7 +465,7 @@ fn setParent(fz: *Fuzzer, o: *Oracle) !void {
     // Get a random parent and child
     const parent = fz.randomEntity();
     const child = fz.randomEntity().unwrap() orelse return;
-    if (log) std.debug.print("{}.parent = {}\n", .{ child, parent });
+    if (log) std.debug.print("{f}.parent = {f}\n", .{ child, parent });
 
     if (parent.unwrap()) |p| if (!p.exists(&fz.es)) return;
     if (!child.exists(&fz.es)) return;
@@ -481,7 +481,7 @@ fn setParentCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
     // Get a random parent and child
     const parent = fz.randomEntity();
     const child = fz.randomEntity().unwrap() orelse return;
-    if (log) std.debug.print("{}.parent = {}\n", .{ child, parent });
+    if (log) std.debug.print("{f}.parent = {f}\n", .{ child, parent });
 
     cb.ext(SetParent, .{ .child = child, .parent = parent });
     if (o.entities.getPtr(child) != null) {
@@ -537,7 +537,7 @@ fn destroy(fz: *Fuzzer, o: *Oracle) !void {
 
     // Get a random entity
     const entity = fz.randomEntity().unwrap() orelse return;
-    if (log) std.debug.print("destroy {}\n", .{entity});
+    if (log) std.debug.print("destroy {f}\n", .{entity});
 
     // Destroy the real entity
     if (entity.get(&fz.es, Node)) |node| {
@@ -575,7 +575,7 @@ fn destroyCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
 
     // Get a random entity
     const entity = fz.randomEntity().unwrap() orelse return;
-    if (log) std.debug.print("destroy {}\n", .{entity});
+    if (log) std.debug.print("destroy {f}\n", .{entity});
 
     // Destroy the real entity
     entity.destroy(cb);

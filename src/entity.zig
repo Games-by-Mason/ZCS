@@ -90,13 +90,8 @@ pub const Entity = packed struct {
         }
 
         /// Default formatting.
-        pub fn format(
-            self: @This(),
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            return self.key.format(fmt, options, writer);
+        pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            return self.key.format(writer);
         }
     };
 
@@ -689,13 +684,8 @@ pub const Entity = packed struct {
     }
 
     /// Default formatting.
-    pub fn format(
-        self: @This(),
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        return self.key.format(fmt, options, writer);
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        return self.key.format(writer);
     }
 
     /// Returns the archetype of the entity. If it has been destroyed or is not yet committed, the

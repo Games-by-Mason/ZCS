@@ -40,9 +40,11 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
 
     const external_tests_exe = b.addTest(.{
-        .root_source_file = b.path("tests/root.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/root.zig"),
+            .optimize = optimize,
+            .target = target,
+        }),
         .filters = test_filters,
         .use_llvm = !no_llvm,
     });
@@ -61,9 +63,11 @@ pub fn build(b: *std.Build) void {
     const bench_step = b.step("bench", "Run benchmarks");
     const bench_exe = b.addExecutable(.{
         .name = "bench",
-        .root_source_file = b.path("bench/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
         .use_llvm = !no_llvm,
     });
     bench_exe.root_module.addImport("zcs", zcs);
@@ -77,9 +81,11 @@ pub fn build(b: *std.Build) void {
     // "test" ends up in our URLs if we do.
     const docs_exe = b.addExecutable(.{
         .name = "zcs",
-        .root_source_file = b.path("src/docs.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/docs.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
         .use_llvm = !no_llvm,
     });
     const docs = docs_exe.getEmittedDocs();
