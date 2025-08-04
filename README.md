@@ -22,24 +22,26 @@ const zcs = @import("zcs");
 
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
+const CmdBuf = zcs.CmdBuf;
 const Transform = zcs.ext.Transform2D;
 const Node = zcs.ext.Node;
 
-fn main() void {
+pub fn main() !void {
     // Reserve space for the game objects and for a command buffer.
     // ZCS doesn't allocate any memory after initialization, but you
     // can change the default capacities here if you like--or leave
     // them at their defaults as in this example. If you ever exceed
     // 20% capacity you'll get a warning by default.
-    var es: Entities = try .init(.{ .gpa = gpa });
-    defer es.deinit(gpa);
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var es: Entities = try .init(.{ .gpa = gpa.allocator() });
+    defer es.deinit(gpa.allocator());
 
     var cb = try CmdBuf.init(.{
         .name = "cb",
-        .gpa = gpa,
+        .gpa = gpa.allocator(),
         .es = &es,
     });
-    defer cb.deinit(gpa, &es);
+    defer cb.deinit(gpa.allocator(), &es);
 
     // Create an entity and associate some component data with it.
     // We could do this directly, but instead we're demonstrating the
@@ -61,6 +63,7 @@ fn main() void {
     });
     while (iter.next(&es)) |vw| {
         // You can operate on `vw.transform.*` and `vw.node.*` here!
+        std.debug.print("transform: {any}\n", .{vw.transform.pos});
     }
 }
 ```
