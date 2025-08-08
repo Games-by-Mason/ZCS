@@ -20,7 +20,12 @@ pub const CompFlag = enum(FlagInt) {
     pub const Set = std.enums.EnumSet(CompFlag);
 
     /// The list of registered components.
-    var registered: std.BoundedArray(TypeId, CompFlag.max) = .{};
+    var registered_buf: [max]TypeId = undefined;
+    var registered_len: u8 = 0;
+
+    comptime {
+        assert(std.math.maxInt(@TypeOf(registered_len)) >= std.math.maxInt(FlagInt));
+    }
 
     /// Assigns the given ID the next flag index if it doesn't have one, and then returns its flag.
     /// Not thread safe.
@@ -35,26 +40,26 @@ pub const CompFlag = enum(FlagInt) {
         std.log.scoped(.zcs).debug("register comp: {s}", .{id.name});
 
         // Warn if we've registered a large number of components
-        if (registered.len == CompFlag.max / 2) {
+        if (registered_len == CompFlag.max / 2) {
             std.log.warn(
                 "{} component types registered, you're at 50% the fatal capacity!",
-                .{registered.len},
+                .{registered_len},
             );
         }
 
         // Fail if we're out of component types
-        if (registered.len > registered.buffer.len) {
+        if (registered_len >= max) {
             @panic("component type overflow");
         }
 
         // Pick the next sequential flag
-        const flag: CompFlag = @enumFromInt(registered.len);
+        const flag: CompFlag = @enumFromInt(registered_len);
         id.comp_flag = flag;
 
         // This function is not thread safe, but reading from `registered` is, so we update the
         // registered list, and then increment the counter atomically.
-        registered.buffer[registered.len] = id;
-        _ = @atomicRmw(usize, &registered.len, .Add, 1, .release);
+        registered_buf[registered_len] = id;
+        _ = @atomicRmw(@TypeOf(registered_len), &registered_len, .Add, 1, .release);
 
         // Return the registered flag
         return flag;
@@ -63,18 +68,18 @@ pub const CompFlag = enum(FlagInt) {
     /// Gets the list of registered component types for introspection purposes. Components are
     /// registered lazily, this list will grow over time. Thread safe.
     pub fn getAll() []const TypeId {
-        return registered.constSlice();
+        return registered_buf[0..registered_len];
     }
 
     /// This function is intended to be used only in tests. Unregisters all component types.
     pub fn unregisterAll() void {
-        for (registered.slice()) |id| id.comp_flag = null;
-        registered.clear();
+        for (getAll()) |id| id.comp_flag = null;
+        registered_len = 0;
     }
 
     /// Returns the ID for this flag.
     pub fn getId(self: @This()) TypeId {
-        return registered.get(@intFromEnum(self));
+        return getAll()[@intFromEnum(self)];
     }
 
     _,

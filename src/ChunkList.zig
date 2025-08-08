@@ -59,11 +59,12 @@ pub fn init(pool: *const ChunkPool, arch: CompFlag.Set) error{ZcsChunkOverflow}!
     defer zone.end();
 
     // Sort the components from greatest to least alignment.
-    const sorted = sortCompsByAlignment(arch);
+    var flag_buf: [CompFlag.max]CompFlag = undefined;
+    const sorted = sortCompsByAlignment(&flag_buf, arch);
 
     // Get the max alignment required by any component or entity index
     var max_align: u32 = @alignOf(Entity.Index);
-    if (sorted.len > 0) max_align = @max(max_align, sorted.get(0).getId().alignment);
+    if (sorted.len > 0) max_align = @max(max_align, sorted[0].getId().alignment);
 
     // Initialize the offset to the start of the data
     const data_offset: u32 = alignForward(u32, @sizeOf(Chunk.Header), max_align);
@@ -77,7 +78,7 @@ pub fn init(pool: *const ChunkPool, arch: CompFlag.Set) error{ZcsChunkOverflow}!
 
     // Calculate how much space one entity takes
     var entity_size: u32 = @sizeOf(Entity.Index);
-    for (sorted.constSlice()) |comp| {
+    for (sorted) |comp| {
         const comp_size = math.cast(u32, comp.getId().size) orelse
             return error.ZcsChunkOverflow;
         entity_size = math.add(u32, entity_size, comp_size) catch
@@ -94,7 +95,7 @@ pub fn init(pool: *const ChunkPool, arch: CompFlag.Set) error{ZcsChunkOverflow}!
     var offset: u32 = data_offset;
     var comp_buf_offsets: std.enums.EnumArray(CompFlag, u32) = .initFill(0);
     var index_buf_offset: u32 = 0;
-    for (sorted.constSlice()) |comp| {
+    for (sorted) |comp| {
         const id = comp.getId();
 
         // If we haven't found a place for the index buffer, check if it can go here
@@ -284,14 +285,14 @@ fn alignmentGte(_: void, lhs: CompFlag, rhs: CompFlag) bool {
 /// Returns a list of the components in this set sorted from greatest to least alignment. This
 /// is an optimization to reduce padding, but also necessary to get consistent cutoffs for how
 /// much data fits in a chunk regardless of registration order.
-inline fn sortCompsByAlignment(set: CompFlag.Set) std.BoundedArray(CompFlag, CompFlag.max) {
+inline fn sortCompsByAlignment(buf: *[CompFlag.max]CompFlag, set: CompFlag.Set) []CompFlag {
     const zone = Zone.begin(.{ .src = @src() });
     defer zone.end();
-    var comps: std.BoundedArray(CompFlag, CompFlag.max) = .{};
+    var comps: std.ArrayListUnmanaged(CompFlag) = .initBuffer(buf);
     var iter = set.iterator();
     while (iter.next()) |flag| comps.appendAssumeCapacity(flag);
-    std.sort.pdq(CompFlag, comps.slice(), {}, alignmentGte);
-    return comps;
+    std.sort.pdq(CompFlag, comps.items, {}, alignmentGte);
+    return comps.items;
 }
 
 test sortCompsByAlignment {
@@ -317,7 +318,8 @@ test sortCompsByAlignment {
     // Test sorting all of them
     {
         // Sort them
-        const sorted = sortCompsByAlignment(.initMany(&.{
+        var flag_buf: [CompFlag.max]CompFlag = undefined;
+        const sorted = sortCompsByAlignment(&flag_buf, .initMany(&.{
             e_0,
             c_1,
             d_0,
@@ -336,7 +338,7 @@ test sortCompsByAlignment {
         }));
         try std.testing.expectEqual(15, sorted.len);
         var prev: usize = math.maxInt(usize);
-        for (sorted.constSlice()) |flag| {
+        for (sorted) |flag| {
             const curr = flag.getId().alignment;
             try std.testing.expect(curr <= prev);
             prev = curr;
@@ -346,7 +348,8 @@ test sortCompsByAlignment {
     // Test sorting a subset of them
     {
         // Sort them
-        const sorted = sortCompsByAlignment(.initMany(&.{
+        var flag_buf: [CompFlag.max]CompFlag = undefined;
+        const sorted = sortCompsByAlignment(&flag_buf, .initMany(&.{
             e_0,
             d_0,
             c_0,
@@ -354,10 +357,10 @@ test sortCompsByAlignment {
             b_0,
         }));
         try std.testing.expectEqual(5, sorted.len);
-        try std.testing.expectEqual(e_0, sorted.get(0));
-        try std.testing.expectEqual(d_0, sorted.get(1));
-        try std.testing.expectEqual(c_0, sorted.get(2));
-        try std.testing.expectEqual(b_0, sorted.get(3));
-        try std.testing.expectEqual(a_0, sorted.get(4));
+        try std.testing.expectEqual(e_0, sorted[0]);
+        try std.testing.expectEqual(d_0, sorted[1]);
+        try std.testing.expectEqual(c_0, sorted[2]);
+        try std.testing.expectEqual(b_0, sorted[3]);
+        try std.testing.expectEqual(a_0, sorted[4]);
     }
 }

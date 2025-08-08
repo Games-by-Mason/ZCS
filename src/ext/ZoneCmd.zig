@@ -50,20 +50,22 @@ pub const EndCmd = struct { loc: *const SourceLocation };
 /// with. As such, documentation is sparse. You are welcome to call these methods directly, or
 /// use them as reference for implementing your own command buffer iterator.
 pub const Exec = struct {
-    const Stack = if (tracy.enabled) b: {
-        break :b std.BoundedArray(struct { zone: Zone, loc: *const SourceLocation }, 32);
-    } else struct {};
+    const tracy_stack_max = if (tracy.enabled) 32 else 0;
 
-    stack: Stack = .{},
+    tracy_stack: [tracy_stack_max]struct { zone: Zone, loc: *const SourceLocation } = undefined,
+    tracy_stack_len: if (tracy.enabled) u8 else u0 = 0,
 
     /// Executes an extension command.
     pub inline fn extImmediate(self: *@This(), payload: Any) void {
         if (tracy.enabled) {
             if (payload.as(BeginCmd)) |b| {
                 const zone = Zone.beginFromPtr(b.loc);
-                self.stack.append(.{ .zone = zone, .loc = b.loc }) catch @panic("OOB");
+                if (self.tracy_stack_len >= tracy_stack_max) @panic("OOB");
+                self.tracy_stack[self.tracy_stack_len] = .{ .zone = zone, .loc = b.loc };
+                self.tracy_stack_len += 1;
             } else if (payload.as(EndCmd)) |e| {
-                const frame = self.stack.pop() orelse @panic("OOB");
+                self.tracy_stack_len -= 1;
+                const frame = self.tracy_stack[self.tracy_stack_len];
                 assert(frame.loc == e.loc);
                 frame.zone.end();
             }
@@ -72,7 +74,7 @@ pub const Exec = struct {
 
     pub fn finish(self: *@This()) void {
         if (tracy.enabled) {
-            assert(self.stack.len == 0);
+            assert(self.tracy_stack_len == 0);
         }
     }
 };
