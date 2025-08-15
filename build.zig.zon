@@ -14,8 +14,8 @@
             .hash = "geom-0.0.0-U1ma3081AgB40Ws34tLPkwtlmMGzznZc0p86EEj6mpkw",
         },
         .tracy = .{
-            .url = "git+https://github.com/Games-By-Mason/tracy_zig#876c5c5371a46af5af8d4dd88904bccbf6eeae04",
-            .hash = "tracy-0.0.0-R7l8BV1DAQCm4AvfCxJirPmRXFtkf8eoNp55jPqX1jEL",
+            .url = "git+https://github.com/Games-By-Mason/tracy_zig#1cb0471b169637ebfc0a4f5ce827a3502412e564",
+            .hash = "tracy-0.0.0-R7l8BVxEAQDC2E_f6SlQZy5_4BAI2klvP5equvriL47a",
         },
     },
     .paths = .{
