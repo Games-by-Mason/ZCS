@@ -140,6 +140,10 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
                         },
                         .rot = .fromAngle(smith.next(f32)),
                         .relative = smith.next(u8) > 25 or true,
+                        .scale = .{
+                            .x = smith.nextBetween(f32, -100.0, 100.0),
+                            .y = smith.nextBetween(f32, -100.0, 100.0),
+                        },
                     });
                     try all.append(gpa, child);
                     if (smith.next(u8) > 40) {
@@ -215,9 +219,17 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
                             if (smith.next(bool)) {
                                 if (smith.next(bool)) {
                                     transform.setRot(&es, .fromAngle(smith.next(f32)));
+                                    transform.setScale(&es, .{
+                                        .x = smith.nextBetween(f32, -100.0, 100.0),
+                                        .y = smith.nextBetween(f32, -100.0, 100.0),
+                                    });
                                 } else {
                                     // Mainly making sure it compiles
                                     transform.rotate(&es, .fromTo(.x_pos, .y_pos));
+                                    transform.scaleBy(&es, .{
+                                        .x = smith.nextBetween(f32, -2.0, 2.0),
+                                        .y = smith.nextBetween(f32, -2.0, 2.0),
+                                    });
                                 }
                                 if (log) std.debug.print("  {} pos = {}, rot = {}\n", .{
                                     e,
@@ -270,9 +282,10 @@ fn checkOracle(es: *const Entities) !void {
         var world_from_model: Mat2x3 = .identity;
         var sum: Vec2 = .zero;
         while (path.pop()) |ancestor| {
+            const scale: Mat2x3 = .scale(ancestor.scale);
             const rotation: Mat2x3 = .rotation(ancestor.rot);
             const translation: Mat2x3 = .translation(ancestor.pos);
-            world_from_model = rotation.applied(translation).applied(world_from_model);
+            world_from_model = scale.applied(rotation).applied(translation).applied(world_from_model);
             sum.add(ancestor.pos);
         }
         try expectMat2x3Equal(world_from_model, vw.transform.world_from_model);

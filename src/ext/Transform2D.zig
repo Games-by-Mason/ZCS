@@ -40,6 +40,8 @@ const Transform2D = @This();
 pos: Vec2 = .zero,
 /// The transform's local orientation.
 rot: Rotor2 = .identity,
+/// The transform's local scale.
+scale: Vec2 = .splat(1),
 /// The transform's world from model matrix.
 world_from_model: Mat2x3 = .identity,
 /// Whether or not this transform's space is relative to its parent.
@@ -69,6 +71,18 @@ pub fn setRot(self: *@This(), es: *const Entities, rot: Rotor2) void {
     self.sync(es);
 }
 
+/// Scales the local space by `factor` and then calls `sync`.
+pub fn scaleBy(self: *@This(), es: *const Entities, factor: Vec2) void {
+    self.scale = self.scale.compProd(factor);
+    self.sync(es);
+}
+
+/// Sets the local scale to `amount` and then calls `sync`.
+pub fn setScale(self: *@This(), es: *const Entities, amount: Vec2) void {
+    self.scale = amount;
+    self.sync(es);
+}
+
 /// Returns the world space position.
 pub inline fn getWorldPos(self: @This()) Vec2 {
     return self.world_from_model.getTranslation();
@@ -81,8 +95,9 @@ pub fn sync(self: *@This(), es: *const Entities) void {
     while (transforms.next(es)) |transform| {
         const translation: Mat2x3 = .translation(transform.pos);
         const rotation: Mat2x3 = .rotation(transform.rot);
+        const scale: Mat2x3 = .scale(transform.scale);
         const parent_world_from_model = transform.getRelativeWorldFromModel(es);
-        transform.world_from_model = rotation.applied(translation).applied(parent_world_from_model);
+        transform.world_from_model = scale.applied(rotation).applied(translation).applied(parent_world_from_model);
     }
 }
 
