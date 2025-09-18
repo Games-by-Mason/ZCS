@@ -84,8 +84,7 @@ fn run(input: []const u8, saturated: bool) !void {
     for (0..saturated_count) |_| {
         const e = Entity.reserveImmediate(&fz.es);
         try expect(e.destroyImmediate(&fz.es));
-        const Key = @FieldType(Entities, "handle_tab").Key;
-        const Generation = @FieldType(Key, "generation");
+        const Generation = zcs.HandleTab.Key.Generation;
         const invalid = @intFromEnum(Generation.invalid);
         fz.es.handle_tab.slots[e.key.index].generation = @enumFromInt(invalid -% 1);
         const e2 = Entity.reserveImmediate(&fz.es);

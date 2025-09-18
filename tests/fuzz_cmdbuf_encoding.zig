@@ -110,8 +110,7 @@ const OracleBatch = union(enum) {
 
 /// Pick a random entity from a small set.
 fn randomEntity(smith: *Smith) Entity {
-    const Key = @FieldType(Entity, "key");
-    const Generation = @FieldType(Key, "generation");
+    const Generation = zcs.HandleTab.Key.Generation;
     comptime assert(@intFromEnum(Generation.invalid) == 0);
     return .{
         .key = .{

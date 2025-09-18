@@ -32,7 +32,7 @@ const meta = zcs.meta;
 pub const Entity = packed struct {
     /// An entity without its generation. Used by some lower level APIs to save space where the
     /// safety of the generation is not needed, should not be stored long term outside of the ECS.
-    pub const Index = enum(@FieldType(HandleTab.Key, "index")) {
+    pub const Index = enum(HandleTab.Key.Index) {
         _,
 
         /// Converts the entity index to an `Entity` with the corresponding generation. Assumes that
