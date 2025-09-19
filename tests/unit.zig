@@ -1655,3 +1655,20 @@ test "destroyArchImmediate" {
 
     try expectEqual(true, e3_2.get(&es, bool).?.*);
 }
+
+test "eql" {
+    const a: Entity = .{ .key = .{ .index = 1, .generation = @enumFromInt(2) } };
+    const b: Entity = .{ .key = .{ .index = 2, .generation = @enumFromInt(2) } };
+    const c: Entity = .{ .key = .{ .index = 1, .generation = @enumFromInt(3) } };
+
+    try std.testing.expect(a.eql(a));
+    try std.testing.expect(!a.eql(b));
+    try std.testing.expect(!a.eql(c));
+
+    try std.testing.expect(a.toOptional().eql(a.toOptional()));
+    try std.testing.expect(!a.toOptional().eql(b.toOptional()));
+    try std.testing.expect(!a.toOptional().eql(c.toOptional()));
+    try std.testing.expect(!a.toOptional().eql(.none));
+    try std.testing.expect(!Entity.Optional.none.eql(a.toOptional()));
+    try std.testing.expect(Entity.Optional.none.eql(.none));
+}

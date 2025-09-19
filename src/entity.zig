@@ -93,9 +93,17 @@ pub const Entity = packed struct {
         pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
             return self.key.format(writer);
         }
+
+        pub fn eql(self: @This(), other: @This()) bool {
+            return self.key.eql(other.key);
+        }
     };
 
     key: HandleTab.Key,
+
+    pub fn eql(self: @This(), other: @This()) bool {
+        return self.key.eql(other.key);
+    }
 
     /// Pops a reserved entity.
     ///

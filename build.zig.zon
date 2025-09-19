@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.15.0-dev.388+05e217607",
     .dependencies = .{
         .slot_map = .{
-            .url = "git+https://github.com/Games-By-Mason/SlotMap#e127d5cd3cec65c80329bb891bc32739716753da",
-            .hash = "slot_map-0.0.0-xUe6_LhHAAAdTjXZU3j96IjbAgZF1VvDfpdXpptpxSPI",
+            .url = "git+https://github.com/Games-By-Mason/SlotMap#6e48aef4d8eba97a19648a8ef2ef870640e3be89",
+            .hash = "slot_map-0.0.0-xUe6_P9LAADyOAbtOkdbKklpyysJ-Ar1fchuvkL0TT04",
         },
         // Only used by extensions
         .geom = .{
