@@ -146,7 +146,7 @@ pub fn childIterator(self: *const @This()) ChildIterator {
 }
 
 /// An iterator over a node's immediate children.
-const ChildIterator = struct {
+pub const ChildIterator = struct {
     curr: Entity.Optional,
 
     /// Returns the next child, or `null` if there are none.
@@ -165,7 +165,7 @@ pub fn ancestorIterator(self: *const @This()) AncestorIterator {
 }
 
 /// An iterator over a node's ancestors.
-const AncestorIterator = struct {
+pub const AncestorIterator = struct {
     curr: Entity.Optional,
 
     /// Returns the next ancestor, or `null` if there are none.
