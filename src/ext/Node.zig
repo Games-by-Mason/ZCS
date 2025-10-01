@@ -116,6 +116,55 @@ pub fn setParentImmediate(self: *Node, es: *Entities, tr: *Tree, parent_opt: ?*N
     }
 }
 
+pub const InsertPosition = enum {
+    before,
+    after,
+};
+
+/// Similar to the `Insert`, but makes the change immediately.
+pub fn insert(self: *Node, es: *Entities, tr: *Tree, position: InsertPosition, other: *Node) void {
+    const pointer_lock = es.pointer_generation.lock();
+    defer pointer_lock.check(es.pointer_generation);
+
+    // If the relationship would result in a cycle, or parent and child are equal, early out.
+    if (self == other) return;
+    if (self.isAncestorOf(es, other)) return;
+
+    // Remove this node from the tree
+    pluckImmediate(self, es, tr);
+
+    // Add this node back to the tree in the new location
+    const self_entity = es.getEntity(self);
+    const other_entity = es.getEntity(other);
+
+    self.parent = other.parent;
+
+    switch (position) {
+        .after => {
+            self.next_sib = other.next_sib;
+            if (self.next_sib.unwrap()) |next_sib| {
+                next_sib.get(es, Node).?.prev_sib = self_entity.toOptional();
+            }
+            self.prev_sib = other_entity.toOptional();
+            other.next_sib = self_entity.toOptional();
+        },
+        .before => {
+            self.prev_sib = other.prev_sib;
+            if (self.prev_sib.unwrap()) |prev_sib| {
+                prev_sib.get(es, Node).?.next_sib = self_entity.toOptional();
+            } else if (self.getParent(es)) |parent| {
+                assert(parent.first_child == other_entity.toOptional());
+                parent.first_child = self_entity.toOptional();
+            } else {
+                assert(tr.first_child == other_entity.toOptional());
+                tr.first_child = self_entity.toOptional();
+            }
+            self.next_sib = other_entity.toOptional();
+            other.prev_sib = self_entity.toOptional();
+        },
+    }
+}
+
 /// Destroys a node, its entity, and all of its children. This behavior occurs automatically via
 /// `exec` when an entity with an entity with a node is destroyed.
 ///
@@ -199,22 +248,9 @@ pub fn isAncestorOf(self: *const @This(), es: *const Entities, descendant: *cons
 }
 
 /// Returns an iterator over the node's immediate children.
-pub fn childIterator(self: *const @This()) ChildIterator {
+pub fn childIterator(self: *const @This()) SiblingIterator {
     return .{ .curr = self.first_child };
 }
-
-/// An iterator over a node's immediate children.
-pub const ChildIterator = struct {
-    curr: Entity.Optional,
-
-    /// Returns the next child, or `null` if there are none.
-    pub fn next(self: *@This(), es: *const Entities) ?*Node {
-        const entity = self.curr.unwrap() orelse return null;
-        const node = entity.get(es, Node).?;
-        self.curr = node.next_sib;
-        return node;
-    }
-};
 
 /// Returns an iterator over the node's ancestors. The iterator starts at the parent, if any, and
 /// then, follows the parent chain until it hits a node with no parent.
@@ -231,6 +267,24 @@ pub const AncestorIterator = struct {
         const entity = self.curr.unwrap() orelse return null;
         const node = entity.get(es, Node).?;
         self.curr = node.parent;
+        return node;
+    }
+};
+
+/// Returns an iterator over the node and its it's upcoming siblings.
+pub fn siblingIterator(self: *const @This(), es: *Entities) SiblingIterator {
+    return .{ .curr = es.getEntity(self).toOptional() };
+}
+
+/// An iterator over a node and it's upcoming siblings.
+pub const SiblingIterator = struct {
+    curr: Entity.Optional,
+
+    /// Returns the next sibling, or `null` if there are none.
+    pub fn next(self: *@This(), es: *const Entities) ?*Node {
+        const entity = self.curr.unwrap() orelse return null;
+        const node = entity.get(es, Node).?;
+        self.curr = node.next_sib;
         return node;
     }
 };

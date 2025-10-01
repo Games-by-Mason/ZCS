@@ -86,6 +86,7 @@ test "immediate" {
     try expect(!child_1.get(&es, Node).?.isAncestorOf(&es, child_2.get(&es, Node).?));
 
     var children = parent.get(&es, Node).?.childIterator();
+    try expectEqual(parent.get(&es, Node).?.first_child.unwrap().?.get(&es, Node).?.siblingIterator(&es), children);
     try expectEqualEntity(child_1, es.getEntity(children.next(&es).?));
     try expectEqualEntity(child_2, es.getEntity(children.next(&es).?));
     try expectEqual(null, children.next(&es));
@@ -210,9 +211,11 @@ fn fuzzNodes(_: void, input: []const u8) !void {
             reserve,
             set_parent,
             destroy,
+            insert,
         })) {
             .reserve => try reserve(&fz, &o),
             .set_parent => try setParent(&fz, &tr, &o),
+            .insert => try insert(&fz, &tr, &o),
             .destroy => if (fz.smith.next(bool)) {
                 try destroy(&fz, &tr, &o);
             } else {
@@ -379,7 +382,7 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle, tr: *const Node.Tree, extra_reserv
         // Check the parent
         const node = entry.key_ptr.get(&fz.es, Node);
         const parent: Entity.Optional = if (entry.value_ptr.node) |n| n.parent else .none;
-        const actual = if (entry.value_ptr.node) |n| n.parent else Entity.Optional.none;
+        const actual = if (node) |n| n.parent else Entity.Optional.none;
         try expectEqualEntity(actual, parent);
 
         // Check the children. We don't bother checking for dups since they would result in
@@ -542,6 +545,31 @@ fn setParent(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
     try setParentInOracle(fz, o, child, parent);
 }
 
+fn insert(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
+    // Get a random self, loc and operation
+    const self = fz.randomEntity().unwrap() orelse return;
+    const other = fz.randomEntity().unwrap() orelse return;
+    const position = fz.smith.next(Node.InsertPosition);
+
+    if (log) std.debug.print("insert {f} {t} {f}\n", .{ self, position, other });
+
+    if (!self.exists(&fz.es)) return;
+    if (!other.exists(&fz.es)) return;
+    const self_node = (self.viewOrAddImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
+    if (self_node.uninitialized(&fz.es, tr)) {
+        self_node.init(&fz.es, tr);
+        try o.roots.put(gpa, self, {});
+    }
+    const other_node = (other.viewOrAddImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
+    if (other_node.uninitialized(&fz.es, tr)) {
+        other_node.init(&fz.es, tr);
+        try o.roots.put(gpa, other, {});
+    }
+
+    self_node.insert(&fz.es, tr, position, other_node);
+    try insertInOracle(fz, o, self, position, other);
+}
+
 fn setParentCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
     // Get a random parent and child
     const parent = fz.randomEntity();
@@ -588,27 +616,100 @@ fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Opti
 
     // Unparent the child
     _ = o.roots.orderedRemove(child);
-    if (child_o.node) |*child_o_node| {
-        const prev_parent = child_o_node.parent;
-        if (prev_parent.unwrap()) |unwrapped| {
-            const prev_parent_o = o.entities.getPtr(unwrapped).?;
-            try expect(prev_parent_o.node.?.children.orderedRemove(child));
-        }
-        child_o_node.parent = .none;
+    const child_o_node = &child_o.node.?;
+    const prev_parent = child_o_node.parent;
+    if (prev_parent.unwrap()) |unwrapped| {
+        const prev_parent_o = o.entities.getPtr(unwrapped).?;
+        try expect(prev_parent_o.node.?.children.orderedRemove(child));
+    }
+    child_o_node.parent = .none;
 
-        // Set the parent
-        if (parent.unwrap()) |unwrapped| {
-            if (unwrapped.exists(&fz.es)) {
-                child_o_node.parent = unwrapped.toOptional();
-                if (o.entities.getPtr(unwrapped).?.node == null) {
-                    o.entities.getPtr(unwrapped).?.node = .{};
-                }
-                try o.entities.getPtr(unwrapped).?.node.?.children.put(gpa, child, {});
+    // Set the parent
+    if (parent.unwrap()) |unwrapped| {
+        if (unwrapped.exists(&fz.es)) {
+            child_o_node.parent = unwrapped.toOptional();
+            if (o.entities.getPtr(unwrapped).?.node == null) {
+                o.entities.getPtr(unwrapped).?.node = .{};
             }
-            _ = o.roots.orderedRemove(child);
-        } else {
-            try o.roots.put(gpa, child, {});
+            try o.entities.getPtr(unwrapped).?.node.?.children.put(gpa, child, {});
         }
+        _ = o.roots.orderedRemove(child);
+    } else {
+        try o.roots.put(gpa, child, {});
+    }
+}
+
+fn insertInOracle(
+    fz: *Fuzzer,
+    o: *Oracle,
+    self: Entity,
+    position: Node.InsertPosition,
+    other: Entity,
+) !void {
+    // Get the oracle entity, adding a node if needed
+    const self_o = o.entities.getPtr(self).?;
+    if (self_o.node == null) {
+        self_o.node = .{};
+        try o.roots.put(gpa, self, {});
+    }
+
+    const other_o = o.entities.getPtr(other).?;
+    if (other_o.node == null) {
+        other_o.node = .{};
+        try o.roots.put(gpa, other, {});
+    }
+
+    // Early out if self and other are the same entity
+    if (self == other) return;
+
+    // Early out if self doesn't exist
+    if (!o.entities.contains(self)) return;
+
+    // If other doesn't exist, destroy self and early out
+    if (!o.entities.contains(other)) {
+        return destroyInOracle(fz, o, self);
+    }
+
+    // If self is an ancestor of other, early out
+    if (try isAncestorOf(fz, o, self, other)) {
+        return;
+    }
+
+    // Get the oracle nodes
+    const self_node = &self_o.node.?;
+    const other_node = &other_o.node.?;
+
+    // Unparent the child
+    _ = o.roots.orderedRemove(self);
+    const prev_parent = self_node.parent;
+    if (prev_parent.unwrap()) |unwrapped| {
+        const prev_parent_o = o.entities.getPtr(unwrapped).?;
+        try expect(prev_parent_o.node.?.children.orderedRemove(self));
+    }
+    self_node.parent = .none;
+
+    // Insert the child at the new location
+    self_node.parent = other_node.parent;
+    const children = if (other_node.parent.unwrap()) |parent|
+        &o.entities.getPtr(parent).?.node.?.children
+    else
+        &o.roots;
+    // Offsets flipped since we push to the front of the children linked list, not the back
+    const index = children.getIndex(other).? + switch (position) {
+        .after => @as(usize, 0),
+        .before => @as(usize, 1),
+    };
+    if (index == children.count()) {
+        // Add to the end of the map
+        try children.put(gpa, self, {});
+    } else {
+        // Insert in the middle of the map and re-index
+        try children.entries.insert(gpa, index, .{
+            .key = self,
+            .value = {},
+            .hash = undefined, // Will be initialized by `reIndex`
+        });
+        try children.reIndex(gpa);
     }
 }
 
