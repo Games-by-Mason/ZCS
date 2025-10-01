@@ -216,7 +216,7 @@ fn fuzzNodes(_: void, input: []const u8) !void {
             },
         }
 
-        try checkOracle(&fz, &o);
+        try checkOracle(&fz, &o, 0);
     }
 }
 
@@ -239,7 +239,7 @@ fn fuzzNodeCycles(_: void, input: []const u8) !void {
 
     while (!fz.smith.isEmpty()) {
         try setParent(&fz, &tr, &o);
-        try checkOracle(&fz, &o);
+        try checkOracle(&fz, &o, 0);
     }
 }
 
@@ -267,6 +267,19 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
     });
     defer cb.deinit(gpa, &fz.es);
 
+    var reserve_cb: CmdBuf = try .init(.{
+        .name = null,
+        .gpa = gpa,
+        .es = &fz.es,
+        .cap = .{
+            .cmds = 4,
+            .data = .{ .bytes_per_cmd = @sizeOf(Node) },
+            .reserved_entities = 1,
+        },
+        .warn_ratio = 1,
+    });
+    defer reserve_cb.deinit(gpa, &fz.es);
+
     while (!fz.smith.isEmpty()) {
         for (0..fz.smith.nextLessThan(u16, cmds_capacity)) |_| {
             switch (fz.smith.next(enum {
@@ -274,7 +287,7 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
                 set_parent,
                 destroy,
             })) {
-                .reserve => try reserveCmd(&fz, &o),
+                .reserve => try reserveCmd(&fz, &o, &reserve_cb, &tr),
                 .set_parent => try setParentCmd(&fz, &o, &cb),
                 .destroy => if (fz.smith.next(bool)) {
                     try destroyCmd(&fz, &o, &cb);
@@ -285,7 +298,7 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
         }
 
         Node.Exec.immediate(&fz.es, &cb, &tr);
-        try checkOracle(&fz, &o);
+        try checkOracle(&fz, &o, 1);
     }
 }
 
@@ -322,15 +335,15 @@ fn fuzzNodeCyclesCmdBuf(_: void, input: []const u8) !void {
         }
 
         Node.Exec.immediate(&fz.es, &cb, &tr);
-        try checkOracle(&fz, &o);
+        try checkOracle(&fz, &o, 0);
     }
 }
 
-fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
+fn checkOracle(fz: *Fuzzer, o: *const Oracle, extra_reserved: usize) !void {
     if (log) std.debug.print("check oracle\n", .{});
 
     // Check the total entity count
-    if (o.entities.count() != fz.es.count() + fz.es.reserved()) {
+    if (o.entities.count() != fz.es.count() + fz.es.reserved() - extra_reserved) {
         std.debug.print("oracle count: {}\n", .{o.entities.count()});
         std.debug.print("entities: count={} + reserved={} = {}\n", .{
             fz.es.count(),
@@ -354,7 +367,7 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle) !void {
             }
         }
     }
-    try expectEqual(o.entities.count(), fz.es.count() + fz.es.reserved());
+    try expectEqual(o.entities.count(), fz.es.count() + fz.es.reserved() - extra_reserved);
 
     // Check each entity
     var iterator = o.entities.iterator();
@@ -460,9 +473,17 @@ fn reserve(fz: *Fuzzer, o: *Oracle) !void {
     try o.entities.put(gpa, entity, .{});
 }
 
-fn reserveCmd(fz: *Fuzzer, o: *Oracle) !void {
-    const entity = (try fz.reserveImmediate()).unwrap() orelse return;
-    try o.entities.put(gpa, entity, .{});
+fn reserveCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf, tr: *Node.Tree) !void {
+    // We reserve with a command buffer to exercise the `afterArchChangeImmediate` code in the test
+    const entity: Entity = .reserve(cb);
+    if (fz.smith.next(bool)) {
+        entity.add(cb, Node, .{});
+        try o.entities.put(gpa, entity, .{ .node = .{} });
+    } else {
+        entity.commit(cb);
+        try o.entities.put(gpa, entity, .{});
+    }
+    Node.Exec.immediate(&fz.es, cb, tr);
 }
 
 fn isAncestorOf(fz: *Fuzzer, o: *Oracle, ancestor: Entity, descendant: Entity) !bool {
