@@ -116,13 +116,14 @@ pub fn setParentImmediate(self: *Node, es: *Entities, tr: *Tree, parent_opt: ?*N
     }
 }
 
-pub const InsertPosition = enum {
-    before,
-    after,
-};
-
 /// Similar to the `Insert`, but makes the change immediately.
-pub fn insert(self: *Node, es: *Entities, tr: *Tree, position: InsertPosition, other: *Node) void {
+pub fn insert(
+    self: *Node,
+    es: *Entities,
+    tr: *Tree,
+    relative: std.meta.Tag(Insert.Position),
+    other: *Node,
+) void {
     const pointer_lock = es.pointer_generation.lock();
     defer pointer_lock.check(es.pointer_generation);
 
@@ -139,7 +140,7 @@ pub fn insert(self: *Node, es: *Entities, tr: *Tree, position: InsertPosition, o
 
     self.parent = other.parent;
 
-    switch (position) {
+    switch (relative) {
         .after => {
             self.next_sib = other.next_sib;
             if (self.next_sib.unwrap()) |next_sib| {
@@ -398,6 +399,28 @@ pub const SetParent = struct {
     parent: Entity.Optional,
 };
 
+/// Encodes a command that requests to insert self relative to other.
+///
+/// * If the relationship would result in a cycle, self and other are equal, or self no longer
+///   exists, then no change is made.
+/// * If other no longer exists, self is destroyed.
+pub const Insert = struct {
+    pub const Position = union(enum) {
+        before: Entity,
+        after: Entity,
+
+        pub fn entity(self: @This()) Entity {
+            return switch (self) {
+                .before => |e| e,
+                .after => |e| e,
+            };
+        }
+    };
+
+    entity: Entity,
+    position: Position,
+};
+
 /// `Exec` provides helpers for processing hierarchy changes via the command buffer.
 ///
 /// By convention, `exec` only calls into the stable public interface of the types it's working
@@ -464,16 +487,16 @@ pub const Exec = struct {
         tr: *Tree,
         payload: Any,
     ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
-        if (payload.as(SetParent)) |set_parent| {
+        if (payload.as(SetParent)) |args| {
             // Get or add node the parent and child
-            const child_node = try set_parent.child.getOrAddImmediateOrErr(es, Node, .{});
+            const child_node = try args.child.getOrAddImmediateOrErr(es, Node, .{});
             if (child_node) |child| {
                 if (child.uninitialized(es, tr)) {
                     child.init(es, tr);
                 }
             }
 
-            const parent_node = if (set_parent.parent.unwrap()) |parent|
+            const parent_node = if (args.parent.unwrap()) |parent|
                 try parent.getOrAddImmediateOrErr(es, Node, .{})
             else
                 null;
@@ -488,12 +511,38 @@ pub const Exec = struct {
                 if (parent_node) |parent| {
                     // Set as the child's parent
                     child.setParentImmediate(es, tr, parent);
-                } else if (set_parent.parent.unwrap() == null) {
+                } else if (args.parent.unwrap() == null) {
                     // Clear the child's parent
                     child.setParentImmediate(es, tr, null);
                 } else {
                     // The parent has since been deleted, destroy the child
                     child.destroyImmediate(es, tr);
+                }
+            }
+        } else if (payload.as(Insert)) |args| {
+            // Get or add node the self and other
+            const self_node = try args.entity.getOrAddImmediateOrErr(es, Node, .{});
+            if (self_node) |self| {
+                if (self.uninitialized(es, tr)) {
+                    self.init(es, tr);
+                }
+            }
+
+            const other_node = try args.position.entity().getOrAddImmediateOrErr(es, Node, .{});
+            if (other_node) |other| {
+                if (other.uninitialized(es, tr)) {
+                    other.init(es, tr);
+                }
+            }
+
+            // Set up the relationship
+            if (self_node) |self| {
+                if (other_node) |other| {
+                    // Set up the relationship
+                    self.insert(es, tr, std.meta.activeTag(args.position), other);
+                } else {
+                    // Other has since been deleted, destroy the child
+                    self.destroyImmediate(es, tr);
                 }
             }
         }

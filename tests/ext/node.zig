@@ -15,6 +15,7 @@ const CompFlag = zcs.CompFlag;
 const CmdBuf = zcs.CmdBuf;
 const Node = zcs.ext.Node;
 const SetParent = zcs.ext.Node.SetParent;
+const Insert = zcs.ext.Node.Insert;
 const typeId = zcs.typeId;
 
 const gpa = std.testing.allocator;
@@ -292,10 +293,12 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
             switch (fz.smith.next(enum {
                 reserve,
                 set_parent,
+                insert,
                 destroy,
             })) {
                 .reserve => try reserveCmd(&fz, &o, &reserve_cb, &tr),
                 .set_parent => try setParentCmd(&fz, &o, &cb),
+                .insert => try insertCmd(&fz, &o, &cb),
                 .destroy => if (fz.smith.next(bool)) {
                     try destroyCmd(&fz, &o, &cb);
                 } else {
@@ -549,9 +552,9 @@ fn insert(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
     // Get a random self, loc and operation
     const self = fz.randomEntity().unwrap() orelse return;
     const other = fz.randomEntity().unwrap() orelse return;
-    const position = fz.smith.next(Node.InsertPosition);
+    const relative = fz.smith.next(std.meta.Tag(Node.Insert.Position));
 
-    if (log) std.debug.print("insert {f} {t} {f}\n", .{ self, position, other });
+    if (log) std.debug.print("insert {f} {t} {f}\n", .{ self, relative, other });
 
     if (!self.exists(&fz.es)) return;
     if (!other.exists(&fz.es)) return;
@@ -566,8 +569,8 @@ fn insert(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
         try o.roots.put(gpa, other, {});
     }
 
-    self_node.insert(&fz.es, tr, position, other_node);
-    try insertInOracle(fz, o, self, position, other);
+    self_node.insert(&fz.es, tr, relative, other_node);
+    try insertInOracle(fz, o, self, relative, other);
 }
 
 fn setParentCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
@@ -578,6 +581,20 @@ fn setParentCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
 
     cb.ext(SetParent, .{ .child = child, .parent = parent });
     try setParentInOracle(fz, o, child, parent);
+}
+
+fn insertCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
+    // Get a self and other
+    const self = fz.randomEntity().unwrap() orelse return;
+    const other = fz.randomEntity().unwrap() orelse return;
+    const relative = fz.smith.next(std.meta.Tag(Node.Insert.Position));
+    if (log) std.debug.print("insert {f} {t} {f}\n", .{ self, relative, other });
+
+    cb.ext(Insert, .{ .entity = self, .position = switch (relative) {
+        .before => .{ .before = other },
+        .after => .{ .after = other },
+    } });
+    try insertInOracle(fz, o, self, relative, other);
 }
 
 fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Optional) !void {
@@ -643,7 +660,7 @@ fn insertInOracle(
     fz: *Fuzzer,
     o: *Oracle,
     self: Entity,
-    position: Node.InsertPosition,
+    relative: std.meta.Tag(Node.Insert.Position),
     other: Entity,
 ) !void {
     // Get the oracle entity, adding a node if needed
@@ -695,7 +712,7 @@ fn insertInOracle(
     else
         &o.roots;
     // Offsets flipped since we push to the front of the children linked list, not the back
-    const index = children.getIndex(other).? + switch (position) {
+    const index = children.getIndex(other).? + switch (relative) {
         .after => @as(usize, 0),
         .before => @as(usize, 1),
     };
