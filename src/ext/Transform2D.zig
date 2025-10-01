@@ -163,8 +163,8 @@ pub const PreOrderIterator = struct {
 /// use them as reference for implementing your own command buffer iterator.
 pub const Exec = struct {
     /// Similar to `Node.Exec.immediate`, but marks transforms as dirty as needed.
-    pub fn immediate(es: *Entities, cb: *CmdBuf) void {
-        immediateOrErr(es, cb) catch |err|
+    pub fn immediate(es: *Entities, cb: *CmdBuf, tr: *Node.Tree) void {
+        immediateOrErr(es, cb, tr) catch |err|
             @panic(@errorName(err));
     }
 
@@ -173,6 +173,7 @@ pub const Exec = struct {
     pub fn immediateOrErr(
         es: *Entities,
         cb: *CmdBuf,
+        tr: *Node.Tree,
     ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow, ZcsEntityOverflow }!void {
         var default_exec: CmdBuf.Exec = .init();
 
@@ -186,7 +187,7 @@ pub const Exec = struct {
                         var delta: CmdBuf.Batch.ArchChange.Delta = .{};
                         var ops = arch_change.iterator();
                         while (ops.next()) |op| {
-                            Node.Exec.beforeArchChangeImmediate(es, arch_change, op);
+                            Node.Exec.beforeArchChangeImmediate(es, tr, arch_change, op);
                             delta.updateImmediate(op);
                         }
 
@@ -196,12 +197,12 @@ pub const Exec = struct {
                     {
                         var ops = arch_change.iterator();
                         while (ops.next()) |op| {
-                            afterArchChangeImmediate(es, arch_change, op);
+                            afterArchChangeImmediate(es, tr, arch_change, op);
                         }
                     }
                 },
                 .ext => |ext| {
-                    try extImmediateOrErr(es, ext);
+                    try extImmediateOrErr(es, tr, ext);
                     default_exec.extImmediateOrErr(ext);
                 },
             }
@@ -213,22 +214,24 @@ pub const Exec = struct {
     /// Call this after executing a command.
     pub inline fn afterArchChangeImmediate(
         es: *Entities,
-        batch: CmdBuf.Batch.ArchChange,
+        tr: *Node.Tree,
+        arch_change: CmdBuf.Batch.ArchChange,
         op: CmdBuf.Batch.ArchChange.Op,
     ) void {
+        Node.Exec.afterArchChangeImmediate(es, tr, arch_change, op);
         switch (op) {
             .add => |comp| if (comp.id == typeId(Transform2D)) {
-                if (batch.entity.get(es, Transform2D)) |transform| {
+                if (arch_change.entity.get(es, Transform2D)) |transform| {
                     transform.sync(es);
                 }
             },
             .remove => |id| {
                 if (id == typeId(Node)) {
-                    if (batch.entity.get(es, Transform2D)) |transform| {
+                    if (arch_change.entity.get(es, Transform2D)) |transform| {
                         transform.sync(es);
                     }
                 } else if (id == typeId(Transform2D)) {
-                    if (batch.entity.get(es, Node)) |node| {
+                    if (arch_change.entity.get(es, Node)) |node| {
                         var children = node.childIterator();
                         while (children.next(es)) |child| {
                             if (es.getComp(child, Transform2D)) |child_transform| {
@@ -245,9 +248,10 @@ pub const Exec = struct {
     /// Call this to process an extension command.
     pub inline fn extImmediateOrErr(
         es: *Entities,
+        tr: *Node.Tree,
         payload: Any,
     ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
-        try Node.Exec.extImmediateOrErr(es, payload);
+        try Node.Exec.extImmediateOrErr(es, tr, payload);
         if (payload.as(Node.SetParent)) |set_parent| {
             if (set_parent.child.get(es, Transform2D)) |transform| {
                 transform.sync(es);

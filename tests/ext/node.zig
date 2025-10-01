@@ -40,6 +40,8 @@ test "immediate" {
     });
     defer es.deinit(gpa);
 
+    var tr: Node.Tree = .empty;
+
     const empty = Entity.reserveImmediate(&es);
     try expect(empty.changeArchImmediate(
         &es,
@@ -49,21 +51,26 @@ test "immediate" {
             Model.interned[0],
         } },
     ));
+    empty.get(&es, Node).?.init(&es, &tr);
     const parent = Entity.reserveImmediate(&es);
     try expect(parent.changeArchImmediate(&es, struct { Node }, .{ .add = .{Node{}} }));
+    parent.get(&es, Node).?.init(&es, &tr);
     const child_1 = Entity.reserveImmediate(&es);
     try expect(child_1.changeArchImmediate(&es, struct { Node }, .{ .add = .{Node{}} }));
+    child_1.get(&es, Node).?.init(&es, &tr);
     const child_2 = Entity.reserveImmediate(&es);
     try expect(child_2.changeArchImmediate(&es, struct { Node }, .{ .add = .{Node{}} }));
+    child_2.get(&es, Node).?.init(&es, &tr);
     const descendant = Entity.reserveImmediate(&es);
     try expect(descendant.changeArchImmediate(&es, struct { Node }, .{ .add = .{Node{}} }));
+    descendant.get(&es, Node).?.init(&es, &tr);
 
     // Make sure this compiles
     try expectEqual(es.getEntity(empty.get(&es, Node).?).get(&es, Model), empty.get(&es, Model).?);
 
-    child_2.get(&es, Node).?.setParentImmediate(&es, parent.get(&es, Node).?);
-    child_1.get(&es, Node).?.setParentImmediate(&es, parent.get(&es, Node).?);
-    descendant.get(&es, Node).?.setParentImmediate(&es, child_1.get(&es, Node).?);
+    child_2.get(&es, Node).?.setParentImmediate(&es, &tr, parent.get(&es, Node).?);
+    child_1.get(&es, Node).?.setParentImmediate(&es, &tr, parent.get(&es, Node).?);
+    descendant.get(&es, Node).?.setParentImmediate(&es, &tr, child_1.get(&es, Node).?);
 
     try expect(!empty.get(&es, Node).?.isAncestorOf(&es, child_1.get(&es, Node).?));
     try expect(!child_1.get(&es, Node).?.isAncestorOf(&es, empty.get(&es, Node).?));
@@ -83,7 +90,7 @@ test "immediate" {
     try expectEqualEntity(child_2, es.getEntity(children.next(&es).?));
     try expectEqual(null, children.next(&es));
 
-    parent.get(&es, Node).?.destroyImmediate(&es);
+    parent.get(&es, Node).?.destroyImmediate(&es, &tr);
     try expect(!parent.exists(&es));
     try expect(!child_1.exists(&es));
     try expect(!child_2.exists(&es));
@@ -186,6 +193,8 @@ const Oracle = struct {
 fn fuzzNodes(_: void, input: []const u8) !void {
     defer CompFlag.unregisterAll();
 
+    var tr: Node.Tree = .empty;
+
     var fz: Fuzzer = try .init(input);
     defer fz.deinit();
 
@@ -199,11 +208,11 @@ fn fuzzNodes(_: void, input: []const u8) !void {
             destroy,
         })) {
             .reserve => try reserve(&fz, &o),
-            .set_parent => try setParent(&fz, &o),
+            .set_parent => try setParent(&fz, &tr, &o),
             .destroy => if (fz.smith.next(bool)) {
-                try destroy(&fz, &o);
+                try destroy(&fz, &tr, &o);
             } else {
-                try remove(&fz, &o);
+                try remove(&fz, &tr, &o);
             },
         }
 
@@ -219,6 +228,8 @@ fn fuzzNodeCycles(_: void, input: []const u8) !void {
     var fz: Fuzzer = try .init(input);
     defer fz.deinit();
 
+    var tr: Node.Tree = .empty;
+
     var o: Oracle = .init();
     defer o.deinit();
 
@@ -227,7 +238,7 @@ fn fuzzNodeCycles(_: void, input: []const u8) !void {
     }
 
     while (!fz.smith.isEmpty()) {
-        try setParent(&fz, &o);
+        try setParent(&fz, &tr, &o);
         try checkOracle(&fz, &o);
     }
 }
@@ -241,6 +252,8 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
 
     var o: Oracle = .init();
     defer o.deinit();
+
+    var tr: Node.Tree = .empty;
 
     var cb: CmdBuf = try .init(.{
         .name = null,
@@ -271,7 +284,7 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
             }
         }
 
-        Node.Exec.immediate(&fz.es, &cb);
+        Node.Exec.immediate(&fz.es, &cb, &tr);
         try checkOracle(&fz, &o);
     }
 }
@@ -284,6 +297,8 @@ fn fuzzNodeCyclesCmdBuf(_: void, input: []const u8) !void {
 
     var o: Oracle = .init();
     defer o.deinit();
+
+    var tr: Node.Tree = .empty;
 
     var cb: CmdBuf = try .init(.{
         .name = null,
@@ -306,7 +321,7 @@ fn fuzzNodeCyclesCmdBuf(_: void, input: []const u8) !void {
             try setParentCmd(&fz, &o, &cb);
         }
 
-        Node.Exec.immediate(&fz.es, &cb);
+        Node.Exec.immediate(&fz.es, &cb, &tr);
         try checkOracle(&fz, &o);
     }
 }
@@ -461,7 +476,7 @@ fn isAncestorOf(fz: *Fuzzer, o: *Oracle, ancestor: Entity, descendant: Entity) !
     }
 }
 
-fn setParent(fz: *Fuzzer, o: *Oracle) !void {
+fn setParent(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
     // Get a random parent and child
     const parent = fz.randomEntity();
     const child = fz.randomEntity().unwrap() orelse return;
@@ -470,10 +485,13 @@ fn setParent(fz: *Fuzzer, o: *Oracle) !void {
     if (parent.unwrap()) |p| if (!p.exists(&fz.es)) return;
     if (!child.exists(&fz.es)) return;
     const child_node = (child.viewOrAddImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
+    if (child_node.uninitialized(&fz.es, tr)) child_node.init(&fz.es, tr);
     const parent_node = if (parent.unwrap()) |p| b: {
-        break :b (p.viewOrAddImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
+        const n = (p.viewOrAddImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
+        if (n.uninitialized(&fz.es, tr)) n.init(&fz.es, tr);
+        break :b n;
     } else null;
-    child_node.setParentImmediate(&fz.es, parent_node);
+    child_node.setParentImmediate(&fz.es, tr, parent_node);
     try setParentInOracle(fz, o, child, parent);
 }
 
@@ -532,7 +550,7 @@ fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Opti
     }
 }
 
-fn destroy(fz: *Fuzzer, o: *Oracle) !void {
+fn destroy(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
     if (fz.shouldSkipDestroy()) return;
 
     // Get a random entity
@@ -541,7 +559,7 @@ fn destroy(fz: *Fuzzer, o: *Oracle) !void {
 
     // Destroy the real entity
     if (entity.get(&fz.es, Node)) |node| {
-        _ = node.destroyImmediate(&fz.es);
+        _ = node.destroyImmediate(&fz.es, tr);
     } else {
         _ = entity.destroyImmediate(&fz.es);
     }
@@ -550,7 +568,7 @@ fn destroy(fz: *Fuzzer, o: *Oracle) !void {
     try destroyInOracle(fz, o, entity);
 }
 
-fn remove(fz: *Fuzzer, o: *Oracle) !void {
+fn remove(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
     if (fz.shouldSkipDestroy()) return;
 
     // Get a random entity
@@ -559,7 +577,7 @@ fn remove(fz: *Fuzzer, o: *Oracle) !void {
 
     // Remove from the real entity
     if (entity.get(&fz.es, Node)) |node| {
-        _ = node.destroyChildrenAndUnparentImmediate(&fz.es);
+        _ = node.destroyChildrenAndPluckImmediate(&fz.es, tr);
         _ = entity.changeArchImmediate(&fz.es, struct {}, .{
             .add = .{},
             .remove = CompFlag.Set.initOne(CompFlag.registerImmediate(typeId(Node))),

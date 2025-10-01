@@ -22,10 +22,44 @@ const Zone = tracy.Zone;
 
 const Node = @This();
 
+pub const Tree = struct {
+    pub const empty: @This() = .{ .first_child = .none };
+    first_child: Entity.Optional,
+
+    pub fn getFirstChild(self: @This(), es: *Entities) ?*Node {
+        const entity = self.first_child.unwrap() orelse return null;
+        return entity.get(es, Node).?;
+    }
+};
+
 parent: Entity.Optional = .none,
 first_child: Entity.Optional = .none,
 prev_sib: Entity.Optional = .none,
 next_sib: Entity.Optional = .none,
+
+/// Initializes this node. Called automatically by the command buffer API, must be called manually
+/// before using a node if working with the immediate API.
+pub fn init(self: *@This(), es: *Entities, tr: *Tree) void {
+    assert(self.uninitialized(es, tr));
+    const entity = es.getEntity(self);
+    self.next_sib = tr.first_child;
+    if (tr.getFirstChild(es)) |fc| fc.prev_sib = entity.toOptional();
+    tr.first_child = entity.toOptional();
+}
+
+/// Returns true if this node has not yet been initialized.
+pub fn uninitialized(self: *const @This(), es: *const Entities, tr: *const Tree) bool {
+    const entity = es.getEntity(self);
+    if (self.parent.unwrap() == null and
+        self.prev_sib.unwrap() == null and
+        tr.first_child != entity.toOptional())
+    {
+        assert(self.next_sib.unwrap() == null);
+        assert(self.first_child.unwrap() == null);
+        return true;
+    }
+    return false;
+}
 
 /// Returns the parent node, or null if none exists.
 pub fn getParent(self: *const @This(), es: *const Entities) ?*Node {
@@ -52,7 +86,7 @@ pub fn getNextSib(self: *const @This(), es: *const Entities) ?*Node {
 }
 
 /// Similar to the `SetParent` command, but sets the parent immediately.
-pub fn setParentImmediate(self: *Node, es: *Entities, parent_opt: ?*Node) void {
+pub fn setParentImmediate(self: *Node, es: *Entities, tr: *Tree, parent_opt: ?*Node) void {
     const pointer_lock = es.pointer_generation.lock();
     defer pointer_lock.check(es.pointer_generation);
 
@@ -62,22 +96,10 @@ pub fn setParentImmediate(self: *Node, es: *Entities, parent_opt: ?*Node) void {
         if (self.isAncestorOf(es, parent)) return;
     }
 
-    // Unparent the child
-    if (self.getParent(es)) |curr_parent| {
-        if (self.getPrevSib(es)) |prev_sib| {
-            prev_sib.next_sib = self.next_sib;
-        } else {
-            curr_parent.first_child = self.next_sib;
-        }
-        if (self.next_sib.unwrap()) |next_sib| {
-            next_sib.get(es, Node).?.prev_sib = self.prev_sib;
-            self.next_sib = .none;
-        }
-        self.prev_sib = .none;
-        self.parent = .none;
-    }
+    // Remove this node from the tree
+    pluckImmediate(self, es, tr);
 
-    // Set the new parent
+    // Add this node back to the tree with the new parent
     if (parent_opt) |parent| {
         self.parent = es.getEntity(parent).toOptional();
         self.next_sib = parent.first_child;
@@ -86,6 +108,11 @@ pub fn setParentImmediate(self: *Node, es: *Entities, parent_opt: ?*Node) void {
             first_child.get(es, Node).?.prev_sib = child_entity.toOptional();
         }
         parent.first_child = child_entity.toOptional();
+    } else {
+        const child = es.getEntity(self);
+        self.next_sib = tr.first_child;
+        if (tr.getFirstChild(es)) |fc| fc.prev_sib = child.toOptional();
+        tr.first_child = child.toOptional();
     }
 }
 
@@ -93,22 +120,53 @@ pub fn setParentImmediate(self: *Node, es: *Entities, parent_opt: ?*Node) void {
 /// `exec` when an entity with an entity with a node is destroyed.
 ///
 /// Invalidates pointers.
-pub fn destroyImmediate(unstable_ptr: *@This(), es: *Entities) void {
+pub fn destroyImmediate(unstable_ptr: *@This(), es: *Entities, tr: *Tree) void {
     // Cache the entity handle since we're about to invalidate pointers
     const e = es.getEntity(unstable_ptr);
 
     // Destroy the children and unparent this node
-    unstable_ptr.destroyChildrenAndUnparentImmediate(es);
+    unstable_ptr.destroyChildrenAndPluckImmediate(es, tr);
 
     // Destroy the entity
     assert(e.destroyImmediate(es));
 }
 
-/// Destroys a node's children and then unparents it. This behavior occurs automatically via `exec`
-/// when a node is removed from an entity.
+/// Intended for internal use, but may have advanced external uses. Removes this node from its
+/// parents without adding it to the root of the tree. To result in a well formed tree, you must
+/// follow this up by destroying the entity, removing the node, or replacing it elsewhere in the
+/// tree.
+fn pluckImmediate(self: *@This(), es: *Entities, tr: *Tree) void {
+    // Update the previous sibling
+    if (self.getPrevSib(es)) |prev_sib| {
+        prev_sib.next_sib = self.next_sib;
+    } else if (self.getParent(es)) |parent| {
+        assert(parent.first_child == es.getEntity(self).toOptional());
+        parent.first_child = self.next_sib;
+    } else {
+        assert(tr.first_child == es.getEntity(self).toOptional());
+        tr.first_child = self.next_sib;
+        if (tr.getFirstChild(es)) |fc| fc.prev_sib = .none;
+    }
+
+    // Update the next sibling
+    if (self.next_sib.unwrap()) |next_sib| {
+        next_sib.get(es, Node).?.prev_sib = self.prev_sib;
+    }
+
+    // Null out our tree pointers
+    self.prev_sib = .none;
+    self.next_sib = .none;
+    self.parent = .none;
+}
+
+/// Intended for internal use, see `pluckImmediate`. Similar but destroys children before plucking.
 ///
 /// Invalidates pointers.
-pub fn destroyChildrenAndUnparentImmediate(unstable_ptr: *@This(), es: *Entities) void {
+pub fn destroyChildrenAndPluckImmediate(
+    unstable_ptr: *@This(),
+    es: *Entities,
+    tr: *Tree,
+) void {
     const pointer_lock = es.pointer_generation.lock();
 
     // Get an iterator over the node's children and then destroy it
@@ -117,7 +175,7 @@ pub fn destroyChildrenAndUnparentImmediate(unstable_ptr: *@This(), es: *Entities
         const self = unstable_ptr; // Not yet disturbed
 
         const iter = self.postOrderIterator(es);
-        self.setParentImmediate(es, null);
+        self.pluckImmediate(es, tr);
         self.first_child = .none;
 
         break :b iter;
@@ -296,8 +354,8 @@ pub const Exec = struct {
     /// related events along the way. In practice, you likely want to call the finer grained
     /// functions provided directly, so that other libraries you use can also hook into the command
     /// buffer iterator.
-    pub fn immediate(es: *Entities, cb: *CmdBuf) void {
-        immediateOrErr(es, cb) catch |err|
+    pub fn immediate(es: *Entities, cb: *CmdBuf, tr: *Tree) void {
+        immediateOrErr(es, cb, tr) catch |err|
             @panic(@errorName(err));
     }
 
@@ -308,6 +366,7 @@ pub const Exec = struct {
     pub fn immediateOrErr(
         es: *Entities,
         cb: *CmdBuf,
+        tr: *Tree,
     ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow, ZcsEntityOverflow }!void {
         var default_exec: CmdBuf.Exec = .init();
 
@@ -317,17 +376,26 @@ pub const Exec = struct {
         while (batches.next()) |batch| {
             switch (batch) {
                 .arch_change => |arch_change| {
-                    var delta: CmdBuf.Batch.ArchChange.Delta = .{};
-                    var ops = arch_change.iterator();
-                    while (ops.next()) |op| {
-                        beforeArchChangeImmediate(es, arch_change, op);
-                        delta.updateImmediate(op);
+                    {
+                        var delta: CmdBuf.Batch.ArchChange.Delta = .{};
+                        var ops = arch_change.iterator();
+                        while (ops.next()) |op| {
+                            beforeArchChangeImmediate(es, tr, arch_change, op);
+                            delta.updateImmediate(op);
+                        }
+
+                        _ = try arch_change.execImmediateOrErr(es, delta);
                     }
 
-                    _ = try arch_change.execImmediateOrErr(es, delta);
+                    {
+                        var ops = arch_change.iterator();
+                        while (ops.next()) |op| {
+                            afterArchChangeImmediate(es, tr, arch_change, op);
+                        }
+                    }
                 },
                 .ext => |ext| {
-                    try extImmediateOrErr(es, ext);
+                    try extImmediateOrErr(es, tr, ext);
                     default_exec.extImmediateOrErr(ext);
                 },
             }
@@ -339,25 +407,28 @@ pub const Exec = struct {
     /// Executes an extension command.
     pub inline fn extImmediateOrErr(
         es: *Entities,
+        tr: *Tree,
         payload: Any,
     ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
         if (payload.as(SetParent)) |set_parent| {
             const child = set_parent.child;
             if (set_parent.parent.unwrap()) |parent| {
                 if (try child.getOrAddImmediateOrErr(es, Node, .{})) |child_node| {
+                    if (child_node.uninitialized(es, tr)) child_node.init(es, tr);
                     if (try parent.getOrAddImmediateOrErr(es, Node, .{})) |parent_node| {
+                        if (parent_node.uninitialized(es, tr)) parent_node.init(es, tr);
                         // If a parent that exists is assigned, set it as the parent
-                        child_node.setParentImmediate(es, parent_node);
+                        child_node.setParentImmediate(es, tr, parent_node);
                     } else {
                         // Otherwise destroy the child
-                        child_node.destroyImmediate(es);
+                        child_node.destroyImmediate(es, tr);
                     }
                 }
             } else {
                 // If our parent is being cleared and we have a node, clear it. If not leave
                 // it alone since it's implicitly clear.
                 if (child.get(es, Node)) |node| {
-                    node.setParentImmediate(es, null);
+                    node.setParentImmediate(es, tr, null);
                 }
             }
         }
@@ -366,19 +437,38 @@ pub const Exec = struct {
     /// Call this before executing a command.
     pub inline fn beforeArchChangeImmediate(
         es: *Entities,
+        tr: *Tree,
         arch_change: CmdBuf.Batch.ArchChange,
         op: CmdBuf.Batch.ArchChange.Op,
     ) void {
         switch (op) {
             .destroy => if (arch_change.entity.get(es, Node)) |node| {
-                _ = node.destroyChildrenAndUnparentImmediate(es);
+                _ = node.destroyChildrenAndPluckImmediate(es, tr);
             },
             .remove => |id| if (id == typeId(Node)) {
                 if (arch_change.entity.get(es, Node)) |node| {
-                    _ = node.destroyChildrenAndUnparentImmediate(es);
+                    _ = node.destroyChildrenAndPluckImmediate(es, tr);
                 }
             },
             .add => {},
+        }
+    }
+
+    /// Call this after executing a command.
+    pub inline fn afterArchChangeImmediate(
+        es: *Entities,
+        tr: *Tree,
+        arch_change: CmdBuf.Batch.ArchChange,
+        op: CmdBuf.Batch.ArchChange.Op,
+    ) void {
+        switch (op) {
+            .destroy => {},
+            .remove => {},
+            .add => |comp| if (comp.id == typeId(Node)) {
+                if (arch_change.entity.get(es, Node)) |node| {
+                    if (node.uninitialized(es, tr)) node.init(es, tr);
+                }
+            },
         }
     }
 };

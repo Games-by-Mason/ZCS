@@ -43,6 +43,8 @@ test "exec" {
     });
     defer es.deinit(gpa);
 
+    var tr: Node.Tree = .empty;
+
     var cb: CmdBuf = try .init(.{
         .name = null,
         .gpa = gpa,
@@ -59,7 +61,7 @@ test "exec" {
     const child: Entity = .reserve(&cb);
     const parent: Entity = .reserve(&cb);
     cb.ext(SetParent, .{ .child = child, .parent = parent.toOptional() });
-    Transform.Exec.immediate(&es, &cb);
+    Transform.Exec.immediate(&es, &cb, &tr);
 
     const child_node = child.get(&es, Node).?;
     try expectEqual(child_node.parent, parent.toOptional());
@@ -92,6 +94,8 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
         },
     });
     defer es.deinit(gpa);
+
+    var tr: Node.Tree = .empty;
 
     var cb: CmdBuf = try .init(.{
         .name = null,
@@ -248,7 +252,7 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
             },
         }
 
-        Transform.Exec.immediate(&es, &cb);
+        Transform.Exec.immediate(&es, &cb, &tr);
         try checkOracle(&es);
     }
 }
