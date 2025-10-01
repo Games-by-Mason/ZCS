@@ -172,10 +172,13 @@ const OracleEntity = struct {
 const Oracle = struct {
     /// The ground truth entities.
     entities: std.AutoHashMapUnmanaged(Entity, OracleEntity),
+    /// Ground truth list of entities with no parents.
+    roots: std.AutoArrayHashMapUnmanaged(Entity, void),
 
     fn init() @This() {
         return .{
             .entities = .{},
+            .roots = .{},
         };
     }
 
@@ -185,6 +188,7 @@ const Oracle = struct {
             entry.value_ptr.deinit();
         }
         self.entities.deinit(gpa);
+        self.roots.deinit(gpa);
         self.* = undefined;
     }
 };
@@ -216,7 +220,7 @@ fn fuzzNodes(_: void, input: []const u8) !void {
             },
         }
 
-        try checkOracle(&fz, &o, 0);
+        try checkOracle(&fz, &o, &tr, 0);
     }
 }
 
@@ -239,7 +243,7 @@ fn fuzzNodeCycles(_: void, input: []const u8) !void {
 
     while (!fz.smith.isEmpty()) {
         try setParent(&fz, &tr, &o);
-        try checkOracle(&fz, &o, 0);
+        try checkOracle(&fz, &o, &tr, 0);
     }
 }
 
@@ -298,7 +302,7 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
         }
 
         Node.Exec.immediate(&fz.es, &cb, &tr);
-        try checkOracle(&fz, &o, 1);
+        try checkOracle(&fz, &o, &tr, 1);
     }
 }
 
@@ -335,11 +339,11 @@ fn fuzzNodeCyclesCmdBuf(_: void, input: []const u8) !void {
         }
 
         Node.Exec.immediate(&fz.es, &cb, &tr);
-        try checkOracle(&fz, &o, 0);
+        try checkOracle(&fz, &o, &tr, 0);
     }
 }
 
-fn checkOracle(fz: *Fuzzer, o: *const Oracle, extra_reserved: usize) !void {
+fn checkOracle(fz: *Fuzzer, o: *const Oracle, tr: *const Node.Tree, extra_reserved: usize) !void {
     if (log) std.debug.print("check oracle\n", .{});
 
     // Check the total entity count
@@ -400,6 +404,21 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle, extra_reserved: usize) !void {
 
         try checkPostOrder(fz, o, entry.key_ptr.*);
         try checkPreOrder(fz, o, entry.key_ptr.*);
+    }
+
+    // Check the roots, make sure they're in order
+    {
+        const oracle_keys = o.roots.keys();
+        var curr: Entity.Optional = tr.first_child;
+        var i: usize = 0;
+        while (curr.unwrap()) |c| : (i += 1) {
+            try expect(oracle_keys[oracle_keys.len - i - 1] == c);
+            curr = c.get(&fz.es, Node).?.next_sib;
+            if (curr.unwrap()) |next| {
+                try expect(next.get(&fz.es, Node).?.prev_sib == c.toOptional());
+            }
+        }
+        try expectEqual(oracle_keys.len, i);
     }
 }
 
@@ -479,6 +498,7 @@ fn reserveCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf, tr: *Node.Tree) !void {
     if (fz.smith.next(bool)) {
         entity.add(cb, Node, .{});
         try o.entities.put(gpa, entity, .{ .node = .{} });
+        try o.roots.put(gpa, entity, {});
     } else {
         entity.commit(cb);
         try o.entities.put(gpa, entity, .{});
@@ -506,10 +526,16 @@ fn setParent(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
     if (parent.unwrap()) |p| if (!p.exists(&fz.es)) return;
     if (!child.exists(&fz.es)) return;
     const child_node = (child.viewOrAddImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
-    if (child_node.uninitialized(&fz.es, tr)) child_node.init(&fz.es, tr);
+    if (child_node.uninitialized(&fz.es, tr)) {
+        child_node.init(&fz.es, tr);
+        try o.roots.put(gpa, child, {});
+    }
     const parent_node = if (parent.unwrap()) |p| b: {
         const n = (p.viewOrAddImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
-        if (n.uninitialized(&fz.es, tr)) n.init(&fz.es, tr);
+        if (n.uninitialized(&fz.es, tr)) {
+            n.init(&fz.es, tr);
+            try o.roots.put(gpa, p, {});
+        }
         break :b n;
     } else null;
     child_node.setParentImmediate(&fz.es, tr, parent_node);
@@ -523,15 +549,24 @@ fn setParentCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
     if (log) std.debug.print("{f}.parent = {f}\n", .{ child, parent });
 
     cb.ext(SetParent, .{ .child = child, .parent = parent });
-    if (o.entities.getPtr(child) != null) {
-        try setParentInOracle(fz, o, child, parent);
-    }
+    try setParentInOracle(fz, o, child, parent);
 }
 
 fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Optional) !void {
     // Get the oracle entity, adding a node if needed
     const child_o = o.entities.getPtr(child).?;
-    if (child_o.node == null) child_o.node = .{};
+    if (child_o.node == null) {
+        child_o.node = .{};
+        try o.roots.put(gpa, child, {});
+    }
+
+    if (parent.unwrap()) |p| {
+        const po = o.entities.getPtr(p).?;
+        if (po.node == null) {
+            po.node = .{};
+            try o.roots.put(gpa, p, {});
+        }
+    }
 
     // Early out if child and parent are the same entity
     if (parent == child.toOptional()) return;
@@ -552,21 +587,27 @@ fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Opti
     }
 
     // Unparent the child
-    const prev_parent = child_o.node.?.parent;
-    if (prev_parent.unwrap()) |unwrapped| {
-        const prev_parent_o = o.entities.getPtr(unwrapped).?;
-        try expect(prev_parent_o.node.?.children.orderedRemove(child));
-    }
-    child_o.node.?.parent = .none;
+    _ = o.roots.orderedRemove(child);
+    if (child_o.node) |*child_o_node| {
+        const prev_parent = child_o_node.parent;
+        if (prev_parent.unwrap()) |unwrapped| {
+            const prev_parent_o = o.entities.getPtr(unwrapped).?;
+            try expect(prev_parent_o.node.?.children.orderedRemove(child));
+        }
+        child_o_node.parent = .none;
 
-    // Set the parent
-    if (parent.unwrap()) |unwrapped| {
-        if (unwrapped.exists(&fz.es)) {
-            child_o.node.?.parent = unwrapped.toOptional();
-            if (o.entities.getPtr(unwrapped).?.node == null) {
-                o.entities.getPtr(unwrapped).?.node = .{};
+        // Set the parent
+        if (parent.unwrap()) |unwrapped| {
+            if (unwrapped.exists(&fz.es)) {
+                child_o_node.parent = unwrapped.toOptional();
+                if (o.entities.getPtr(unwrapped).?.node == null) {
+                    o.entities.getPtr(unwrapped).?.node = .{};
+                }
+                try o.entities.getPtr(unwrapped).?.node.?.children.put(gpa, child, {});
             }
-            try o.entities.getPtr(unwrapped).?.node.?.children.put(gpa, child, {});
+            _ = o.roots.orderedRemove(child);
+        } else {
+            try o.roots.put(gpa, child, {});
         }
     }
 }
@@ -594,7 +635,7 @@ fn remove(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
 
     // Get a random entity
     const entity = fz.randomEntity().unwrap() orelse return;
-    if (log) std.debug.print("remove {}\n", .{entity});
+    if (log) std.debug.print("remove {f}\n", .{entity});
 
     // Remove from the real entity
     if (entity.get(&fz.es, Node)) |node| {
@@ -603,6 +644,7 @@ fn remove(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
             .add = .{},
             .remove = CompFlag.Set.initOne(CompFlag.registerImmediate(typeId(Node))),
         });
+        _ = o.roots.orderedRemove(entity);
     }
 
     // Remove from the oracle
@@ -628,10 +670,11 @@ fn removeCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
 
     // Get a random entity
     const entity = fz.randomEntity().unwrap() orelse return;
-    if (log) std.debug.print("remove {}\n", .{entity});
+    if (log) std.debug.print("remove {f}\n", .{entity});
 
     // Remove from the real entity
     entity.remove(cb, Node);
+    _ = o.roots.orderedRemove(entity);
 
     // Remove from in the oracle
     try removeInOracle(fz, o, entity);
@@ -658,6 +701,7 @@ fn destroyInOracleInner(fz: *Fuzzer, o: *Oracle, e: Entity) !void {
         }
         oe.deinit();
         try expect(o.entities.remove(e));
+        _ = o.roots.orderedRemove(e);
     }
     try fz.destroyInOracle(e);
 }
@@ -675,5 +719,6 @@ fn removeInOracle(fz: *Fuzzer, o: *Oracle, e: Entity) !void {
         }
         if (oe.node) |*n| n.deinit();
         oe.node = null;
+        _ = o.roots.orderedRemove(e);
     }
 }

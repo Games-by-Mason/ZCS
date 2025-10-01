@@ -411,24 +411,35 @@ pub const Exec = struct {
         payload: Any,
     ) error{ ZcsArchOverflow, ZcsChunkOverflow, ZcsChunkPoolOverflow }!void {
         if (payload.as(SetParent)) |set_parent| {
-            const child = set_parent.child;
-            if (set_parent.parent.unwrap()) |parent| {
-                if (try child.getOrAddImmediateOrErr(es, Node, .{})) |child_node| {
-                    if (child_node.uninitialized(es, tr)) child_node.init(es, tr);
-                    if (try parent.getOrAddImmediateOrErr(es, Node, .{})) |parent_node| {
-                        if (parent_node.uninitialized(es, tr)) parent_node.init(es, tr);
-                        // If a parent that exists is assigned, set it as the parent
-                        child_node.setParentImmediate(es, tr, parent_node);
-                    } else {
-                        // Otherwise destroy the child
-                        child_node.destroyImmediate(es, tr);
-                    }
+            // Get or add node the parent and child
+            const child_node = try set_parent.child.getOrAddImmediateOrErr(es, Node, .{});
+            if (child_node) |child| {
+                if (child.uninitialized(es, tr)) {
+                    child.init(es, tr);
                 }
-            } else {
-                // If our parent is being cleared and we have a node, clear it. If not leave
-                // it alone since it's implicitly clear.
-                if (child.get(es, Node)) |node| {
-                    node.setParentImmediate(es, tr, null);
+            }
+
+            const parent_node = if (set_parent.parent.unwrap()) |parent|
+                try parent.getOrAddImmediateOrErr(es, Node, .{})
+            else
+                null;
+            if (parent_node) |parent| {
+                if (parent.uninitialized(es, tr)) {
+                    parent.init(es, tr);
+                }
+            }
+
+            // Set up the parent child relationship
+            if (child_node) |child| {
+                if (parent_node) |parent| {
+                    // Set as the child's parent
+                    child.setParentImmediate(es, tr, parent);
+                } else if (set_parent.parent.unwrap() == null) {
+                    // Clear the child's parent
+                    child.setParentImmediate(es, tr, null);
+                } else {
+                    // The parent has since been deleted, destroy the child
+                    child.destroyImmediate(es, tr);
                 }
             }
         }
