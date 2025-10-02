@@ -569,7 +569,7 @@ fn insert(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
         try o.roots.put(gpa, other, {});
     }
 
-    self_node.insert(&fz.es, tr, relative, other_node);
+    self_node.insertImmediate(&fz.es, tr, relative, other_node);
     try insertInOracle(fz, o, self, relative, other);
 }
 

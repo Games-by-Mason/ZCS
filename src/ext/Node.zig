@@ -117,7 +117,7 @@ pub fn setParentImmediate(self: *Node, es: *Entities, tr: *Tree, parent_opt: ?*N
 }
 
 /// Similar to the `Insert`, but makes the change immediately.
-pub fn insert(
+pub fn insertImmediate(
     self: *Node,
     es: *Entities,
     tr: *Tree,
@@ -539,7 +539,7 @@ pub const Exec = struct {
             if (self_node) |self| {
                 if (other_node) |other| {
                     // Set up the relationship
-                    self.insert(es, tr, std.meta.activeTag(args.position), other);
+                    self.insertImmediate(es, tr, std.meta.activeTag(args.position), other);
                 } else {
                     // Other has since been deleted, destroy the child
                     self.destroyImmediate(es, tr);
