@@ -266,6 +266,7 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
 
     var tr: Node.Tree = .empty;
 
+    const extra_reserved = cmds_capacity;
     var cb: CmdBuf = try .init(.{
         .name = null,
         .gpa = gpa,
@@ -273,32 +274,12 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
         .cap = .{
             .cmds = cmds_capacity,
             .data = .{ .bytes_per_cmd = @sizeOf(Node) },
-            .reserved_entities = 0,
+            .reserved_entities = extra_reserved,
         },
     });
     defer cb.deinit(gpa, &fz.es);
 
-    var reserve_cb: CmdBuf = try .init(.{
-        .name = null,
-        .gpa = gpa,
-        .es = &fz.es,
-        .cap = .{
-            .cmds = 4,
-            .data = .{ .bytes_per_cmd = @sizeOf(Node) },
-            .reserved_entities = 1,
-        },
-        .warn_ratio = 1,
-    });
-    defer reserve_cb.deinit(gpa, &fz.es);
-
     while (!fz.smith.isEmpty()) {
-        // XXX: remove?
-        if (fz.es.count() < 1000) {
-            for (0..fz.smith.nextLessThan(usize, 100)) |_| {
-                try reserveCmd(&fz, &o, &reserve_cb, &tr);
-            }
-        }
-
         const set_actives = cmds_capacity;
         comptime std.debug.assert(set_actives > 100); // Make sure there are a decent number of these
         for (0..fz.smith.nextLessThan(u16, 100)) |_| {
@@ -312,7 +293,7 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
                 insert,
                 destroy,
             })) {
-                .reserve => try reserveCmd(&fz, &o, &reserve_cb, &tr),
+                .reserve => try reserveCmd(&fz, &o, &cb, &tr),
                 .set_parent => try setParentCmd(&fz, &o, &cb),
                 .insert => try insertCmd(&fz, &o, &cb),
                 .destroy => if (fz.smith.next(bool)) {
@@ -324,7 +305,7 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
         }
 
         Node.Exec.immediate(&fz.es, &cb, &tr);
-        try checkOracle(&fz, &o, &tr, 1);
+        try checkOracle(&fz, &o, &tr, extra_reserved);
     }
 }
 
@@ -418,7 +399,6 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle, tr: *const Node.Tree, extra_reserv
         if (node) |n| {
             var children = n.childIterator();
             var prev_sibling: Entity.Optional = .none;
-            if (entry.value_ptr.node == null) std.debug.print("{f} should have a node, real data does: {?}\n", .{ entry.key_ptr.*, entry.key_ptr.*.get(&fz.es, Node) });
             const keys = entry.value_ptr.node.?.children.keys();
             for (0..keys.len) |i| {
                 const expected = keys[keys.len - i - 1];
@@ -547,7 +527,7 @@ fn reserveCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf, tr: *Node.Tree) !void {
     const entity: Entity = .reserve(cb);
     if (fz.smith.next(bool)) {
         entity.add(cb, Node, .{});
-        try fz.reserved.put(gpa, entity, {});
+        try fz.committed.put(gpa, entity, .{});
         try o.entities.put(gpa, entity, .{ .node = .{} });
         try o.roots.put(gpa, entity, {});
     } else {
@@ -663,10 +643,12 @@ fn insertCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
 
 fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Optional) !void {
     // Get the oracle entity, adding a node if needed
-    const child_o = o.entities.getPtr(child) orelse return;
-    if (child_o.node == null) {
-        child_o.node = .{};
-        try o.roots.put(gpa, child, {});
+    const optional_child_o = o.entities.getPtr(child);
+    if (optional_child_o) |child_o| {
+        if (child_o.node == null) {
+            child_o.node = .{};
+            try o.roots.put(gpa, child, {});
+        }
     }
 
     if (parent.unwrap()) |p| {
@@ -677,6 +659,8 @@ fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Opti
             }
         }
     }
+
+    const child_o = optional_child_o orelse return;
 
     // Early out if child and parent are the same entity
     if (parent == child.toOptional()) return;
@@ -729,10 +713,12 @@ fn insertInOracle(
     other: Entity,
 ) !void {
     // Get the oracle entity, adding a node if needed
-    const self_o = o.entities.getPtr(self) orelse return;
-    if (self_o.node == null) {
-        self_o.node = .{};
-        try o.roots.put(gpa, self, {});
+    const maybe_self_o = o.entities.getPtr(self);
+    if (maybe_self_o) |self_o| {
+        if (self_o.node == null) {
+            self_o.node = .{};
+            try o.roots.put(gpa, self, {});
+        }
     }
 
     const other_o = o.entities.getPtr(other);
@@ -742,6 +728,8 @@ fn insertInOracle(
             try o.roots.put(gpa, other, {});
         }
     }
+
+    const self_o = maybe_self_o orelse return;
 
     // Early out if self and other are the same entity
     if (self == other) return;

@@ -51,6 +51,19 @@ active_self: bool = true,
 /// Whether or not this node and all of its parents are marked as active.
 active_in_hierarchy: bool = true,
 
+/// Default formatting.
+pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    comptime assert(std.meta.fields(@This()).len == 6); // If this changes, update the output!
+    try writer.writeAll(".{ ");
+    try writer.print(".parent = {f}, ", .{self.parent});
+    try writer.print(".first_child = {f}, ", .{self.first_child});
+    try writer.print(".prev_sib = {f}, ", .{self.prev_sib});
+    try writer.print(".next_sib = {f}, ", .{self.next_sib});
+    try writer.print(".active_self = {}, ", .{self.active_self});
+    try writer.print(".active_in_hierarchy = {}, ", .{self.active_in_hierarchy});
+    try writer.writeAll("}");
+}
+
 /// Initializes this node. Called automatically by the command buffer API, must be called manually
 /// before using a node if working with the immediate API.
 pub fn init(self: *@This(), es: *Entities, tr: *Tree) void {
@@ -163,7 +176,7 @@ pub fn setParentImmediate(self: *Node, es: *Entities, tr: *Tree, parent_opt: ?*N
     }
 
     // Synchronize this subtree
-    self.sync(es); // XXX: disabling doesn't fial cb tests?
+    self.sync(es);
 }
 
 /// Similar to the `Insert`, but makes the change immediately.
@@ -216,7 +229,7 @@ pub fn insertImmediate(
     }
 
     // Synchronize this subtree
-    self.sync(es); // XXX: disabling doesn't fail cb tests?
+    self.sync(es);
 }
 
 /// Destroys a node, its entity, and all of its children. This behavior occurs automatically via
