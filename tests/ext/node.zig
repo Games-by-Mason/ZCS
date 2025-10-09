@@ -155,6 +155,7 @@ test "rand cycles cb" {
 const OracleNode = struct {
     parent: Entity.Optional = .none,
     children: std.AutoArrayHashMapUnmanaged(Entity, void) = .{},
+    active_self: bool = true,
 
     fn deinit(self: *@This()) void {
         self.children.deinit(gpa);
@@ -213,10 +214,12 @@ fn fuzzNodes(_: void, input: []const u8) !void {
             set_parent,
             destroy,
             insert,
+            set_active,
         })) {
             .reserve => try reserve(&fz, &o),
             .set_parent => try setParent(&fz, &tr, &o),
             .insert => try insert(&fz, &tr, &o),
+            .set_active => try setActive(&fz, &tr, &o),
             .destroy => if (fz.smith.next(bool)) {
                 try destroy(&fz, &tr, &o);
             } else {
@@ -263,6 +266,7 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
 
     var tr: Node.Tree = .empty;
 
+    const extra_reserved = cmds_capacity;
     var cb: CmdBuf = try .init(.{
         .name = null,
         .gpa = gpa,
@@ -270,25 +274,18 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
         .cap = .{
             .cmds = cmds_capacity,
             .data = .{ .bytes_per_cmd = @sizeOf(Node) },
-            .reserved_entities = 0,
+            .reserved_entities = extra_reserved,
         },
     });
     defer cb.deinit(gpa, &fz.es);
 
-    var reserve_cb: CmdBuf = try .init(.{
-        .name = null,
-        .gpa = gpa,
-        .es = &fz.es,
-        .cap = .{
-            .cmds = 4,
-            .data = .{ .bytes_per_cmd = @sizeOf(Node) },
-            .reserved_entities = 1,
-        },
-        .warn_ratio = 1,
-    });
-    defer reserve_cb.deinit(gpa, &fz.es);
-
     while (!fz.smith.isEmpty()) {
+        const set_actives = cmds_capacity;
+        comptime std.debug.assert(set_actives > 100); // Make sure there are a decent number of these
+        for (0..fz.smith.nextLessThan(u16, 100)) |_| {
+            try setActive(&fz, &tr, &o);
+        }
+
         for (0..fz.smith.nextLessThan(u16, cmds_capacity)) |_| {
             switch (fz.smith.next(enum {
                 reserve,
@@ -296,7 +293,7 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
                 insert,
                 destroy,
             })) {
-                .reserve => try reserveCmd(&fz, &o, &reserve_cb, &tr),
+                .reserve => try reserveCmd(&fz, &o, &cb, &tr),
                 .set_parent => try setParentCmd(&fz, &o, &cb),
                 .insert => try insertCmd(&fz, &o, &cb),
                 .destroy => if (fz.smith.next(bool)) {
@@ -308,7 +305,7 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
         }
 
         Node.Exec.immediate(&fz.es, &cb, &tr);
-        try checkOracle(&fz, &o, &tr, 1);
+        try checkOracle(&fz, &o, &tr, extra_reserved);
     }
 }
 
@@ -388,12 +385,20 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle, tr: *const Node.Tree, extra_reserv
         const actual = if (node) |n| n.parent else Entity.Optional.none;
         try expectEqualEntity(actual, parent);
 
+        // Check the active flag. We just check `active_self` here, we'll check
+        // `active_in_hierarchy` in one go while traversing the tree later.
+        if (entry.value_ptr.node) |oracle_node| {
+            try expect(node != null);
+            try expectEqual(oracle_node.active_self, node.?.active_self);
+        } else {
+            try expect(node == null);
+        }
+
         // Check the children. We don't bother checking for dups since they would result in
         // the list being infinitely long and failing the implicit size check.
         if (node) |n| {
             var children = n.childIterator();
             var prev_sibling: Entity.Optional = .none;
-            if (entry.value_ptr.node == null) std.debug.print("{f} should have a node, real data does: {?}\n", .{ entry.key_ptr.*, entry.key_ptr.*.get(&fz.es, Node) });
             const keys = entry.value_ptr.node.?.children.keys();
             for (0..keys.len) |i| {
                 const expected = keys[keys.len - i - 1];
@@ -425,6 +430,25 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle, tr: *const Node.Tree, extra_reserv
             }
         }
         try expectEqual(oracle_keys.len, i);
+    }
+
+    // Check active in hierarchy
+    {
+        var children = tr.childIterator();
+        while (children.next(&fz.es)) |root| {
+            try checkActiveInHierarchy(&fz.es, root, true);
+        }
+    }
+}
+
+fn checkActiveInHierarchy(es: *const Entities, node: *const Node, parent_active: bool) !void {
+    // Check ourselves
+    try expectEqual(node.active_self and parent_active, node.active_in_hierarchy);
+
+    // Check our children
+    var children = node.childIterator();
+    while (children.next(es)) |child| {
+        try checkActiveInHierarchy(es, child, node.active_in_hierarchy);
     }
 }
 
@@ -503,10 +527,12 @@ fn reserveCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf, tr: *Node.Tree) !void {
     const entity: Entity = .reserve(cb);
     if (fz.smith.next(bool)) {
         entity.add(cb, Node, .{});
+        try fz.committed.put(gpa, entity, .{});
         try o.entities.put(gpa, entity, .{ .node = .{} });
         try o.roots.put(gpa, entity, {});
     } else {
         entity.commit(cb);
+        try fz.committed.put(gpa, entity, .{});
         try o.entities.put(gpa, entity, .{});
     }
     Node.Exec.immediate(&fz.es, cb, tr);
@@ -573,6 +599,24 @@ fn insert(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
     try insertInOracle(fz, o, self, relative, other);
 }
 
+fn setActive(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
+    // Get a random self and active flag
+    const self = fz.randomEntity().unwrap() orelse return;
+    const active = fz.smith.next(bool);
+
+    if (log) std.debug.print("setActive {f} {}\n", .{ self, active });
+
+    if (!self.exists(&fz.es)) return;
+    const self_node = (self.viewOrAddImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
+    if (self_node.uninitialized(&fz.es, tr)) {
+        self_node.init(&fz.es, tr);
+        try o.roots.put(gpa, self, {});
+    }
+
+    self_node.setActive(&fz.es, active);
+    try setActiveInOracle(o, self, active);
+}
+
 fn setParentCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
     // Get a random parent and child
     const parent = fz.randomEntity();
@@ -599,19 +643,24 @@ fn insertCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
 
 fn setParentInOracle(fz: *Fuzzer, o: *Oracle, child: Entity, parent: Entity.Optional) !void {
     // Get the oracle entity, adding a node if needed
-    const child_o = o.entities.getPtr(child).?;
-    if (child_o.node == null) {
-        child_o.node = .{};
-        try o.roots.put(gpa, child, {});
+    const optional_child_o = o.entities.getPtr(child);
+    if (optional_child_o) |child_o| {
+        if (child_o.node == null) {
+            child_o.node = .{};
+            try o.roots.put(gpa, child, {});
+        }
     }
 
     if (parent.unwrap()) |p| {
-        const po = o.entities.getPtr(p).?;
-        if (po.node == null) {
-            po.node = .{};
-            try o.roots.put(gpa, p, {});
+        if (o.entities.getPtr(p)) |po| {
+            if (po.node == null) {
+                po.node = .{};
+                try o.roots.put(gpa, p, {});
+            }
         }
     }
+
+    const child_o = optional_child_o orelse return;
 
     // Early out if child and parent are the same entity
     if (parent == child.toOptional()) return;
@@ -664,17 +713,23 @@ fn insertInOracle(
     other: Entity,
 ) !void {
     // Get the oracle entity, adding a node if needed
-    const self_o = o.entities.getPtr(self).?;
-    if (self_o.node == null) {
-        self_o.node = .{};
-        try o.roots.put(gpa, self, {});
+    const maybe_self_o = o.entities.getPtr(self);
+    if (maybe_self_o) |self_o| {
+        if (self_o.node == null) {
+            self_o.node = .{};
+            try o.roots.put(gpa, self, {});
+        }
     }
 
-    const other_o = o.entities.getPtr(other).?;
-    if (other_o.node == null) {
-        other_o.node = .{};
-        try o.roots.put(gpa, other, {});
+    const other_o = o.entities.getPtr(other);
+    if (other_o) |oo| {
+        if (oo.node == null) {
+            oo.node = .{};
+            try o.roots.put(gpa, other, {});
+        }
     }
+
+    const self_o = maybe_self_o orelse return;
 
     // Early out if self and other are the same entity
     if (self == other) return;
@@ -694,7 +749,7 @@ fn insertInOracle(
 
     // Get the oracle nodes
     const self_node = &self_o.node.?;
-    const other_node = &other_o.node.?;
+    const other_node = &other_o.?.node.?;
 
     // Unparent the child
     _ = o.roots.orderedRemove(self);
@@ -728,6 +783,25 @@ fn insertInOracle(
         });
         try children.reIndex(gpa);
     }
+}
+
+fn setActiveInOracle(
+    o: *Oracle,
+    self: Entity,
+    active: bool,
+) !void {
+    // Get the oracle entity, adding a node if needed
+    const self_o = o.entities.getPtr(self).?;
+    if (self_o.node == null) {
+        self_o.node = .{};
+        try o.roots.put(gpa, self, {});
+    }
+
+    // Early out if self doesn't exist
+    if (!o.entities.contains(self)) return;
+
+    // Set the oracle active flag
+    self_o.node.?.active_self = active;
 }
 
 fn destroy(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {

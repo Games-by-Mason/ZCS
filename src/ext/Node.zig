@@ -26,16 +26,43 @@ pub const Tree = struct {
     pub const empty: @This() = .{ .first_child = .none };
     first_child: Entity.Optional,
 
+    /// Returns the first child, or null if none exists.
     pub fn getFirstChild(self: @This(), es: *Entities) ?*Node {
         const entity = self.first_child.unwrap() orelse return null;
         return entity.get(es, Node).?;
     }
+
+    /// Returns an iterator over the tree's immediate children.
+    pub fn childIterator(self: *const @This()) SiblingIterator {
+        return .{ .curr = self.first_child };
+    }
 };
 
+/// This node's parent.
 parent: Entity.Optional = .none,
+/// This node's first child.
 first_child: Entity.Optional = .none,
+/// This node's previous sibling.
 prev_sib: Entity.Optional = .none,
+/// This node's next sibling.
 next_sib: Entity.Optional = .none,
+/// Whether or not this node is marked as active. Typically used to hide inactive objects.
+active_self: bool = true,
+/// Whether or not this node and all of its parents are marked as active.
+active_in_hierarchy: bool = true,
+
+/// Default formatting.
+pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    comptime assert(std.meta.fields(@This()).len == 6); // If this changes, update the output!
+    try writer.writeAll(".{ ");
+    try writer.print(".parent = {f}, ", .{self.parent});
+    try writer.print(".first_child = {f}, ", .{self.first_child});
+    try writer.print(".prev_sib = {f}, ", .{self.prev_sib});
+    try writer.print(".next_sib = {f}, ", .{self.next_sib});
+    try writer.print(".active_self = {}, ", .{self.active_self});
+    try writer.print(".active_in_hierarchy = {}, ", .{self.active_in_hierarchy});
+    try writer.writeAll("}");
+}
 
 /// Initializes this node. Called automatically by the command buffer API, must be called manually
 /// before using a node if working with the immediate API.
@@ -59,6 +86,39 @@ pub fn uninitialized(self: *const @This(), es: *const Entities, tr: *const Tree)
         return true;
     }
     return false;
+}
+
+/// Sets `active_self` flag to `active` and then calls `sync`.
+pub fn setActive(self: *@This(), es: *const Entities, active: bool) void {
+    if (self.active_self != active) {
+        self.active_self = active;
+        self.sync(es);
+    }
+}
+
+/// Updates `active_in_hierarchy` for this node, and propagates any resulting change to its its
+/// transitive children.
+pub fn sync(self: *@This(), es: *const Entities) void {
+    // Update ourselves
+    self.active_in_hierarchy = b: {
+        if (!self.active_self) break :b false;
+        const parent = self.getParent(es) orelse break :b true;
+        break :b parent.active_in_hierarchy;
+    };
+
+    // Update our transitive children
+    var nodes = self.preOrderIterator(es);
+    while (nodes.next(es)) |node| {
+        const active_in_hierarchy = node.active_self and
+            node.getParent(es).?.active_in_hierarchy;
+        if (active_in_hierarchy == node.active_in_hierarchy) {
+            // This subtree isn't dirty, skip it
+            nodes.skipSubtree(es, node);
+        } else {
+            // This subtree is dirty, update its root and continue
+            node.active_in_hierarchy = active_in_hierarchy;
+        }
+    }
 }
 
 /// Returns the parent node, or null if none exists.
@@ -114,6 +174,9 @@ pub fn setParentImmediate(self: *Node, es: *Entities, tr: *Tree, parent_opt: ?*N
         if (tr.getFirstChild(es)) |fc| fc.prev_sib = child.toOptional();
         tr.first_child = child.toOptional();
     }
+
+    // Synchronize this subtree
+    self.sync(es);
 }
 
 /// Similar to the `Insert`, but makes the change immediately.
@@ -164,6 +227,9 @@ pub fn insertImmediate(
             other.prev_sib = self_entity.toOptional();
         },
     }
+
+    // Synchronize this subtree
+    self.sync(es);
 }
 
 /// Destroys a node, its entity, and all of its children. This behavior occurs automatically via
