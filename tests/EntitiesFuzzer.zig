@@ -179,9 +179,7 @@ fn checkTagsWithHandle(
     tag: *Tag,
     entity: Entity,
 ) void {
-    // https://github.com/ziglang/zig/issues/23405
-    // assert(entity.get(&self.es, Tag).? == tag);
-    _ = tag;
+    assert(entity.get(&self.es, Tag).? == tag);
     self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
         @panic(@errorName(err));
 }
@@ -193,11 +191,9 @@ fn checkAllWithHandle(
     model: *const Model,
     entity: Entity,
 ) void {
-    _ = tag;
     assert(rb == entity.get(&self.es, RigidBody).?);
     assert(model == entity.get(&self.es, Model).?);
-    // https://github.com/ziglang/zig/issues/23405
-    // assert(tag == entity.get(&self.es, Tag).?);
+    assert(tag == entity.get(&self.es, Tag).?);
     assert(entity == self.es.getEntity(rb));
     assert(entity == self.es.getEntity(model));
     self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
@@ -205,8 +201,7 @@ fn checkAllWithHandle(
 
     assert(self.es.getComp(rb, RigidBody) == rb);
     assert(self.es.getComp(rb, Model) == model);
-    // https://github.com/ziglang/zig/issues/23405
-    // assert(self.es.getComp(rb, Tag) == tag);
+    assert(self.es.getComp(rb, Tag) == tag);
 }
 
 fn checkAllOptionalWithHandle(
@@ -216,11 +211,9 @@ fn checkAllOptionalWithHandle(
     model_opt: ?*Model,
     entity: Entity,
 ) void {
-    _ = tag;
     assert(rb_opt == entity.get(&self.es, RigidBody));
     assert(model_opt == entity.get(&self.es, Model));
-    // https://github.com/ziglang/zig/issues/23405
-    // try expectEqual(tag_opt, e.get(&self.es, Tag));
+    assert(tag == entity.get(&self.es, Tag));
     if (rb_opt) |rb| assert(entity == self.es.getEntity(rb));
     if (model_opt) |model| assert(entity == self.es.getEntity(model));
     self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
@@ -229,8 +222,7 @@ fn checkAllOptionalWithHandle(
     if (model_opt) |model| {
         assert(self.es.getComp(model, RigidBody) == rb_opt);
         assert(self.es.getComp(model, Model) == model);
-        // https://github.com/ziglang/zig/issues/23405
-        // assert(self.es.getComp(rb, Tag) == tag);
+        assert(self.es.getComp(model, Tag) == tag);
     }
 }
 
@@ -244,9 +236,7 @@ fn checkSomeOptional(
     assert(entity == self.es.getEntity(model));
     assert(rb == entity.get(&self.es, RigidBody));
     assert(model == entity.get(&self.es, Model));
-    // https://github.com/ziglang/zig/issues/23405
-    // try expectEqual(tag, e.get(&self.es, Tag));
-    _ = tag;
+    assert(tag == entity.get(&self.es, Tag));
     assert(entity == self.es.getEntity(model));
     self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
         @panic(@errorName(err));
@@ -261,9 +251,7 @@ fn checkSomeOptionalWithHandle(
 ) void {
     assert(rb == entity.get(&self.es, RigidBody));
     assert(model_opt == entity.get(&self.es, Model));
-    // https://github.com/ziglang/zig/issues/23405
-    // try expectEqual(tag_opt, e.get(&self.es, Tag));
-    _ = tag;
+    assert(tag == entity.get(&self.es, Tag));
     assert(entity == self.es.getEntity(rb));
     if (model_opt) |model| assert(entity == self.es.getEntity(model));
     self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
@@ -281,10 +269,7 @@ fn checkSomeOptionalChunked(
         assert(entity == self.es.getEntity(model));
         assert(rb == entity.get(&self.es, RigidBody));
         assert(model == entity.get(&self.es, Model));
-        // https://github.com/ziglang/zig/issues/23405
-        // if (tags_opt) |tags| assert(&tags[i] == entity.get(&self.es, Tag).?);
-        _ = tags_opt;
-        _ = i;
+        if (tags_opt) |tags| assert(&tags[i] == entity.get(&self.es, Tag).?);
         assert(entity == self.es.getEntity(model));
         self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
             @panic(@errorName(err));
@@ -304,10 +289,7 @@ fn checkSomeOptionalChunkedWithHandles(
         assert(entity == self.es.getEntity(model));
         assert(rb == entity.get(&self.es, RigidBody));
         assert(model == entity.get(&self.es, Model));
-        // https://github.com/ziglang/zig/issues/23405
-        // try expectEqual(tag_opt, e.get(&self.es, Tag));
-        _ = tags;
-        _ = i;
+        if (tags) |t| assert(&t[i] == entity.get(&self.es, Tag));
         assert(entity == self.es.getEntity(model));
         self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
             @panic(@errorName(err));
