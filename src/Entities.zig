@@ -283,6 +283,34 @@ fn getLoc(self: *const Entities, from_comp: Any) struct {
     };
 }
 
+/// Calls `updateView` on each compatible entity view in an implementation defined order.
+///
+/// This may be preferred over `forEach` when you have helper methods on a view type that you want
+/// access to, or when you want to reduce code bloat. The tradeoff is that you won't get errors on
+/// unused components.
+///
+/// `updateEntity` should take a view as an argument, followed by the arguments found in `ctx`.
+///
+/// Invalidating pointers from the update function results in safety checked illegal behavior.
+///
+/// Note that the implementation only relies on ZCS's public interface. If you have a use case that
+/// isn't served well by `forEachView`, you can fork it into your code base and modify it as needed.
+pub fn forEachView(
+    self: *@This(),
+    comptime name: [:0]const u8,
+    comptime updateView: anytype,
+    ctx: view.Tuple(view.params(@TypeOf(updateView))[1..]),
+) void {
+    const zone = Zone.begin(.{ .src = @src(), .name = name });
+    defer zone.end();
+    const params = view.params(@TypeOf(updateView));
+    const View = params[0];
+    var iter = self.iterator(View);
+    while (iter.next(self)) |vw| {
+        @call(.auto, updateView, .{vw} ++ ctx);
+    }
+}
+
 /// Calls `updateEntity` on each compatible entity in an implementation defined order.
 /// See also `forEachChunk`.
 ///

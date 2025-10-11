@@ -30,6 +30,8 @@ pub const ExpectedEntity = struct {
 /// Tests random command buffers against an oracle.
 pub const max_entities = 100000;
 
+const EntitiesFuzzer = @This();
+
 es: Entities,
 smith: Smith,
 reserved: std.AutoArrayHashMapUnmanaged(Entity, void),
@@ -183,6 +185,17 @@ fn checkTagsWithHandle(
     self.found_buf.putNoClobber(gpa, entity, {}) catch |err|
         @panic(@errorName(err));
 }
+
+pub const AllView = struct {
+    tag: *const Tag,
+    rb: *const RigidBody,
+    model: *const Model,
+    entity: Entity,
+
+    fn checkWithHandle(self: @This(), fz: *EntitiesFuzzer) void {
+        checkAllWithHandle(fz, self.tag, self.rb, self.model, self.entity);
+    }
+};
 
 fn checkAllWithHandle(
     self: *@This(),
@@ -382,6 +395,16 @@ pub fn checkIterators(self: *@This()) !void {
     {
         defer self.found_buf.clearRetainingCapacity();
         self.es.forEach("checkAllWithHandle", checkAllWithHandle, self);
+        try expectEqual(
+            self.expectedOfArch(.{ .rb = true, .model = true, .tag = true }),
+            self.found_buf.count(),
+        );
+    }
+
+    // All three as view, with handle
+    {
+        defer self.found_buf.clearRetainingCapacity();
+        self.es.forEachView("AllView.checkWithHandle", AllView.checkWithHandle, .{self});
         try expectEqual(
             self.expectedOfArch(.{ .rb = true, .model = true, .tag = true }),
             self.found_buf.count(),
