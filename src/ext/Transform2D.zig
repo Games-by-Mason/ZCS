@@ -125,6 +125,7 @@ pub fn preOrderIterator(self: *@This(), es: *const Entities) PreOrderIterator {
     };
 }
 
+// XXX: use view here too or no?
 /// A pre-order iterator over relative transforms.
 pub const PreOrderIterator = struct {
     parent: ?*Transform2D,
@@ -140,16 +141,16 @@ pub const PreOrderIterator = struct {
             return parent;
         }
 
-        while (self.children.next(es)) |node| {
+        while (self.children.next(es)) |child| {
             // If the next child has a transform and that transform is relative to its parent,
             // return it.
-            if (es.getComp(node, Transform2D)) |transform| {
+            if (child.entity.get(es, Transform2D)) |transform| {
                 if (transform.relative) {
                     return transform;
                 }
             }
             // Otherwise, skip this subtree.
-            self.children.skipSubtree(es, node);
+            self.children.skipSubtree(es, child.node);
         }
 
         return null;

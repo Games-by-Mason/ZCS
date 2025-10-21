@@ -52,8 +52,12 @@ pub const Tree = struct {
     }
 };
 
+// XXX: update the transform iterator too? include node or no?
 // XXX: use in all iterators? update tests?
 /// It's frequently useful to pair an entity and node together.
+///
+/// Node iterators for example need to retrieve both the node and the entity to function, and the
+/// caller may be interested in either or both.
 pub const View = struct {
     entity: Entity,
     node: *Node,
@@ -104,6 +108,7 @@ pub fn setActive(self: *@This(), es: *const Entities, active: bool) void {
     }
 }
 
+// XXX: replace all calls to getEntity if possible here, and maybe in transform
 /// Updates `active_in_hierarchy` for this node, and propagates any resulting change to its its
 /// transitive children.
 pub fn sync(self: *@This(), es: *const Entities) void {
@@ -116,15 +121,15 @@ pub fn sync(self: *@This(), es: *const Entities) void {
 
     // Update our transitive children
     var nodes = self.preOrderIterator(es);
-    while (nodes.next(es)) |node| {
-        const active_in_hierarchy = node.active_self and
-            node.getParent(es).?.active_in_hierarchy;
-        if (active_in_hierarchy == node.active_in_hierarchy) {
+    while (nodes.next(es)) |curr| {
+        const active_in_hierarchy = curr.node.active_self and
+            curr.node.getParent(es).?.active_in_hierarchy;
+        if (active_in_hierarchy == curr.node.active_in_hierarchy) {
             // This subtree isn't dirty, skip it
-            nodes.skipSubtree(es, node);
+            nodes.skipSubtree(es, curr.node);
         } else {
             // This subtree is dirty, update its root and continue
-            node.active_in_hierarchy = active_in_hierarchy;
+            curr.node.active_in_hierarchy = active_in_hierarchy;
         }
     }
 }
@@ -330,7 +335,7 @@ pub fn destroyChildrenAndPluckImmediate(
     // Iterate over the children and destroy them, this will invalidate `unstable_ptr`
     es.pointer_generation.increment();
     while (children.next(es)) |curr| {
-        assert(es.getEntity(curr).destroyImmediate(es));
+        assert(curr.entity.destroyImmediate(es));
     }
 }
 
@@ -407,13 +412,13 @@ pub const PreOrderIterator = struct {
     };
 
     /// Returns the next child, or `null` if there are none.
-    pub fn next(self: *@This(), es: *const Entities) ?*Node {
+    pub fn next(self: *@This(), es: *const Entities) ?View {
         const pre_entity = self.curr.unwrap() orelse return null;
-        const pre = pre_entity.get(es, Node).?;
-        if (pre.first_child != Entity.Optional.none) {
-            self.curr = pre.first_child;
+        const pre = pre_entity.view(es, View).?;
+        if (pre.node.first_child != Entity.Optional.none) {
+            self.curr = pre.node.first_child;
         } else {
-            var has_next_sib = pre;
+            var has_next_sib = pre.node;
             while (has_next_sib.next_sib.unwrap() == null) {
                 if (has_next_sib.parent.unwrap().? == self.start.unwrap().?) {
                     self.curr = .none;
@@ -469,11 +474,11 @@ pub const PostOrderIterator = struct {
     end: Entity,
 
     /// Returns the next child, or `null` if there are none.
-    pub fn next(self: *@This(), es: *const Entities) ?*Node {
+    pub fn next(self: *@This(), es: *const Entities) ?View {
         const post_entity = self.curr.unwrap() orelse return null;
         if (post_entity == self.end) return null;
-        const post = post_entity.get(es, Node).?;
-        if (post.next_sib.unwrap()) |next_sib| {
+        const post = post_entity.view(es, View).?;
+        if (post.node.next_sib.unwrap()) |next_sib| {
             var curr = next_sib;
             while (curr.get(es, Node).?.first_child.unwrap()) |fc| curr = fc;
             self.curr = curr.toOptional();

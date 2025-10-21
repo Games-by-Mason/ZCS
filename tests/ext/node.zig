@@ -525,10 +525,13 @@ fn checkPostOrderInner(
         if (curr == start) {
             try expectEqual(null, iter.next(&fz.es));
         } else {
-            try expectEqualEntity(
-                curr,
-                fz.es.getEntity(iter.next(&fz.es) orelse return error.ExpectedNext),
-            );
+            // XXX: check getEntity?
+            // try expectEqualEntity(
+            //     curr,
+            //     fz.es.getEntity(iter.next(&fz.es) orelse return error.ExpectedNext),
+            // );
+            const next = iter.next(&fz.es) orelse return error.ExpectedNext;
+            try expectEqualEntity(curr, next.entity);
         }
     } else {
         try expect(curr.get(&fz.es, Node) == null);
@@ -551,11 +554,9 @@ fn checkPreOrderInner(
     iter: *Node.PreOrderIterator,
 ) !void {
     if (curr != start) {
-        const actual = iter.next(&fz.es);
-        try expectEqualEntity(
-            curr,
-            fz.es.getEntity(actual orelse return error.ExpectedNext),
-        );
+        const actual = iter.next(&fz.es) orelse return error.ExpectedNext;
+        // XXX: try expectEqualEntity(curr, fz.es.getEntity(actual.entity)); // test get entity?
+        try expectEqualEntity(curr, actual.entity);
     }
     if (o.entities.get(curr).?.node) |node| {
         const oracle_children = node.children.keys();
