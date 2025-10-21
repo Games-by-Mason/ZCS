@@ -87,7 +87,10 @@ test "immediate" {
     try expect(!child_1.get(&es, Node).?.isAncestorOf(&es, child_2.get(&es, Node).?));
 
     var children = parent.get(&es, Node).?.childIterator();
-    try expectEqual(parent.get(&es, Node).?.first_child.unwrap().?.get(&es, Node).?.siblingIterator(&es), children);
+    try expectEqual(
+        parent.get(&es, Node).?.first_child.unwrap().?.get(&es, Node).?.siblingIterator(&es),
+        children,
+    );
     try expectEqualEntity(child_1, children.next(&es).?.entity);
     try expectEqualEntity(child_2, children.next(&es).?.entity);
     try expectEqual(null, children.next(&es));
@@ -327,7 +330,7 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
 
     while (!fz.smith.isEmpty()) {
         const set_actives = cmds_capacity;
-        comptime std.debug.assert(set_actives > 100); // Make sure there are a decent number of these
+        comptime std.debug.assert(set_actives > 100); // Make sure decent number of these
         for (0..fz.smith.nextLessThan(u16, 100)) |_| {
             try setActive(&fz, &tr, &o);
         }
@@ -597,7 +600,11 @@ fn setParent(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
 
     if (parent.unwrap()) |p| if (!p.exists(&fz.es)) return;
     if (!child.exists(&fz.es)) return;
-    const child_node = (child.viewOrAddImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
+    const child_node = (child.viewOrAddImmediate(
+        &fz.es,
+        struct { *Node },
+        .{&Node{}},
+    ) orelse return)[0];
     if (child_node.uninitialized(&fz.es, tr)) {
         child_node.init(&fz.es, tr);
         try o.roots.put(gpa, child, {});
@@ -624,12 +631,20 @@ fn insert(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
 
     if (!self.exists(&fz.es)) return;
     if (!other.exists(&fz.es)) return;
-    const self_node = (self.viewOrAddImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
+    const self_node = (self.viewOrAddImmediate(
+        &fz.es,
+        struct { *Node },
+        .{&Node{}},
+    ) orelse return)[0];
     if (self_node.uninitialized(&fz.es, tr)) {
         self_node.init(&fz.es, tr);
         try o.roots.put(gpa, self, {});
     }
-    const other_node = (other.viewOrAddImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
+    const other_node = (other.viewOrAddImmediate(
+        &fz.es,
+        struct { *Node },
+        .{&Node{}},
+    ) orelse return)[0];
     if (other_node.uninitialized(&fz.es, tr)) {
         other_node.init(&fz.es, tr);
         try o.roots.put(gpa, other, {});
@@ -647,7 +662,11 @@ fn setActive(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
     if (log) std.debug.print("setActive {f} {}\n", .{ self, active });
 
     if (!self.exists(&fz.es)) return;
-    const self_node = (self.viewOrAddImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
+    const self_node = (self.viewOrAddImmediate(
+        &fz.es,
+        struct { *Node },
+        .{&Node{}},
+    ) orelse return)[0];
     if (self_node.uninitialized(&fz.es, tr)) {
         self_node.init(&fz.es, tr);
         try o.roots.put(gpa, self, {});
