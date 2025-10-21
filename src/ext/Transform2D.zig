@@ -47,6 +47,14 @@ world_from_model: Mat2x3 = .identity,
 /// Whether or not this transform's space is relative to its parent.
 relative: bool = true,
 
+/// It's frequently useful to pair an entity and transform together.
+///
+/// See `Node.View` for rationale.
+pub const View = struct {
+    transform: *Transform2D,
+    entity: Entity,
+};
+
 /// Move the transform in local space by `delta` and then calls `sync`.
 pub fn move(self: *@This(), es: *const Entities, delta: Vec2) void {
     self.pos.add(delta);
@@ -92,12 +100,12 @@ pub inline fn getWorldPos(self: @This()) Vec2 {
 /// children.
 pub fn sync(self: *@This(), es: *const Entities) void {
     var transforms = self.preOrderIterator(es);
-    while (transforms.next(es)) |transform| {
-        const translation: Mat2x3 = .translation(transform.pos);
-        const rotation: Mat2x3 = .rotation(transform.rot);
-        const scale: Mat2x3 = .scale(transform.scale);
-        const parent_world_from_model = transform.getRelativeWorldFromModel(es);
-        transform.world_from_model = scale.applied(rotation).applied(translation).applied(parent_world_from_model);
+    while (transforms.next(es)) |curr| {
+        const translation: Mat2x3 = .translation(curr.transform.pos);
+        const rotation: Mat2x3 = .rotation(curr.transform.rot);
+        const scale: Mat2x3 = .scale(curr.transform.scale);
+        const parent_world_from_model = curr.transform.getRelativeWorldFromModel(es);
+        curr.transform.world_from_model = scale.applied(rotation).applied(translation).applied(parent_world_from_model);
     }
 }
 
@@ -132,24 +140,27 @@ pub const PreOrderIterator = struct {
     pointer_lock: PointerLock,
 
     /// Returns the next transform.
-    pub fn next(self: *@This(), es: *const Entities) ?*Transform2D {
+    pub fn next(self: *@This(), es: *const Entities) ?View {
         self.pointer_lock.check(es.pointer_generation);
 
         if (self.parent) |parent| {
             self.parent = null;
-            return parent;
+            return .{
+                .entity = es.getEntity(parent),
+                .transform = parent,
+            };
         }
 
-        while (self.children.next(es)) |node| {
+        while (self.children.next(es)) |child| {
             // If the next child has a transform and that transform is relative to its parent,
             // return it.
-            if (es.getComp(node, Transform2D)) |transform| {
-                if (transform.relative) {
-                    return transform;
+            if (child.entity.view(es, View)) |curr| {
+                if (curr.transform.relative) {
+                    return curr;
                 }
             }
             // Otherwise, skip this subtree.
-            self.children.skipSubtree(es, node);
+            self.children.skipSubtree(es, child.node);
         }
 
         return null;
@@ -234,7 +245,7 @@ pub const Exec = struct {
                     if (arch_change.entity.get(es, Node)) |node| {
                         var children = node.childIterator();
                         while (children.next(es)) |child| {
-                            if (es.getComp(child, Transform2D)) |child_transform| {
+                            if (child.entity.get(es, Transform2D)) |child_transform| {
                                 child_transform.sync(es);
                             }
                         }

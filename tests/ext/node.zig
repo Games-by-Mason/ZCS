@@ -87,9 +87,12 @@ test "immediate" {
     try expect(!child_1.get(&es, Node).?.isAncestorOf(&es, child_2.get(&es, Node).?));
 
     var children = parent.get(&es, Node).?.childIterator();
-    try expectEqual(parent.get(&es, Node).?.first_child.unwrap().?.get(&es, Node).?.siblingIterator(&es), children);
-    try expectEqualEntity(child_1, es.getEntity(children.next(&es).?));
-    try expectEqualEntity(child_2, es.getEntity(children.next(&es).?));
+    try expectEqual(
+        parent.get(&es, Node).?.first_child.unwrap().?.get(&es, Node).?.siblingIterator(&es),
+        children,
+    );
+    try expectEqualEntity(child_1, children.next(&es).?.entity);
+    try expectEqualEntity(child_2, children.next(&es).?.entity);
     try expectEqual(null, children.next(&es));
 
     parent.get(&es, Node).?.destroyImmediate(&es, &tr);
@@ -98,6 +101,52 @@ test "immediate" {
     try expect(!child_2.exists(&es));
 
     try expect(!empty.get(&es, Node).?.isAncestorOf(&es, empty.get(&es, Node).?));
+
+    // Test `getInAncestor` and `viewInAncestor`
+    {
+        const target = Entity.reserveImmediate(&es);
+        try expect(target.changeArchImmediate(
+            &es,
+            struct { Node, Model },
+            .{ .add = .{
+                Node{},
+                Model.interned[0],
+            } },
+        ));
+        const target_node = target.get(&es, Node).?;
+        target_node.init(&es, &tr);
+
+        const child = Entity.reserveImmediate(&es);
+        try expect(child.changeArchImmediate(
+            &es,
+            struct { Node },
+            .{ .add = .{Node{}} },
+        ));
+        const child_node = child.get(&es, Node).?;
+        child_node.init(&es, &tr);
+
+        const child_child = Entity.reserveImmediate(&es);
+        try expect(child_child.changeArchImmediate(
+            &es,
+            struct { Node },
+            .{ .add = .{Node{}} },
+        ));
+        const child_child_node = child_child.get(&es, Node).?;
+        child_child_node.init(&es, &tr);
+
+        child_child_node.setParentImmediate(&es, &tr, child_node);
+        child_node.setParentImmediate(&es, &tr, target_node);
+
+        try expectEqual(child_child_node.getInAncestor(&es, Model).?, target.get(&es, Model).?);
+        const vw = child_child_node.viewInAncestor(&es, struct {
+            model: *Model,
+            node: *Node,
+            entity: Entity,
+        }).?;
+        try expectEqual(vw.model, target.get(&es, Model).?);
+        try expectEqual(vw.node, target_node);
+        try expectEqual(vw.entity, target);
+    }
 }
 
 test "fuzz immediate" {
@@ -281,7 +330,7 @@ fn fuzzNodesCmdBuf(_: void, input: []const u8) !void {
 
     while (!fz.smith.isEmpty()) {
         const set_actives = cmds_capacity;
-        comptime std.debug.assert(set_actives > 100); // Make sure there are a decent number of these
+        comptime std.debug.assert(set_actives > 100); // Make sure decent number of these
         for (0..fz.smith.nextLessThan(u16, 100)) |_| {
             try setActive(&fz, &tr, &o);
         }
@@ -403,12 +452,11 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle, tr: *const Node.Tree, extra_reserv
             for (0..keys.len) |i| {
                 const expected = keys[keys.len - i - 1];
                 const child = children.next(&fz.es).?;
-                const child_entity = fz.es.getEntity(child);
-                try expectEqualEntity(expected, child_entity);
+                try expectEqualEntity(expected, child.entity);
 
                 // Validate prev pointers to catch issues sooner
-                try expectEqualEntity(prev_sibling, child.prev_sib);
-                prev_sibling = child_entity.toOptional();
+                try expectEqualEntity(prev_sibling, child.node.prev_sib);
+                prev_sibling = child.entity.toOptional();
             }
             try expectEqual(null, children.next(&fz.es));
         }
@@ -436,7 +484,7 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle, tr: *const Node.Tree, extra_reserv
     {
         var children = tr.childIterator();
         while (children.next(&fz.es)) |root| {
-            try checkActiveInHierarchy(&fz.es, root, true);
+            try checkActiveInHierarchy(&fz.es, root.node, true);
         }
     }
 }
@@ -448,7 +496,7 @@ fn checkActiveInHierarchy(es: *const Entities, node: *const Node, parent_active:
     // Check our children
     var children = node.childIterator();
     while (children.next(es)) |child| {
-        try checkActiveInHierarchy(es, child, node.active_in_hierarchy);
+        try checkActiveInHierarchy(es, child.node, node.active_in_hierarchy);
     }
 }
 
@@ -476,10 +524,8 @@ fn checkPostOrderInner(
         if (curr == start) {
             try expectEqual(null, iter.next(&fz.es));
         } else {
-            try expectEqualEntity(
-                curr,
-                fz.es.getEntity(iter.next(&fz.es) orelse return error.ExpectedNext),
-            );
+            const next = iter.next(&fz.es) orelse return error.ExpectedNext;
+            try expectEqualEntity(curr, next.entity);
         }
     } else {
         try expect(curr.get(&fz.es, Node) == null);
@@ -502,11 +548,8 @@ fn checkPreOrderInner(
     iter: *Node.PreOrderIterator,
 ) !void {
     if (curr != start) {
-        const actual = iter.next(&fz.es);
-        try expectEqualEntity(
-            curr,
-            fz.es.getEntity(actual orelse return error.ExpectedNext),
-        );
+        const actual = iter.next(&fz.es) orelse return error.ExpectedNext;
+        try expectEqualEntity(curr, actual.entity);
     }
     if (o.entities.get(curr).?.node) |node| {
         const oracle_children = node.children.keys();
@@ -557,7 +600,11 @@ fn setParent(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
 
     if (parent.unwrap()) |p| if (!p.exists(&fz.es)) return;
     if (!child.exists(&fz.es)) return;
-    const child_node = (child.viewOrAddImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
+    const child_node = (child.viewOrAddImmediate(
+        &fz.es,
+        struct { *Node },
+        .{&Node{}},
+    ) orelse return)[0];
     if (child_node.uninitialized(&fz.es, tr)) {
         child_node.init(&fz.es, tr);
         try o.roots.put(gpa, child, {});
@@ -584,12 +631,20 @@ fn insert(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
 
     if (!self.exists(&fz.es)) return;
     if (!other.exists(&fz.es)) return;
-    const self_node = (self.viewOrAddImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
+    const self_node = (self.viewOrAddImmediate(
+        &fz.es,
+        struct { *Node },
+        .{&Node{}},
+    ) orelse return)[0];
     if (self_node.uninitialized(&fz.es, tr)) {
         self_node.init(&fz.es, tr);
         try o.roots.put(gpa, self, {});
     }
-    const other_node = (other.viewOrAddImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
+    const other_node = (other.viewOrAddImmediate(
+        &fz.es,
+        struct { *Node },
+        .{&Node{}},
+    ) orelse return)[0];
     if (other_node.uninitialized(&fz.es, tr)) {
         other_node.init(&fz.es, tr);
         try o.roots.put(gpa, other, {});
@@ -607,7 +662,11 @@ fn setActive(fz: *Fuzzer, tr: *Node.Tree, o: *Oracle) !void {
     if (log) std.debug.print("setActive {f} {}\n", .{ self, active });
 
     if (!self.exists(&fz.es)) return;
-    const self_node = (self.viewOrAddImmediate(&fz.es, struct { *Node }, .{&Node{}}) orelse return)[0];
+    const self_node = (self.viewOrAddImmediate(
+        &fz.es,
+        struct { *Node },
+        .{&Node{}},
+    ) orelse return)[0];
     if (self_node.uninitialized(&fz.es, tr)) {
         self_node.init(&fz.es, tr);
         try o.roots.put(gpa, self, {});

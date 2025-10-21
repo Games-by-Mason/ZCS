@@ -131,7 +131,10 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
         switch (mode) {
             .build => {
                 // Build a random tree with interesting topology
-                if (log) std.debug.print("build phase ({}/{})\n", .{ smith.index, smith.input.len });
+                if (log) std.debug.print("build phase ({}/{})\n", .{
+                    smith.index,
+                    smith.input.len,
+                });
                 for (0..smith.nextBetween(u8, 8, 16)) |_| {
                     if (smith.isEmpty()) break;
 
@@ -151,7 +154,10 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
                     });
                     try all.append(gpa, child);
                     if (smith.next(u8) > 40) {
-                        const parent: Entity.Optional = all.items[smith.nextLessThan(usize, all.items.len)].toOptional();
+                        const parent: Entity.Optional = all.items[smith.nextLessThan(
+                                usize,
+                                all.items.len,
+                            )].toOptional();
                         if (log) std.debug.print("  {}.parent = {}\n", .{ child, parent });
                         cb.ext(SetParent, .{ .child = child, .parent = parent });
                     }
@@ -159,7 +165,11 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
                 mode = .{ .mutate = .{ .steps = 5 } };
             },
             .mutate => |mutate| {
-                if (log) std.debug.print("mutate step {} ({}/{})\n", .{ mutate.steps, smith.index, smith.input.len });
+                if (log) std.debug.print("mutate step {} ({}/{})\n", .{
+                    mutate.steps,
+                    smith.index,
+                    smith.input.len,
+                });
                 // Generate random commands
                 for (0..smith.nextBetween(u8, 1, 10)) |_| {
                     switch (smith.next(enum { reserve, parent, remove, move })) {
@@ -177,16 +187,29 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
                                 });
                                 try all.append(gpa, child);
                                 if (smith.next(u8) > 40) {
-                                    const parent: Entity.Optional = all.items[smith.nextLessThan(usize, all.items.len)].toOptional();
-                                    if (log) std.debug.print("  {}.parent = {}\n", .{ child, parent });
+                                    const parent: Entity.Optional = all.items[
+                                        smith.nextLessThan(
+                                            usize,
+                                            all.items.len,
+                                        )
+                                    ].toOptional();
+                                    if (log) std.debug.print("  {}.parent = {}\n", .{
+                                        child,
+                                        parent,
+                                    });
                                     cb.ext(SetParent, .{ .child = child, .parent = parent });
                                 }
                             }
                         },
                         .parent => if (all.items.len > 0) {
-                            const parent: Entity.Optional = if (smith.nextLessThan(u8, 100) > 10) b: {
-                                break :b all.items[smith.nextLessThan(usize, all.items.len)].toOptional();
-                            } else .none;
+                            const parent = if (smith.nextLessThan(u8, 100) > 10) b: {
+                                break :b all.items[
+                                    smith.nextLessThan(
+                                        usize,
+                                        all.items.len,
+                                    )
+                                ].toOptional();
+                            } else Entity.Optional.none;
                             const child = all.items[smith.nextLessThan(usize, all.items.len)];
                             if (log) std.debug.print("  {}.parent = {}\n", .{ child, parent });
                             cb.ext(SetParent, .{ .child = child, .parent = parent });
@@ -274,13 +297,16 @@ fn checkOracle(es: *const Entities) !void {
             if (vw.node) |node| {
                 var ancestors = node.ancestorIterator();
                 while (ancestors.next(es)) |ancestor| {
-                    const transform = es.getComp(ancestor, Transform) orelse break;
+                    const transform = ancestor.entity.get(es, Transform) orelse break;
                     try path.append(gpa, transform);
                     if (!transform.relative) break;
                 }
             }
         }
-        if (log) std.debug.print("  {} path len: {}\n", .{ Entity.from(es, vw.transform), path.items.len });
+        if (log) std.debug.print("  {} path len: {}\n", .{
+            Entity.from(es, vw.transform),
+            path.items.len,
+        });
 
         // Iterate over the path in reverse order to get the ground truth world matrix
         var world_from_model: Mat2x3 = .identity;
@@ -289,7 +315,10 @@ fn checkOracle(es: *const Entities) !void {
             const scale: Mat2x3 = .scale(ancestor.scale);
             const rotation: Mat2x3 = .rotation(ancestor.rot);
             const translation: Mat2x3 = .translation(ancestor.pos);
-            world_from_model = scale.applied(rotation).applied(translation).applied(world_from_model);
+            world_from_model = scale
+                .applied(rotation)
+                .applied(translation)
+                .applied(world_from_model);
             sum.add(ancestor.pos);
         }
         try expectMat2x3Equal(world_from_model, vw.transform.world_from_model);
