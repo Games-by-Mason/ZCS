@@ -52,8 +52,6 @@ pub const Tree = struct {
     }
 };
 
-// XXX: update the transform iterator too? include node or no?
-// XXX: use in all iterators? update tests?
 /// It's frequently useful to pair an entity and node together.
 ///
 /// Node iterators for example need to retrieve both the node and the entity to function, and the
@@ -108,7 +106,6 @@ pub fn setActive(self: *@This(), es: *const Entities, active: bool) void {
     }
 }
 
-// XXX: replace all calls to getEntity if possible here, and maybe in transform
 /// Updates `active_in_hierarchy` for this node, and propagates any resulting change to its its
 /// transitive children.
 pub fn sync(self: *@This(), es: *const Entities) void {
@@ -158,7 +155,8 @@ pub fn getNextSib(self: *const @This(), es: *const Entities) ?*Node {
     return next_sib.get(es, Node).?;
 }
 
-// XXX: document, merge, switch to view to improve
+/// Returns a pointer to the `T` component of the nearest ancestor containing `T`, or `null` if no
+/// ancestors contain a `T` component.
 pub fn getInAncestor(self: *const @This(), es: *const Entities, T: type) ?*T {
     var ancestors = self.ancestorIterator();
     while (ancestors.next(es)) |ancestor| {
@@ -169,7 +167,7 @@ pub fn getInAncestor(self: *const @This(), es: *const Entities, T: type) ?*T {
     return null;
 }
 
-// XXX: document, merge, switch to view to improve
+/// Similar to `getInAncestor`, but returns views.
 pub fn viewInAncestor(self: *const @This(), es: *const Entities, T: type) ?T {
     var ancestors = self.ancestorIterator();
     while (ancestors.next(es)) |ancestor| {

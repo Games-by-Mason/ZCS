@@ -88,9 +88,6 @@ test "immediate" {
 
     var children = parent.get(&es, Node).?.childIterator();
     try expectEqual(parent.get(&es, Node).?.first_child.unwrap().?.get(&es, Node).?.siblingIterator(&es), children);
-    // XXX: test getEntity version or no?
-    // try expectEqualEntity(child_1, es.getEntity(children.next(&es).?));
-    // try expectEqualEntity(child_2, es.getEntity(children.next(&es).?));
     try expectEqualEntity(child_1, children.next(&es).?.entity);
     try expectEqualEntity(child_2, children.next(&es).?.entity);
     try expectEqual(null, children.next(&es));
@@ -102,7 +99,7 @@ test "immediate" {
 
     try expect(!empty.get(&es, Node).?.isAncestorOf(&es, empty.get(&es, Node).?));
 
-    // XXX: check getInAncestor and viewInAncestor
+    // Test `getInAncestor` and `viewInAncestor`
     {
         const target = Entity.reserveImmediate(&es);
         try expect(target.changeArchImmediate(
@@ -452,7 +449,6 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle, tr: *const Node.Tree, extra_reserv
             for (0..keys.len) |i| {
                 const expected = keys[keys.len - i - 1];
                 const child = children.next(&fz.es).?;
-                // const child_entity = fz.es.getEntity(child); // XXX: make sure eq to child.entity or tested elsewhere?
                 try expectEqualEntity(expected, child.entity);
 
                 // Validate prev pointers to catch issues sooner
@@ -525,11 +521,6 @@ fn checkPostOrderInner(
         if (curr == start) {
             try expectEqual(null, iter.next(&fz.es));
         } else {
-            // XXX: check getEntity?
-            // try expectEqualEntity(
-            //     curr,
-            //     fz.es.getEntity(iter.next(&fz.es) orelse return error.ExpectedNext),
-            // );
             const next = iter.next(&fz.es) orelse return error.ExpectedNext;
             try expectEqualEntity(curr, next.entity);
         }
@@ -555,7 +546,6 @@ fn checkPreOrderInner(
 ) !void {
     if (curr != start) {
         const actual = iter.next(&fz.es) orelse return error.ExpectedNext;
-        // XXX: try expectEqualEntity(curr, fz.es.getEntity(actual.entity)); // test get entity?
         try expectEqualEntity(curr, actual.entity);
     }
     if (o.entities.get(curr).?.node) |node| {
