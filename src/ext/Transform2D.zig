@@ -234,7 +234,7 @@ pub const Exec = struct {
                     if (arch_change.entity.get(es, Node)) |node| {
                         var children = node.childIterator();
                         while (children.next(es)) |child| {
-                            if (es.getComp(child, Transform2D)) |child_transform| {
+                            if (child.entity.get(es, Transform2D)) |child_transform| {
                                 child_transform.sync(es);
                             }
                         }

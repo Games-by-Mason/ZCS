@@ -274,7 +274,7 @@ fn checkOracle(es: *const Entities) !void {
             if (vw.node) |node| {
                 var ancestors = node.ancestorIterator();
                 while (ancestors.next(es)) |ancestor| {
-                    const transform = es.getComp(ancestor, Transform) orelse break;
+                    const transform = ancestor.entity.get(es, Transform) orelse break;
                     try path.append(gpa, transform);
                     if (!transform.relative) break;
                 }

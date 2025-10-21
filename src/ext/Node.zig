@@ -22,6 +22,20 @@ const Zone = tracy.Zone;
 
 const Node = @This();
 
+/// This node's parent.
+parent: Entity.Optional = .none,
+/// This node's first child.
+first_child: Entity.Optional = .none,
+/// This node's previous sibling.
+prev_sib: Entity.Optional = .none,
+/// This node's next sibling.
+next_sib: Entity.Optional = .none,
+/// Whether or not this node is marked as active. Typically used to hide inactive objects.
+active_self: bool = true,
+/// Whether or not this node and all of its parents are marked as active.
+active_in_hierarchy: bool = true,
+
+/// The node tree. The user must store this somewhere.
 pub const Tree = struct {
     pub const empty: @This() = .{ .first_child = .none };
     first_child: Entity.Optional,
@@ -38,18 +52,12 @@ pub const Tree = struct {
     }
 };
 
-/// This node's parent.
-parent: Entity.Optional = .none,
-/// This node's first child.
-first_child: Entity.Optional = .none,
-/// This node's previous sibling.
-prev_sib: Entity.Optional = .none,
-/// This node's next sibling.
-next_sib: Entity.Optional = .none,
-/// Whether or not this node is marked as active. Typically used to hide inactive objects.
-active_self: bool = true,
-/// Whether or not this node and all of its parents are marked as active.
-active_in_hierarchy: bool = true,
+// XXX: use in all iterators? update tests?
+/// It's frequently useful to pair an entity and node together.
+pub const View = struct {
+    entity: Entity,
+    node: *Node,
+};
 
 /// Default formatting.
 pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
@@ -143,6 +151,28 @@ pub fn getPrevSib(self: *const @This(), es: *const Entities) ?*Node {
 pub fn getNextSib(self: *const @This(), es: *const Entities) ?*Node {
     const next_sib = self.next_sib.unwrap() orelse return null;
     return next_sib.get(es, Node).?;
+}
+
+// XXX: document, merge, switch to view to improve
+pub fn getInAncestor(self: *const @This(), es: *const Entities, T: type) ?*T {
+    var ancestors = self.ancestorIterator();
+    while (ancestors.next(es)) |ancestor| {
+        if (ancestor.entity.get(es, T)) |result| {
+            return result;
+        }
+    }
+    return null;
+}
+
+// XXX: document, merge, switch to view to improve
+pub fn viewInAncestor(self: *const @This(), es: *const Entities, T: type) ?T {
+    var ancestors = self.ancestorIterator();
+    while (ancestors.next(es)) |ancestor| {
+        if (ancestor.entity.view(es, T)) |result| {
+            return result;
+        }
+    }
+    return null;
 }
 
 /// Similar to the `SetParent` command, but sets the parent immediately.
@@ -330,11 +360,11 @@ pub const AncestorIterator = struct {
     curr: Entity.Optional,
 
     /// Returns the next ancestor, or `null` if there are none.
-    pub fn next(self: *@This(), es: *const Entities) ?*Node {
+    pub fn next(self: *@This(), es: *const Entities) ?View {
         const entity = self.curr.unwrap() orelse return null;
-        const node = entity.get(es, Node).?;
-        self.curr = node.parent;
-        return node;
+        const next_view = entity.view(es, View).?;
+        self.curr = next_view.node.parent;
+        return next_view;
     }
 };
 
@@ -348,11 +378,11 @@ pub const SiblingIterator = struct {
     curr: Entity.Optional,
 
     /// Returns the next sibling, or `null` if there are none.
-    pub fn next(self: *@This(), es: *const Entities) ?*Node {
+    pub fn next(self: *@This(), es: *const Entities) ?View {
         const entity = self.curr.unwrap() orelse return null;
-        const node = entity.get(es, Node).?;
-        self.curr = node.next_sib;
-        return node;
+        const next_view = entity.view(es, View).?;
+        self.curr = next_view.node.next_sib;
+        return next_view;
     }
 };
 

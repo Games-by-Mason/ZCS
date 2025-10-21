@@ -88,8 +88,11 @@ test "immediate" {
 
     var children = parent.get(&es, Node).?.childIterator();
     try expectEqual(parent.get(&es, Node).?.first_child.unwrap().?.get(&es, Node).?.siblingIterator(&es), children);
-    try expectEqualEntity(child_1, es.getEntity(children.next(&es).?));
-    try expectEqualEntity(child_2, es.getEntity(children.next(&es).?));
+    // XXX: test getEntity version or no?
+    // try expectEqualEntity(child_1, es.getEntity(children.next(&es).?));
+    // try expectEqualEntity(child_2, es.getEntity(children.next(&es).?));
+    try expectEqualEntity(child_1, children.next(&es).?.entity);
+    try expectEqualEntity(child_2, children.next(&es).?.entity);
     try expectEqual(null, children.next(&es));
 
     parent.get(&es, Node).?.destroyImmediate(&es, &tr);
@@ -98,6 +101,52 @@ test "immediate" {
     try expect(!child_2.exists(&es));
 
     try expect(!empty.get(&es, Node).?.isAncestorOf(&es, empty.get(&es, Node).?));
+
+    // XXX: check getInAncestor and viewInAncestor
+    {
+        const target = Entity.reserveImmediate(&es);
+        try expect(target.changeArchImmediate(
+            &es,
+            struct { Node, Model },
+            .{ .add = .{
+                Node{},
+                Model.interned[0],
+            } },
+        ));
+        const target_node = target.get(&es, Node).?;
+        target_node.init(&es, &tr);
+
+        const child = Entity.reserveImmediate(&es);
+        try expect(child.changeArchImmediate(
+            &es,
+            struct { Node },
+            .{ .add = .{Node{}} },
+        ));
+        const child_node = child.get(&es, Node).?;
+        child_node.init(&es, &tr);
+
+        const child_child = Entity.reserveImmediate(&es);
+        try expect(child_child.changeArchImmediate(
+            &es,
+            struct { Node },
+            .{ .add = .{Node{}} },
+        ));
+        const child_child_node = child_child.get(&es, Node).?;
+        child_child_node.init(&es, &tr);
+
+        child_child_node.setParentImmediate(&es, &tr, child_node);
+        child_node.setParentImmediate(&es, &tr, target_node);
+
+        try expectEqual(child_child_node.getInAncestor(&es, Model).?, target.get(&es, Model).?);
+        const vw = child_child_node.viewInAncestor(&es, struct {
+            model: *Model,
+            node: *Node,
+            entity: Entity,
+        }).?;
+        try expectEqual(vw.model, target.get(&es, Model).?);
+        try expectEqual(vw.node, target_node);
+        try expectEqual(vw.entity, target);
+    }
 }
 
 test "fuzz immediate" {
@@ -403,12 +452,12 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle, tr: *const Node.Tree, extra_reserv
             for (0..keys.len) |i| {
                 const expected = keys[keys.len - i - 1];
                 const child = children.next(&fz.es).?;
-                const child_entity = fz.es.getEntity(child);
-                try expectEqualEntity(expected, child_entity);
+                // const child_entity = fz.es.getEntity(child); // XXX: make sure eq to child.entity or tested elsewhere?
+                try expectEqualEntity(expected, child.entity);
 
                 // Validate prev pointers to catch issues sooner
-                try expectEqualEntity(prev_sibling, child.prev_sib);
-                prev_sibling = child_entity.toOptional();
+                try expectEqualEntity(prev_sibling, child.node.prev_sib);
+                prev_sibling = child.entity.toOptional();
             }
             try expectEqual(null, children.next(&fz.es));
         }
@@ -436,7 +485,7 @@ fn checkOracle(fz: *Fuzzer, o: *const Oracle, tr: *const Node.Tree, extra_reserv
     {
         var children = tr.childIterator();
         while (children.next(&fz.es)) |root| {
-            try checkActiveInHierarchy(&fz.es, root, true);
+            try checkActiveInHierarchy(&fz.es, root.node, true);
         }
     }
 }
@@ -448,7 +497,7 @@ fn checkActiveInHierarchy(es: *const Entities, node: *const Node, parent_active:
     // Check our children
     var children = node.childIterator();
     while (children.next(es)) |child| {
-        try checkActiveInHierarchy(es, child, node.active_in_hierarchy);
+        try checkActiveInHierarchy(es, child.node, node.active_in_hierarchy);
     }
 }
 
