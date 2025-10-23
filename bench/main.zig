@@ -194,9 +194,9 @@ pub fn main() !void {
             defer fill_fast_zone.end();
             for (0..max_entities) |i| {
                 const e = Entity.reserve(&cb);
-                e.add(&cb, A, @intCast(i));
-                e.add(&cb, B, @intCast(i));
-                e.add(&cb, C, @intCast(i));
+                _ = e.add(&cb, A, @intCast(i));
+                _ = e.add(&cb, B, @intCast(i));
+                _ = e.add(&cb, C, @intCast(i));
             }
         }
     }
@@ -256,9 +256,9 @@ pub fn main() !void {
                     defer first_half_zone.end(&cb);
                     for (0..max_entities / 2) |i| {
                         const e = Entity.reserve(&cb);
-                        e.add(&cb, A, @intCast(i));
-                        e.add(&cb, B, @intCast(i));
-                        e.add(&cb, C, @intCast(i));
+                        _ = e.add(&cb, A, @intCast(i));
+                        _ = e.add(&cb, B, @intCast(i));
+                        _ = e.add(&cb, C, @intCast(i));
                     }
                 }
                 {
@@ -269,9 +269,9 @@ pub fn main() !void {
                     defer second_half_zone.end(&cb);
                     for (max_entities / 2..max_entities) |i| {
                         const e = Entity.reserve(&cb);
-                        e.add(&cb, A, @intCast(i));
-                        e.add(&cb, B, @intCast(i));
-                        e.add(&cb, C, @intCast(i));
+                        _ = e.add(&cb, A, @intCast(i));
+                        _ = e.add(&cb, B, @intCast(i));
+                        _ = e.add(&cb, C, @intCast(i));
                     }
                 }
             }

@@ -293,7 +293,8 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                             if (log) std.debug.print("ext val foo\n", .{});
                             const val = try gpa.create(FooExt);
                             val.* = smith.next(FooExt);
-                            try expectEqual(cb.extVal(FooExt, val.*).*, val.*);
+                            const encoded = cb.extVal(FooExt, undefined);
+                            encoded.* = val.*;
                             oracle.appendAssumeCapacity(.{ .ext = .init(FooExt, val) });
                         },
                         .bar => {

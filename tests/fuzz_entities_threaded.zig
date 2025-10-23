@@ -117,19 +117,19 @@ fn updateEntity(
             assert(ctx.fz.committed.swapRemove(e));
         },
         .add_rb => |add_rb| {
-            e.add(cb, RigidBody, add_rb);
+            assert(std.meta.eql(e.add(cb, RigidBody, add_rb).*, add_rb));
             ctx.mutex.lock();
             defer ctx.mutex.unlock();
             ctx.fz.committed.getPtr(e).?.rb = add_rb;
         },
         .add_tag => |add_tag| {
-            e.add(cb, Tag, add_tag);
+            assert(std.meta.eql(e.add(cb, Tag, add_tag).*, add_tag));
             ctx.mutex.lock();
             defer ctx.mutex.unlock();
             ctx.fz.committed.getPtr(e).?.tag = add_tag;
         },
         .add_model => |add_model| {
-            e.add(cb, Model, add_model);
+            assert(std.meta.eql(e.add(cb, Model, add_model).*, add_model));
             ctx.mutex.lock();
             defer ctx.mutex.unlock();
             ctx.fz.committed.getPtr(e).?.model = add_model;

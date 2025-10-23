@@ -17,6 +17,8 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualEntity = @import("root.zig").expectEqualEntity;
 
+const assert = std.debug.assert;
+
 const log = false;
 
 const Event = struct {
@@ -24,7 +26,8 @@ const Event = struct {
 
     pub fn emit(cb: *CmdBuf, payload: u21) Entity {
         const e: Entity = .reserve(cb);
-        e.add(cb, @This(), .{ .payload = payload });
+        const event: @This() = .{ .payload = payload };
+        assert(std.meta.eql(e.add(cb, @This(), event).*, event));
         return e;
     }
 

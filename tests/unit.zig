@@ -80,7 +80,7 @@ test "cb execImmediate" {
     const rb = RigidBody.random(rand);
     const model = Model.random(rand);
     e3.destroy(&cb);
-    e2.add(&cb, RigidBody, rb);
+    try expectEqual(e2.add(&cb, RigidBody, rb).*, rb);
     try expectEqual(4, es.reserved());
     try expectEqual(0, es.count());
     CmdBuf.Exec.immediate(&es, &cb);
@@ -115,7 +115,7 @@ test "cb execImmediate" {
 
     e0.remove(&cb, RigidBody);
     e1.remove(&cb, RigidBody);
-    e2.add(&cb, Model, model);
+    try expectEqual(e2.add(&cb, Model, model).*, model);
     e2.remove(&cb, RigidBody);
     CmdBuf.Exec.immediate(&es, &cb);
 
@@ -143,7 +143,7 @@ fn incrementCb(
     counter: *u32,
 ) void {
     const e = Entity.reserve(cb);
-    e.add(cb, u8, 0);
+    assert(e.add(cb, u8, 0).* == 0);
 
     counter.* += ctx.by;
 }
@@ -324,7 +324,7 @@ fn testBlockingFill(name: []const u8, cp: *CmdPool, options: *TestBlockingTask) 
 
     // Fill the command buffer to at least 50% worst case usage
     while (ar.cb.worstCaseUsage() < 0.5) {
-        ar.cb.ext(u8, 0);
+        assert(ar.cb.ext(u8, 0).* == 0);
     }
 
     // Release the command buffer
@@ -536,15 +536,15 @@ test "cb interning" {
     const e2: Entity = .reserveImmediate(&es);
 
     // Automatic interning
-    e0.add(&cb, Model, model_value);
-    e0.add(&cb, RigidBody, rb_interned);
-    cb.ext(BarExt, bar_ev_value);
-    cb.ext(FooExt, foo_ev_interned);
+    try expectEqual(e0.add(&cb, Model, model_value).*, model_value);
+    try expectEqual(e0.add(&cb, RigidBody, rb_interned).*, rb_interned);
+    try expectEqual(cb.ext(BarExt, bar_ev_value).*, bar_ev_value);
+    try expectEqual(cb.ext(FooExt, foo_ev_interned).*, foo_ev_interned);
 
-    e1.add(&cb, Model, model_interned);
-    e1.add(&cb, RigidBody, rb_value);
-    cb.ext(BarExt, bar_ev_interned);
-    cb.ext(FooExt, foo_ev_value);
+    try expectEqual(e1.add(&cb, Model, model_interned).*, model_interned);
+    try expectEqual(e1.add(&cb, RigidBody, rb_value).*, rb_value);
+    try expectEqual(cb.ext(BarExt, bar_ev_interned).*, bar_ev_interned);
+    try expectEqual(cb.ext(FooExt, foo_ev_value).*, foo_ev_value);
 
     // Explicit by value
     try expectEqual(e0.addVal(&cb, Model, model_value).*, model_value);
@@ -575,10 +575,10 @@ test "cb interning" {
     cb.extPtr(FooExt, &foo_ev_interned);
 
     // Zero sized types
-    e1.add(&cb, Tag, .{});
+    try expectEqual(e1.add(&cb, Tag, .{}).*, Tag{});
     try expectEqual(e1.addVal(&cb, Tag, .{}).*, Tag{});
     e1.addPtr(&cb, Tag, &.{});
-    cb.ext(BazExt, .{});
+    try expectEqual(cb.ext(BazExt, .{}).*, BazExt{});
     try expectEqual(cb.extVal(BazExt, .{}).*, BazExt{});
     cb.extPtr(BazExt, &.{});
 
@@ -778,7 +778,7 @@ test "cb overflow" {
         const e: Entity = Entity.reserveImmediate(&es);
         const rb = RigidBody.random(rand);
 
-        _ = Entity.reserveImmediate(&es).add(&cb, RigidBody, rb);
+        try expectEqual(Entity.reserveImmediate(&es).add(&cb, RigidBody, rb).*, rb);
         e.commit(&cb);
         try expectError(error.ZcsCmdBufOverflow, e.addValOrErr(
             &cb,
@@ -809,7 +809,7 @@ test "cb overflow" {
         const e: Entity = Entity.reserveImmediate(&es);
         const foo = FooExt.random(rand);
 
-        cb.ext(FooExt, foo);
+        try expectEqual(cb.ext(FooExt, foo).*, foo);
         e.destroy(&cb);
         try expectError(error.ZcsCmdBufOverflow, cb.extValOrErr(
             FooExt,
@@ -1184,7 +1184,7 @@ test "getAll" {
         .cap = .{ .cmds = 24 },
     });
     defer cb.deinit(gpa, &es);
-    cb.ext(BarExt, .{ .bar = 1 });
+    try expectEqual(cb.ext(BarExt, .{ .bar = 1 }).*, BarExt{ .bar = 1 });
     CmdBuf.Exec.immediate(&es, &cb);
 
     const registered = CompFlag.getAll();

@@ -181,25 +181,25 @@ pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
     self.* = undefined;
 }
 
-// XXX: return const ptr?
 /// Appends an extension command to the buffer. If you need a pointer to the added extension, see
 /// `extVal`. If you need a pointer to the encoded payload, see `extVal`.
 ///
 /// See notes on `Entity.add` with regards to performance and pass by value vs pointer.
-pub inline fn ext(self: *@This(), T: type, payload: T) void {
+pub inline fn ext(self: *@This(), T: type, payload: T) *const T {
     // Don't get tempted to remove inline from here! It's required for `isComptimeKnown`.
     comptime assert(@typeInfo(@TypeOf(ext)).@"fn".calling_convention == .@"inline");
     if (@sizeOf(T) > @sizeOf(*T) and meta.isComptimeKnown(payload)) {
         const Interned = struct {
             const value = payload;
         };
-        self.extPtr(T, comptime &Interned.value);
+        const ptr = comptime &Interned.value;
+        self.extPtr(T, ptr);
+        return ptr;
     } else {
-        _ = self.extVal(T, payload);
+        return self.extVal(T, payload);
     }
 }
 
-// XXX: test modifying result
 /// Similar to `extOrErr`, but forces the command to be copied by value to the command buffer.
 /// Returns a pointer to the payload in the command buffer that is valid until the command buffer is
 /// cleared. Prefer `ext` unless you need the result pointer.

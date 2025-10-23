@@ -334,7 +334,7 @@ fn addRandomComp(fz: *Fuzzer, cb: *CmdBuf, e: Entity, T: type) !T {
         }
     } else if (i < 200) {
         const val = fz.smith.next(T);
-        e.add(cb, T, val);
+        try expectEqual(e.add(cb, T, val).*, val);
         return val;
     } else {
         const encoded = e.addVal(cb, T, undefined);

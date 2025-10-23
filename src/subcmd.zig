@@ -155,7 +155,12 @@ pub const Subcmd = union(enum) {
     }
 
     /// Encode adding a component to an entity by pointer.
-    pub fn encodeAddPtr(cb: *CmdBuf, entity: Entity, T: type, comp: *const T) error{ZcsCmdBufOverflow}!void {
+    pub fn encodeAddPtr(
+        cb: *CmdBuf,
+        entity: Entity,
+        T: type,
+        comp: *const T,
+    ) error{ZcsCmdBufOverflow}!void {
         try Subcmd.encodeBind(cb, entity);
         try Subcmd.encodePtr(cb, .add_ptr, T, comp);
     }

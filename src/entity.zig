@@ -227,8 +227,7 @@ pub const Entity = packed struct {
         return comps[@intFromEnum(entity_loc.index_in_chunk) * id.size ..][0..id.size];
     }
 
-    // XXX: should this return a const ptr isntead of void or is that annoying?
-    /// Queues a component to be added. If you need a pointer to the encoded component, see
+    /// Queues a component to be added. If you need a mutable pointer to the encoded component, see
     /// `addVal`.
     ///
     /// Batching add/removes on the same entity in sequence is more efficient than alternating
@@ -238,16 +237,18 @@ pub const Entity = packed struct {
     /// sized.
     ///
     /// Adding components to an entity that no longer exists has no effect.
-    pub inline fn add(self: @This(), cb: *CmdBuf, T: type, comp: T) void {
+    pub inline fn add(self: @This(), cb: *CmdBuf, T: type, comp: T) *const T {
         // Don't get tempted to remove inline from here! It's required for `isComptimeKnown`.
         comptime assert(@typeInfo(@TypeOf(add)).@"fn".calling_convention == .@"inline");
         if (@sizeOf(T) > @sizeOf(*T) and meta.isComptimeKnown(comp)) {
             const Interned = struct {
                 const value = comp;
             };
-            self.addPtr(cb, T, comptime &Interned.value);
+            const ptr = comptime &Interned.value;
+            self.addPtr(cb, T, ptr);
+            return ptr;
         } else {
-            _ = self.addVal(cb, T, comp);
+            return self.addVal(cb, T, comp);
         }
     }
 

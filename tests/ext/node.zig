@@ -569,7 +569,7 @@ fn reserveCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf, tr: *Node.Tree) !void {
     // We reserve with a command buffer to exercise the `afterArchChangeImmediate` code in the test
     const entity: Entity = .reserve(cb);
     if (fz.smith.next(bool)) {
-        entity.add(cb, Node, .{});
+        try expectEqual(entity.add(cb, Node, .{}).*, Node{});
         try fz.committed.put(gpa, entity, .{});
         try o.entities.put(gpa, entity, .{ .node = .{} });
         try o.roots.put(gpa, entity, {});
@@ -682,7 +682,10 @@ fn setParentCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
     const child = fz.randomEntity().unwrap() orelse return;
     if (log) std.debug.print("{f}.parent = {f}\n", .{ child, parent });
 
-    cb.ext(SetParent, .{ .child = child, .parent = parent });
+    try expectEqual(
+        cb.ext(SetParent, .{ .child = child, .parent = parent }).*,
+        SetParent{ .child = child, .parent = parent },
+    );
     try setParentInOracle(fz, o, child, parent);
 }
 
@@ -693,10 +696,11 @@ fn insertCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
     const relative = fz.smith.next(std.meta.Tag(Node.Insert.Position));
     if (log) std.debug.print("insert {f} {t} {f}\n", .{ self, relative, other });
 
-    cb.ext(Insert, .{ .entity = self, .position = switch (relative) {
+    const val: Insert = .{ .entity = self, .position = switch (relative) {
         .before => .{ .before = other },
         .after => .{ .after = other },
-    } });
+    } };
+    try expectEqual(cb.ext(Insert, val).*, val);
     try insertInOracle(fz, o, self, relative, other);
 }
 

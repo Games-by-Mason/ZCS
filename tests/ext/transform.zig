@@ -60,7 +60,10 @@ test "exec" {
 
     const child: Entity = .reserve(&cb);
     const parent: Entity = .reserve(&cb);
-    cb.ext(SetParent, .{ .child = child, .parent = parent.toOptional() });
+    try expectEqual(
+        cb.ext(SetParent, .{ .child = child, .parent = parent.toOptional() }).*,
+        SetParent{ .child = child, .parent = parent.toOptional() },
+    );
     Transform.Exec.immediate(&es, &cb, &tr);
 
     const child_node = child.get(&es, Node).?;
@@ -140,7 +143,7 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
 
                     const child = Entity.reserve(&cb);
                     if (log) std.debug.print("  reserve {f}\n", .{child});
-                    child.add(&cb, Transform, .{
+                    const transform: Transform = .{
                         .pos = .{
                             .x = smith.nextBetween(f32, -100.0, 100.0),
                             .y = smith.nextBetween(f32, -100.0, 100.0),
@@ -151,7 +154,8 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
                             .x = smith.nextBetween(f32, -100.0, 100.0),
                             .y = smith.nextBetween(f32, -100.0, 100.0),
                         },
-                    });
+                    };
+                    try expectEqual(child.add(&cb, Transform, transform).*, transform);
                     try all.append(gpa, child);
                     if (smith.next(u8) > 40) {
                         const parent: Entity.Optional = all.items[
@@ -161,7 +165,10 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
                             )
                         ].toOptional();
                         if (log) std.debug.print("  {f}.parent = {f}\n", .{ child, parent });
-                        cb.ext(SetParent, .{ .child = child, .parent = parent });
+                        try expectEqual(
+                            cb.ext(SetParent, .{ .child = child, .parent = parent }).*,
+                            SetParent{ .child = child, .parent = parent },
+                        );
                     }
                 }
                 mode = .{ .mutate = .{ .steps = 5 } };
@@ -179,14 +186,15 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
                             if (smith.next(bool)) {
                                 const child = Entity.reserve(&cb);
                                 if (log) std.debug.print("  reserve {f}\n", .{child});
-                                child.add(&cb, Transform, .{
+                                const transform: Transform = .{
                                     .pos = .{
                                         .x = smith.nextBetween(f32, -100.0, 100.0),
                                         .y = smith.nextBetween(f32, -100.0, 100.0),
                                     },
                                     .rot = .fromAngle(smith.next(f32)),
                                     .relative = smith.next(u8) > 25,
-                                });
+                                };
+                                try expectEqual(child.add(&cb, Transform, transform).*, transform);
                                 try all.append(gpa, child);
                                 if (smith.next(u8) > 40) {
                                     const parent: Entity.Optional = all.items[
@@ -199,7 +207,10 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
                                         child,
                                         parent,
                                     });
-                                    cb.ext(SetParent, .{ .child = child, .parent = parent });
+                                    try expectEqual(
+                                        cb.ext(SetParent, .{ .child = child, .parent = parent }).*,
+                                        SetParent{ .child = child, .parent = parent },
+                                    );
                                 }
                             }
                         },
@@ -214,7 +225,10 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
                             } else Entity.Optional.none;
                             const child = all.items[smith.nextLessThan(usize, all.items.len)];
                             if (log) std.debug.print("  {f}.parent = {f}\n", .{ child, parent });
-                            cb.ext(SetParent, .{ .child = child, .parent = parent });
+                            try expectEqual(
+                                cb.ext(SetParent, .{ .child = child, .parent = parent }).*,
+                                SetParent{ .child = child, .parent = parent },
+                            );
                         },
                         .remove => {
                             // Sometimes destroy entities, but not too often
