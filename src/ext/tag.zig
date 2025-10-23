@@ -35,4 +35,10 @@ pub const Tag = packed struct {
         }
         return .none;
     }
+
+    /// Returns true if the given entity matches this tag.
+    pub fn matches(self: @This(), es: *const Entities, entity: Entity) bool {
+        const tag = entity.get(es, Tag) orelse return false;
+        return tag.* == self;
+    }
 };

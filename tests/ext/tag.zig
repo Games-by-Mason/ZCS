@@ -84,6 +84,9 @@ test "tags" {
     try expectEqualEntity(Entity.Optional.none, tag_d.findAncestorOf(&es, child_0.get(&es, Node).?));
     try expectEqualEntity(Entity.Optional.none, tag_e.findAncestorOf(&es, child_0.get(&es, Node).?));
 
+    try expect(!tag_a.matches(&es, child_0));
+    try expect(!tag_b.matches(&es, child_0));
+
     {
         defer flush(&es, &cb, &tr);
 
@@ -97,6 +100,9 @@ test "tags" {
     try expectEqualEntity(grandparent, tag_c.findAncestorOf(&es, child_0.get(&es, Node).?));
     try expectEqualEntity(Entity.Optional.none, tag_d.findAncestorOf(&es, child_0.get(&es, Node).?));
     try expectEqualEntity(Entity.Optional.none, tag_e.findAncestorOf(&es, child_0.get(&es, Node).?));
+
+    try expect(tag_a.matches(&es, child_0));
+    try expect(!tag_b.matches(&es, child_0));
 
     {
         defer flush(&es, &cb, &tr);
