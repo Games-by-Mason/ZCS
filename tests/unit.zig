@@ -547,15 +547,15 @@ test "cb interning" {
     cb.ext(FooExt, foo_ev_value);
 
     // Explicit by value
-    try e0.addVal(&cb, Model, model_value);
-    try e0.addVal(&cb, RigidBody, rb_interned);
-    try cb.extVal(BarExt, bar_ev_value);
-    try cb.extVal(FooExt, foo_ev_interned);
+    try expectEqual(e0.addVal(&cb, Model, model_value).*, model_value);
+    try expectEqual(e0.addVal(&cb, RigidBody, rb_interned).*, rb_interned);
+    try expectEqual(cb.extVal(BarExt, bar_ev_value).*, bar_ev_value);
+    try expectEqual(cb.extVal(FooExt, foo_ev_interned).*, foo_ev_interned);
 
-    try e1.addVal(&cb, Model, model_interned);
-    try e1.addVal(&cb, RigidBody, rb_value);
-    try cb.extVal(BarExt, bar_ev_interned);
-    try cb.extVal(FooExt, foo_ev_value);
+    try expectEqual(e1.addVal(&cb, Model, model_interned).*, model_interned);
+    try expectEqual(e1.addVal(&cb, RigidBody, rb_value).*, rb_value);
+    try expectEqual(cb.extVal(BarExt, bar_ev_interned).*, bar_ev_interned);
+    try expectEqual(cb.extVal(FooExt, foo_ev_value).*, foo_ev_value);
 
     // Throw in a destroy for good measure, verify the components end up in the remove flags
     try expect(e2.changeArchImmediate(
@@ -569,18 +569,18 @@ test "cb interning" {
     e2.destroy(&cb);
 
     // Explicit interning
-    try e0.addPtr(&cb, RigidBody, &rb_interned);
-    try e0.addPtr(&cb, Model, &model_interned);
-    try cb.extPtr(BarExt, &bar_ev_interned);
-    try cb.extPtr(FooExt, &foo_ev_interned);
+    e0.addPtr(&cb, RigidBody, &rb_interned);
+    e0.addPtr(&cb, Model, &model_interned);
+    cb.extPtr(BarExt, &bar_ev_interned);
+    cb.extPtr(FooExt, &foo_ev_interned);
 
     // Zero sized types
     e1.add(&cb, Tag, .{});
-    try e1.addVal(&cb, Tag, .{});
-    try e1.addPtr(&cb, Tag, &.{});
+    try expectEqual(e1.addVal(&cb, Tag, .{}).*, Tag{});
+    e1.addPtr(&cb, Tag, &.{});
     cb.ext(BazExt, .{});
-    try cb.extVal(BazExt, .{});
-    try cb.extPtr(BazExt, &.{});
+    try expectEqual(cb.extVal(BazExt, .{}).*, BazExt{});
+    cb.extPtr(BazExt, &.{});
 
     // Test the results
     var iter = cb.iterator();
@@ -780,7 +780,7 @@ test "cb overflow" {
 
         _ = Entity.reserveImmediate(&es).add(&cb, RigidBody, rb);
         e.commit(&cb);
-        try expectError(error.ZcsCmdBufOverflow, e.addOrErr(
+        try expectError(error.ZcsCmdBufOverflow, e.addValOrErr(
             &cb,
             RigidBody,
             RigidBody.random(rand),
@@ -811,7 +811,7 @@ test "cb overflow" {
 
         cb.ext(FooExt, foo);
         e.destroy(&cb);
-        try expectError(error.ZcsCmdBufOverflow, cb.extOrErr(
+        try expectError(error.ZcsCmdBufOverflow, cb.extValOrErr(
             FooExt,
             FooExt.random(rand),
         ));
@@ -852,8 +852,8 @@ test "cb overflow" {
     defer cb.deinit(gpa, &es);
     const e = Entity.reserveImmediate(&es);
     try expect(e.changeArchImmediate(&es, struct {}, .{}));
-    try e.addVal(&cb, RigidBody, .{});
-    try e.addPtr(&cb, RigidBody, &.{});
+    try expectEqual(e.addVal(&cb, RigidBody, .{}).*, RigidBody{});
+    e.addPtr(&cb, RigidBody, &.{});
     try expect(!e.has(&es, Model));
     _ = Entity.reserveImmediate(&es);
     try expect(es.count() > 0);
@@ -899,24 +899,24 @@ test "cb capacity" {
         const e1 = Entity.reserveImmediate(&es);
 
         for (0..cb_capacity / 12) |_| {
-            try e0.addVal(&cb, u0, 0);
-            try e1.addVal(&cb, u8, 0);
-            try e0.addVal(&cb, u16, 0);
-            try e1.addVal(&cb, u32, 0);
-            try e0.addVal(&cb, u64, 0);
-            try e1.addVal(&cb, u128, 0);
+            try expectEqual(e0.addVal(&cb, u0, 0).*, 0);
+            try expectEqual(e1.addVal(&cb, u8, 0).*, 0);
+            try expectEqual(e0.addVal(&cb, u16, 0).*, 0);
+            try expectEqual(e1.addVal(&cb, u32, 0).*, 0);
+            try expectEqual(e0.addVal(&cb, u64, 0).*, 0);
+            try expectEqual(e1.addVal(&cb, u128, 0).*, 0);
         }
 
         try expect(cb.worstCaseUsage() < 1.0);
         cb.clear(&es);
 
         for (0..cb_capacity / 6) |_| {
-            try e0.addVal(&cb, u0, 0);
-            try e1.addVal(&cb, u8, 0);
-            try e0.addVal(&cb, u16, 0);
-            try e1.addVal(&cb, u32, 0);
-            try e0.addVal(&cb, u64, 0);
-            try e1.addVal(&cb, u128, 0);
+            try expectEqual(e0.addVal(&cb, u0, 0).*, 0);
+            try expectEqual(e1.addVal(&cb, u8, 0).*, 0);
+            try expectEqual(e0.addVal(&cb, u16, 0).*, 0);
+            try expectEqual(e1.addVal(&cb, u32, 0).*, 0);
+            try expectEqual(e0.addVal(&cb, u64, 0).*, 0);
+            try expectEqual(e1.addVal(&cb, u128, 0).*, 0);
         }
 
         try expectEqual(1.0, cb.worstCaseUsage());
@@ -924,24 +924,24 @@ test "cb capacity" {
 
         // Add ptr
         for (0..cb_capacity / 12) |_| {
-            try e0.addPtr(&cb, u0, &0);
-            try e1.addPtr(&cb, u8, &0);
-            try e0.addPtr(&cb, u16, &0);
-            try e1.addPtr(&cb, u32, &0);
-            try e0.addPtr(&cb, u64, &0);
-            try e1.addPtr(&cb, u128, &0);
+            e0.addPtr(&cb, u0, &0);
+            e1.addPtr(&cb, u8, &0);
+            e0.addPtr(&cb, u16, &0);
+            e1.addPtr(&cb, u32, &0);
+            e0.addPtr(&cb, u64, &0);
+            e1.addPtr(&cb, u128, &0);
         }
 
         try expect(cb.worstCaseUsage() < 1.0);
         cb.clear(&es);
 
         for (0..cb_capacity / 6) |_| {
-            try e0.addPtr(&cb, u0, &0);
-            try e1.addPtr(&cb, u8, &0);
-            try e0.addPtr(&cb, u16, &0);
-            try e1.addPtr(&cb, u32, &0);
-            try e0.addPtr(&cb, u64, &0);
-            try e1.addPtr(&cb, u128, &0);
+            e0.addPtr(&cb, u0, &0);
+            e1.addPtr(&cb, u8, &0);
+            e0.addPtr(&cb, u16, &0);
+            e1.addPtr(&cb, u32, &0);
+            e0.addPtr(&cb, u64, &0);
+            e1.addPtr(&cb, u128, &0);
         }
 
         try expectEqual(1.0, cb.worstCaseUsage());
@@ -977,24 +977,24 @@ test "cb capacity" {
     {
         // Extension val
         for (0..cb_capacity / 4) |_| {
-            try cb.extVal(u0, 0);
-            try cb.extVal(u8, 0);
-            try cb.extVal(u16, 0);
-            try cb.extVal(u32, 0);
-            try cb.extVal(u64, 0);
-            try cb.extVal(u128, 0);
+            try expectEqual(cb.extVal(u0, 0).*, 0);
+            try expectEqual(cb.extVal(u8, 0).*, 0);
+            try expectEqual(cb.extVal(u16, 0).*, 0);
+            try expectEqual(cb.extVal(u32, 0).*, 0);
+            try expectEqual(cb.extVal(u64, 0).*, 0);
+            try expectEqual(cb.extVal(u128, 0).*, 0);
         }
 
         try expect(cb.worstCaseUsage() < 1.0);
         cb.clear(&es);
 
         for (0..cb_capacity / 3) |_| {
-            try cb.extVal(u0, 0);
-            try cb.extVal(u8, 0);
-            try cb.extVal(u16, 0);
-            try cb.extVal(u32, 0);
-            try cb.extVal(u64, 0);
-            try cb.extVal(u128, 0);
+            try expectEqual(cb.extVal(u0, 0).*, 0);
+            try expectEqual(cb.extVal(u8, 0).*, 0);
+            try expectEqual(cb.extVal(u16, 0).*, 0);
+            try expectEqual(cb.extVal(u32, 0).*, 0);
+            try expectEqual(cb.extVal(u64, 0).*, 0);
+            try expectEqual(cb.extVal(u128, 0).*, 0);
         }
 
         try expectEqual(1.0, cb.worstCaseUsage());
@@ -1002,24 +1002,24 @@ test "cb capacity" {
 
         // Extension ptr
         for (0..cb_capacity / 4) |_| {
-            try cb.extPtr(u0, &0);
-            try cb.extPtr(u8, &0);
-            try cb.extPtr(u16, &0);
-            try cb.extPtr(u32, &0);
-            try cb.extPtr(u64, &0);
-            try cb.extPtr(u128, &0);
+            cb.extPtr(u0, &0);
+            cb.extPtr(u8, &0);
+            cb.extPtr(u16, &0);
+            cb.extPtr(u32, &0);
+            cb.extPtr(u64, &0);
+            cb.extPtr(u128, &0);
         }
 
         try expect(cb.worstCaseUsage() < 1.0);
         cb.clear(&es);
 
         for (0..cb_capacity / 3) |_| {
-            try cb.extPtr(u0, &0);
-            try cb.extPtr(u8, &0);
-            try cb.extPtr(u16, &0);
-            try cb.extPtr(u32, &0);
-            try cb.extPtr(u64, &0);
-            try cb.extPtr(u128, &0);
+            cb.extPtr(u0, &0);
+            cb.extPtr(u8, &0);
+            cb.extPtr(u16, &0);
+            cb.extPtr(u32, &0);
+            cb.extPtr(u64, &0);
+            cb.extPtr(u128, &0);
         }
 
         try expectEqual(1.0, cb.worstCaseUsage());

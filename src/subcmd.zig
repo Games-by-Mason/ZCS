@@ -94,6 +94,12 @@ pub const Subcmd = union(enum) {
             return null;
         }
 
+        pub fn clear(self: *@This()) void {
+            self.tag_index = self.cb.tags.items.len;
+            self.arg_index = self.cb.args.items.len;
+            self.comp_bytes_index = self.cb.data.items.len;
+        }
+
         pub inline fn peekTag(self: *@This()) ?Subcmd.Tag {
             if (self.tag_index < self.cb.tags.items.len) {
                 return self.cb.tags.items[self.tag_index];
@@ -136,10 +142,16 @@ pub const Subcmd = union(enum) {
         }
     };
 
-    /// Encode adding a component to an entity by value.
-    pub fn encodeAddVal(cb: *CmdBuf, entity: Entity, T: type, comp: T) error{ZcsCmdBufOverflow}!void {
+    /// Encode adding a component to an entity by value. Returns a pointer to the encoded value
+    /// that's valid until the command buffer is cleared.
+    pub fn encodeAddVal(
+        cb: *CmdBuf,
+        entity: Entity,
+        T: type,
+        comp: T,
+    ) error{ZcsCmdBufOverflow}!*T {
         try Subcmd.encodeBind(cb, entity);
-        try Subcmd.encodeVal(cb, .add_val, T, comp);
+        return try Subcmd.encodeVal(cb, .add_val, T, comp);
     }
 
     /// Encode adding a component to an entity by pointer.
@@ -148,12 +160,13 @@ pub const Subcmd = union(enum) {
         try Subcmd.encodePtr(cb, .add_ptr, T, comp);
     }
 
-    /// Encode an extension command by value.
-    pub fn encodeExtVal(cb: *CmdBuf, T: type, payload: T) error{ZcsCmdBufOverflow}!void {
+    /// Encode an extension command by value. Returns a pointer to the encoded value that's valid
+    /// until the command buffer is cleared.
+    pub fn encodeExtVal(cb: *CmdBuf, T: type, payload: T) error{ZcsCmdBufOverflow}!*T {
         // Clear the binding. Archetype changes must start with a bind so we don't want it to be
         // cached across other commands.
         cb.binding = .none;
-        try Subcmd.encodeVal(cb, .ext_val, T, payload);
+        return try Subcmd.encodeVal(cb, .ext_val, T, payload);
     }
 
     /// Encode an extension command by pointer.
@@ -170,7 +183,7 @@ pub const Subcmd = union(enum) {
             cb.invalid = true;
         };
         try Subcmd.encodeBind(cb, entity);
-        if (cb.binding.destroyed) return;
+
         if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
         if (cb.args.items.len >= cb.args.capacity) return error.ZcsCmdBufOverflow;
         cb.tags.appendAssumeCapacity(.remove);
@@ -188,10 +201,9 @@ pub const Subcmd = union(enum) {
             cb.invalid = true;
         };
         try Subcmd.encodeBind(cb, entity);
-        if (cb.binding.destroyed) return;
+
         if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
         cb.tags.appendAssumeCapacity(.destroy);
-        cb.binding.destroyed = true;
     }
 
     /// Encode binding an entity as part of a subcommand.
@@ -199,21 +211,20 @@ pub const Subcmd = union(enum) {
         errdefer if (std.debug.runtime_safety) {
             cb.invalid = true;
         };
-        if (cb.binding.entity != entity.toOptional()) {
+        if (cb.binding != entity.toOptional()) {
             if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
-            cb.binding = .{ .entity = entity.toOptional() };
+            cb.binding = entity.toOptional();
             cb.tags.appendAssumeCapacity(.bind_entity);
             cb.args.appendAssumeCapacity(@bitCast(entity));
         }
     }
 
-    /// Encode a value as part of a subcommand.
-    fn encodeVal(cb: *CmdBuf, tag: Tag, T: type, val: T) error{ZcsCmdBufOverflow}!void {
+    /// Encode a value as part of a subcommand. Returns a pointer to the encoded value that's valid
+    /// until the command buffer is cleared.
+    fn encodeVal(cb: *CmdBuf, tag: Tag, T: type, val: T) error{ZcsCmdBufOverflow}!*T {
         errdefer if (std.debug.runtime_safety) {
             cb.invalid = true;
         };
-
-        if (cb.binding.destroyed) return;
 
         const aligned = std.mem.alignForward(usize, cb.data.items.len, @alignOf(T));
         if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
@@ -222,7 +233,9 @@ pub const Subcmd = union(enum) {
         cb.args.appendAssumeCapacity(@intFromPtr(typeId(T)));
 
         cb.data.items.len = aligned;
+        const result = &cb.data.items.ptr[cb.data.items.len];
         cb.data.appendSliceAssumeCapacity(std.mem.asBytes(&val));
+        return @ptrCast(@alignCast(result));
     }
 
     /// Encode a pointer as part of a subcommand.
@@ -230,8 +243,6 @@ pub const Subcmd = union(enum) {
         errdefer if (std.debug.runtime_safety) {
             cb.invalid = true;
         };
-
-        if (cb.binding.destroyed) return;
 
         if (cb.tags.items.len >= cb.tags.capacity) return error.ZcsCmdBufOverflow;
         if (cb.args.items.len + 2 > cb.args.capacity) return error.ZcsCmdBufOverflow;

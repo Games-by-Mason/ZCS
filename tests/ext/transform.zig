@@ -139,7 +139,7 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
                     if (smith.isEmpty()) break;
 
                     const child = Entity.reserve(&cb);
-                    if (log) std.debug.print("  reserve {}\n", .{child});
+                    if (log) std.debug.print("  reserve {f}\n", .{child});
                     child.add(&cb, Transform, .{
                         .pos = .{
                             .x = smith.nextBetween(f32, -100.0, 100.0),
@@ -154,11 +154,13 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
                     });
                     try all.append(gpa, child);
                     if (smith.next(u8) > 40) {
-                        const parent: Entity.Optional = all.items[smith.nextLessThan(
+                        const parent: Entity.Optional = all.items[
+                            smith.nextLessThan(
                                 usize,
                                 all.items.len,
-                            )].toOptional();
-                        if (log) std.debug.print("  {}.parent = {}\n", .{ child, parent });
+                            )
+                        ].toOptional();
+                        if (log) std.debug.print("  {f}.parent = {f}\n", .{ child, parent });
                         cb.ext(SetParent, .{ .child = child, .parent = parent });
                     }
                 }
@@ -176,7 +178,7 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
                         .reserve => {
                             if (smith.next(bool)) {
                                 const child = Entity.reserve(&cb);
-                                if (log) std.debug.print("  reserve {}\n", .{child});
+                                if (log) std.debug.print("  reserve {f}\n", .{child});
                                 child.add(&cb, Transform, .{
                                     .pos = .{
                                         .x = smith.nextBetween(f32, -100.0, 100.0),
@@ -193,7 +195,7 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
                                             all.items.len,
                                         )
                                     ].toOptional();
-                                    if (log) std.debug.print("  {}.parent = {}\n", .{
+                                    if (log) std.debug.print("  {f}.parent = {f}\n", .{
                                         child,
                                         parent,
                                     });
@@ -211,7 +213,7 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
                                 ].toOptional();
                             } else Entity.Optional.none;
                             const child = all.items[smith.nextLessThan(usize, all.items.len)];
-                            if (log) std.debug.print("  {}.parent = {}\n", .{ child, parent });
+                            if (log) std.debug.print("  {f}.parent = {f}\n", .{ child, parent });
                             cb.ext(SetParent, .{ .child = child, .parent = parent });
                         },
                         .remove => {
@@ -220,15 +222,15 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
                             const e = all.items[smith.nextLessThan(usize, all.items.len)];
                             switch (smith.next(enum { transform, node, entity })) {
                                 .transform => {
-                                    if (log) std.debug.print("  remove transform from {}\n", .{e});
+                                    if (log) std.debug.print("  remove transform from {f}\n", .{e});
                                     e.remove(&cb, Transform);
                                 },
                                 .node => {
-                                    if (log) std.debug.print("  remove node from {}\n", .{e});
+                                    if (log) std.debug.print("  remove node from {f}\n", .{e});
                                     e.remove(&cb, Node);
                                 },
                                 .entity => {
-                                    if (log) std.debug.print("  destroy {}\n", .{e});
+                                    if (log) std.debug.print("  destroy {f}\n", .{e});
                                     e.destroy(&cb);
                                 },
                             }
@@ -258,10 +260,10 @@ fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
                                         .y = smith.nextBetween(f32, -2.0, 2.0),
                                     });
                                 }
-                                if (log) std.debug.print("  {} pos = {}, rot = {}\n", .{
+                                if (log) std.debug.print("  {f} pos = {}, rot = {}\n", .{
                                     e,
-                                    transform.getLocalPos(),
-                                    transform.getLocalOrientation(),
+                                    transform.pos,
+                                    transform.rot,
                                 });
                             }
                         },
@@ -303,8 +305,8 @@ fn checkOracle(es: *const Entities) !void {
                 }
             }
         }
-        if (log) std.debug.print("  {} path len: {}\n", .{
-            Entity.from(es, vw.transform),
+        if (log) std.debug.print("  {f} path len: {}\n", .{
+            es.getEntity(vw.transform),
             path.items.len,
         });
 

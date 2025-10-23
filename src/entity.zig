@@ -227,7 +227,9 @@ pub const Entity = packed struct {
         return comps[@intFromEnum(entity_loc.index_in_chunk) * id.size ..][0..id.size];
     }
 
-    /// Queues a component to be added.
+    // XXX: should this return a const ptr isntead of void or is that annoying?
+    /// Queues a component to be added. If you need a pointer to the encoded component, see
+    /// `addVal`.
     ///
     /// Batching add/removes on the same entity in sequence is more efficient than alternating
     /// between operations on different entities.
@@ -239,46 +241,48 @@ pub const Entity = packed struct {
     pub inline fn add(self: @This(), cb: *CmdBuf, T: type, comp: T) void {
         // Don't get tempted to remove inline from here! It's required for `isComptimeKnown`.
         comptime assert(@typeInfo(@TypeOf(add)).@"fn".calling_convention == .@"inline");
-        self.addOrErr(cb, T, comp) catch |err|
-            @panic(@errorName(err));
-    }
-
-    /// Similar to `add`, but returns an error on failure instead of panicking. The command buffer
-    /// is left in an undefined state on error, see the top level documentation on `CmdBuf` for more
-    /// info.
-    pub inline fn addOrErr(
-        self: @This(),
-        cb: *CmdBuf,
-        T: type,
-        comp: T,
-    ) error{ZcsCmdBufOverflow}!void {
-        // Don't get tempted to remove inline from here! It's required for `isComptimeKnown`.
-        comptime assert(@typeInfo(@TypeOf(addOrErr)).@"fn".calling_convention == .@"inline");
         if (@sizeOf(T) > @sizeOf(*T) and meta.isComptimeKnown(comp)) {
             const Interned = struct {
                 const value = comp;
             };
-            try self.addPtr(cb, T, comptime &Interned.value);
+            self.addPtr(cb, T, comptime &Interned.value);
         } else {
-            try self.addVal(cb, T, comp);
+            _ = self.addVal(cb, T, comp);
         }
     }
 
-    /// Similar to `addOrErr`, but forces the component to be copied by value to the command buffer.
-    /// Prefer `add`.
-    pub fn addVal(self: @This(), cb: *CmdBuf, T: type, comp: T) error{ZcsCmdBufOverflow}!void {
-        try Subcmd.encodeAddVal(cb, self, T, comp);
+    /// Similar to `add`, but forces the component to be copied by value to the command buffer.
+    /// Returns a pointer to the value in the command buffer. This value is valid until the command
+    /// buffer is cleared. Prefer `add` unless you need the result pointer.
+    pub fn addVal(self: @This(), cb: *CmdBuf, T: type, comp: T) *T {
+        return self.addValOrErr(cb, T, comp) catch |err|
+            @panic(@errorName(err));
     }
 
-    /// Similar to `addOrErr`, forces the component to be copied by pointer to the command buffer.
-    /// Prefer `add`.
-    pub fn addPtr(
+    /// Similar to `addVal`, but returns an error on failure instead of panicking. The command
+    /// buffer is left in an undefined state on error, see the top level documentation on `CmdBuf`
+    /// for more info.
+    pub fn addValOrErr(self: @This(), cb: *CmdBuf, T: type, comp: T) error{ZcsCmdBufOverflow}!*T {
+        return Subcmd.encodeAddVal(cb, self, T, comp);
+    }
+
+    /// Similar to `add`, forces the component to be copied by pointer to the command buffer. Prefer
+    /// `add`.
+    pub fn addPtr(self: @This(), cb: *CmdBuf, T: type, comp: *const T) void {
+        return self.addPtrOrErr(cb, T, comp) catch |err|
+            @panic(@errorName(err));
+    }
+
+    /// Similar to `addPtr`, but returns an error on failure instead of panicking. The command
+    /// buffer is left in an undefined state on error, see the top level documentation on `CmdBuf`
+    /// for more info.
+    pub fn addPtrOrErr(
         self: @This(),
         cb: *CmdBuf,
         T: type,
         comp: *const T,
     ) error{ZcsCmdBufOverflow}!void {
-        try Subcmd.encodeAddPtr(cb, self, T, comp);
+        return Subcmd.encodeAddPtr(cb, self, T, comp);
     }
 
     /// Queues the given component to be removed. Has no effect if the component is not present, or

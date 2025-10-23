@@ -41,17 +41,11 @@ const CompFlag = zcs.CompFlag;
 const CmdBuf = @This();
 const Subcmd = @import("subcmd.zig").Subcmd;
 
-const Binding = struct {
-    pub const none: @This() = .{ .entity = .none };
-    entity: Entity.Optional = .none,
-    destroyed: bool = false,
-};
-
 name: ?[:0]const u8,
 tags: std.ArrayListUnmanaged(Subcmd.Tag),
 args: std.ArrayListUnmanaged(u64),
 data: std.ArrayListAlignedUnmanaged(u8, zcs.TypeInfo.max_align),
-binding: Binding = .{ .entity = .none },
+binding: Entity.Optional = .none,
 reserved: std.ArrayListUnmanaged(Entity),
 invalid: if (std.debug.runtime_safety) bool else void,
 warn_ratio: f32,
@@ -187,40 +181,51 @@ pub fn deinit(self: *@This(), gpa: Allocator, es: *Entities) void {
     self.* = undefined;
 }
 
-/// Appends an extension command to the buffer.
+// XXX: return const ptr?
+/// Appends an extension command to the buffer. If you need a pointer to the added extension, see
+/// `extVal`. If you need a pointer to the encoded payload, see `extVal`.
 ///
 /// See notes on `Entity.add` with regards to performance and pass by value vs pointer.
 pub inline fn ext(self: *@This(), T: type, payload: T) void {
     // Don't get tempted to remove inline from here! It's required for `isComptimeKnown`.
     comptime assert(@typeInfo(@TypeOf(ext)).@"fn".calling_convention == .@"inline");
-    self.extOrErr(T, payload) catch |err|
-        @panic(@errorName(err));
-}
-
-/// Similar to `ext`, but returns an error on failure instead of panicking. The command buffer is
-/// left in an undefined state on error, see the top level documentation for more detail.
-pub inline fn extOrErr(self: *@This(), T: type, payload: T) error{ZcsCmdBufOverflow}!void {
-    // Don't get tempted to remove inline from here! It's required for `isComptimeKnown`.
-    comptime assert(@typeInfo(@TypeOf(extOrErr)).@"fn".calling_convention == .@"inline");
     if (@sizeOf(T) > @sizeOf(*T) and meta.isComptimeKnown(payload)) {
         const Interned = struct {
             const value = payload;
         };
-        try self.extPtr(T, comptime &Interned.value);
+        self.extPtr(T, comptime &Interned.value);
     } else {
-        try self.extVal(T, payload);
+        _ = self.extVal(T, payload);
     }
 }
 
+// XXX: test modifying result
 /// Similar to `extOrErr`, but forces the command to be copied by value to the command buffer.
-/// Prefer `ext`.
-pub fn extVal(self: *@This(), T: type, payload: T) error{ZcsCmdBufOverflow}!void {
-    try Subcmd.encodeExtVal(self, T, payload);
+/// Returns a pointer to the payload in the command buffer that is valid until the command buffer is
+/// cleared. Prefer `ext` unless you need the result pointer.
+pub fn extVal(self: *@This(), T: type, payload: T) *T {
+    return self.extValOrErr(T, payload) catch |err|
+        @panic(@errorName(err));
+}
+
+/// Similar to `extVal`, but returns an error on failure instead of panicking. The command
+/// buffer is left in an undefined state on error, see the top level documentation on `CmdBuf`
+/// for more info.
+pub fn extValOrErr(self: *@This(), T: type, payload: T) error{ZcsCmdBufOverflow}!*T {
+    return Subcmd.encodeExtVal(self, T, payload);
 }
 
 /// Similar to `extOrErr`, but forces the command to be copied by pointer to the command buffer.
 /// Prefer `ext`.
-pub fn extPtr(self: *@This(), T: type, payload: *const T) error{ZcsCmdBufOverflow}!void {
+pub fn extPtr(self: *@This(), T: type, payload: *const T) void {
+    return self.extPtrOrErr(T, payload) catch |err|
+        @panic(@errorName(err));
+}
+
+/// Similar to `extPtr`, but returns an error on failure instead of panicking. The command
+/// buffer is left in an undefined state on error, see the top level documentation on `CmdBuf`
+/// for more info.
+pub fn extPtrOrErr(self: *@This(), T: type, payload: *const T) error{ZcsCmdBufOverflow}!void {
     try Subcmd.encodeExtPtr(self, T, payload);
 }
 
@@ -481,7 +486,16 @@ pub const Batch = union(enum) {
                         .add_ptr => .{ .add = self.decoder.next().?.add_ptr },
                         .remove => .{ .remove = self.decoder.next().?.remove },
                         .destroy => b: {
+                            // The next op should be destroy
                             _ = self.decoder.next().?.destroy;
+                            // We ignore all operations after this. This makes it easier to write
+                            // command buff executors, since they typically have a pre-exec loop
+                            // before the loop that actually does the destroy. Technically we could
+                            // just skip even encoding commands within a batch following a destroy,
+                            // however this would complicate the API when trying to return a pointer
+                            // to the encoded data and is not a typical usage of command buffers
+                            // anyway.
+                            self.decoder.clear();
                             break :b .destroy;
                         },
                         .bind_entity, .ext_val, .ext_ptr => break,
