@@ -327,14 +327,18 @@ fn addRandomComp(fz: *Fuzzer, cb: *CmdBuf, e: Entity, T: type) !T {
         switch (i % T.interned.len) {
             inline 0...(T.interned.len - 1) => |n| {
                 const val = T.interned[n];
-                try e.addPtr(cb, T, &val);
+                e.addPtr(cb, T, &val);
                 return val;
             },
             else => unreachable,
         }
-    } else {
+    } else if (i < 200) {
         const val = fz.smith.next(T);
-        e.add(cb, T, val);
+        try expectEqual(e.add(cb, T, val).*, val);
         return val;
+    } else {
+        const encoded = e.addVal(cb, T, undefined);
+        encoded.* = fz.smith.next(T);
+        return encoded.*;
     }
 }

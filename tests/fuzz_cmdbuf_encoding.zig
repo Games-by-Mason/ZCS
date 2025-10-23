@@ -211,7 +211,7 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                             const ac = appendArchChange(&oracle, e);
                             const val = try gpa.create(RigidBody);
                             val.* = smith.next(RigidBody);
-                            try e.addVal(&cb, RigidBody, val.*);
+                            try expectEqual(e.addVal(&cb, RigidBody, val.*).*, val.*);
                             try ac.cb.append(gpa, .{ .add = .init(RigidBody, val) });
                         },
                         .model => {
@@ -219,7 +219,7 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                             const ac = appendArchChange(&oracle, e);
                             const val = try gpa.create(Model);
                             val.* = smith.next(Model);
-                            try e.addVal(&cb, Model, val.*);
+                            try expectEqual(e.addVal(&cb, Model, val.*).*, val.*);
                             try ac.cb.append(gpa, .{ .add = .init(Model, val) });
                         },
                         .tag => {
@@ -227,7 +227,7 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                             const ac = appendArchChange(&oracle, e);
                             const val = try gpa.create(Tag);
                             val.* = smith.next(Tag);
-                            try e.addVal(&cb, Tag, val.*);
+                            try expectEqual(e.addVal(&cb, Tag, val.*).*, val.*);
                             try ac.cb.append(gpa, .{ .add = .init(Tag, val) });
                         },
                     },
@@ -237,7 +237,7 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                             const ac = appendArchChange(&oracle, e);
                             const val = try gpa.create(RigidBody);
                             val.* = RigidBody.interned[smith.nextLessThan(u8, RigidBody.interned.len)];
-                            try e.addPtr(&cb, RigidBody, val);
+                            e.addPtr(&cb, RigidBody, val);
                             try ac.cb.append(gpa, .{ .add = .init(RigidBody, val) });
                         },
                         .model => {
@@ -245,7 +245,7 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                             const ac = appendArchChange(&oracle, e);
                             const val = try gpa.create(Model);
                             val.* = Model.interned[smith.nextLessThan(u8, Model.interned.len)];
-                            try e.addPtr(&cb, Model, val);
+                            e.addPtr(&cb, Model, val);
                             try ac.cb.append(gpa, .{ .add = .init(Model, val) });
                         },
                         .tag => {
@@ -253,7 +253,7 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                             const ac = appendArchChange(&oracle, e);
                             const val = try gpa.create(Tag);
                             val.* = Tag.interned[smith.nextLessThan(u8, Tag.interned.len)];
-                            try e.addPtr(&cb, Tag, val);
+                            e.addPtr(&cb, Tag, val);
                             try ac.cb.append(gpa, .{ .add = .init(Tag, val) });
                         },
                     },
@@ -293,21 +293,22 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                             if (log) std.debug.print("ext val foo\n", .{});
                             const val = try gpa.create(FooExt);
                             val.* = smith.next(FooExt);
-                            try cb.extVal(FooExt, val.*);
+                            const encoded = cb.extVal(FooExt, undefined);
+                            encoded.* = val.*;
                             oracle.appendAssumeCapacity(.{ .ext = .init(FooExt, val) });
                         },
                         .bar => {
                             if (log) std.debug.print("ext val bar\n", .{});
                             const val = try gpa.create(BarExt);
                             val.* = smith.next(BarExt);
-                            try cb.extVal(BarExt, val.*);
+                            try expectEqual(cb.extVal(BarExt, val.*).*, val.*);
                             oracle.appendAssumeCapacity(.{ .ext = .init(BarExt, val) });
                         },
                         .baz => {
                             if (log) std.debug.print("ext val baz\n", .{});
                             const val = try gpa.create(BazExt);
                             val.* = smith.next(BazExt);
-                            try cb.extVal(BazExt, val.*);
+                            try expectEqual(cb.extVal(BazExt, val.*).*, val.*);
                             oracle.appendAssumeCapacity(.{ .ext = .init(BazExt, val) });
                         },
                     },
@@ -316,21 +317,21 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                             if (log) std.debug.print("ext ptr foo\n", .{});
                             const val = try gpa.create(FooExt);
                             val.* = FooExt.interned[smith.nextLessThan(u8, FooExt.interned.len)];
-                            try cb.extPtr(FooExt, val);
+                            cb.extPtr(FooExt, val);
                             oracle.appendAssumeCapacity(.{ .ext = .init(FooExt, val) });
                         },
                         .bar => {
                             if (log) std.debug.print("ext ptr bar\n", .{});
                             const val = try gpa.create(BarExt);
                             val.* = BarExt.interned[smith.nextLessThan(u8, BarExt.interned.len)];
-                            try cb.extPtr(BarExt, val);
+                            cb.extPtr(BarExt, val);
                             oracle.appendAssumeCapacity(.{ .ext = .init(BarExt, val) });
                         },
                         .baz => {
                             if (log) std.debug.print("ext ptr baz\n", .{});
                             const val = try gpa.create(BazExt);
                             val.* = BazExt.interned[smith.nextLessThan(u8, BazExt.interned.len)];
-                            try cb.extPtr(BazExt, val);
+                            cb.extPtr(BazExt, val);
                             oracle.appendAssumeCapacity(.{ .ext = .init(BazExt, val) });
                         },
                     },
@@ -373,9 +374,7 @@ fn fuzzCmdBufEncoding(_: void, input: []const u8) !void {
                                 if (log) std.debug.print("    destroy\n", .{});
                                 try expectEqual(.destroy, batch_ops.next().?);
 
-                                // The real encoder skips all ops after a destroy, verify it did
-                                // this then ignore the rest of the data in the oracle for this
-                                // batch
+                                // Verify that ops after a destroy are skipped.
                                 try expectEqual(null, batch_ops.next());
                                 break;
                             },

@@ -24,7 +24,7 @@ pub const BeginOptions = Zone.BeginOptions;
 pub fn begin(cb: *CmdBuf, comptime opt: SourceLocation.InitOptions) @This() {
     if (tracy.enabled) {
         const loc: *const SourceLocation = .init(opt);
-        cb.ext(BeginCmd, .{ .loc = loc });
+        _ = cb.ext(BeginCmd, .{ .loc = loc });
         return .{ .loc = loc };
     }
 }
@@ -32,7 +32,7 @@ pub fn begin(cb: *CmdBuf, comptime opt: SourceLocation.InitOptions) @This() {
 /// Emits an end zone command to the command buffer if Tracy is enabled.
 pub fn end(self: @This(), cb: *CmdBuf) void {
     if (tracy.enabled) {
-        cb.ext(EndCmd, .{ .loc = self.loc });
+        _ = cb.ext(EndCmd, .{ .loc = self.loc });
     }
 }
 
