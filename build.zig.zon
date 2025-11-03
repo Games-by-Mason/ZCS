@@ -10,8 +10,8 @@
         },
         // Only used by extensions
         .geom = .{
-            .url = "git+https://github.com/Games-By-Mason/geom#21c8b7a901ba8a4eb0751ab12a2ea45381b7f774",
-            .hash = "geom-0.0.0-U1ma37NGAgCWL3MzsGqLvw6ADMe0mR753djywnqFUbMd",
+            .url = "git+https://github.com/Games-By-Mason/geom#07cc42fcb3bdfffe95ecc7d5afffd6859817f98e",
+            .hash = "geom-0.0.0-U1ma3_WzBABnq6knuX-pUhBnt76R1RGQsDfUa1qPiHrL",
         },
         .tracy = .{
             .url = "git+https://github.com/Games-By-Mason/tracy_zig#1cb0471b169637ebfc0a4f5ce827a3502412e564",
