@@ -104,7 +104,7 @@ pub fn Transform(dimensions: Dimensions) type {
 
         /// Scales the local space by `factor` and then calls `sync`.
         pub fn scaleBy(self: *@This(), es: *const Entities, factor: Vec) void {
-            self.scale = self.scale.compProd(factor);
+            self.scale = self.scale.timesComps(factor);
             self.sync(es);
         }
 

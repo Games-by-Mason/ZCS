@@ -15,7 +15,7 @@ const CompFlag = zcs.CompFlag;
 const CmdBuf = zcs.CmdBuf;
 const Node = zcs.ext.Node;
 const SetParent = zcs.ext.Node.SetParent;
-const Transform = zcs.ext.Transform2D;
+const Transform2D = zcs.ext.Transform2D;
 const Vec2 = zcs.ext.geom.Vec2;
 const Mat2x3 = zcs.ext.geom.Mat2x3;
 
@@ -64,14 +64,20 @@ test "exec" {
         cb.ext(SetParent, .{ .child = child, .parent = parent.toOptional() }).*,
         SetParent{ .child = child, .parent = parent.toOptional() },
     );
-    Transform.Exec.immediate(&es, &cb, &tr);
+    Transform2D.Exec.immediate(&es, &cb, &tr);
 
     const child_node = child.get(&es, Node).?;
     try expectEqual(child_node.parent, parent.toOptional());
 }
 
+const Transforms: []const type = &.{
+    Transform2D,
+};
+
 test "fuzz cb" {
-    try std.testing.fuzz({}, fuzzTransformsCmdBuf, .{ .corpus = &.{} });
+    inline for (Transforms) |Transform| {
+        try std.testing.fuzz({}, Tests(Transform).fuzzTransformsCmdBuf, .{ .corpus = &.{} });
+    }
 }
 
 test "rand cb" {
@@ -80,286 +86,292 @@ test "rand cb" {
     const input: []u8 = try gpa.alloc(u8, 262144);
     defer gpa.free(input);
     rand.bytes(input);
-    try fuzzTransformsCmdBuf({}, input);
+    inline for (Transforms) |Transform| {
+        try Tests(Transform).fuzzTransformsCmdBuf({}, input);
+    }
 }
 
-fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
-    defer CompFlag.unregisterAll();
+fn Tests(Transform: type) type {
+    return struct {
+        fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
+            defer CompFlag.unregisterAll();
 
-    var smith: Smith = .init(input);
+            var smith: Smith = .init(input);
 
-    var es: Entities = try .init(.{
-        .gpa = gpa,
-        .cap = .{
-            .entities = max_entities,
-            .arches = 8,
-            .chunks = 1024,
-        },
-    });
-    defer es.deinit(gpa);
+            var es: Entities = try .init(.{
+                .gpa = gpa,
+                .cap = .{
+                    .entities = max_entities,
+                    .arches = 8,
+                    .chunks = 1024,
+                },
+            });
+            defer es.deinit(gpa);
 
-    var tr: Node.Tree = .empty;
+            var tr: Node.Tree = .empty;
 
-    var cb: CmdBuf = try .init(.{
-        .name = null,
-        .gpa = gpa,
-        .es = &es,
-        .cap = .{
-            .cmds = cmds_capacity,
-            .data = .{ .bytes_per_cmd = @sizeOf(Node) },
-        },
-        .warn_ratio = 1.0,
-    });
-    defer cb.deinit(gpa, &es);
+            var cb: CmdBuf = try .init(.{
+                .name = null,
+                .gpa = gpa,
+                .es = &es,
+                .cap = .{
+                    .cmds = cmds_capacity,
+                    .data = .{ .bytes_per_cmd = @sizeOf(Node) },
+                },
+                .warn_ratio = 1.0,
+            });
+            defer cb.deinit(gpa, &es);
 
-    var all: std.ArrayListUnmanaged(Entity) = .{};
-    defer all.deinit(gpa);
+            var all: std.ArrayListUnmanaged(Entity) = .{};
+            defer all.deinit(gpa);
 
-    const Mode = union(enum) {
-        build,
-        mutate: struct { steps: u8 },
-    };
-    var mode: Mode = .build;
+            const Mode = union(enum) {
+                build,
+                mutate: struct { steps: u8 },
+            };
+            var mode: Mode = .build;
 
-    while (!smith.isEmpty()) {
-        // Get a list of all the entities
-        {
-            all.clearRetainingCapacity();
-            var iter = es.iterator(struct { e: Entity });
-            while (iter.next(&es)) |vw| {
-                try all.append(gpa, vw.e);
-            }
-        }
-
-        switch (mode) {
-            .build => {
-                // Build a random tree with interesting topology
-                if (log) std.debug.print("build phase ({}/{})\n", .{
-                    smith.index,
-                    smith.input.len,
-                });
-                for (0..smith.nextBetween(u8, 8, 16)) |_| {
-                    if (smith.isEmpty()) break;
-
-                    const child = Entity.reserve(&cb);
-                    if (log) std.debug.print("  reserve {f}\n", .{child});
-                    const transform: Transform = .{
-                        .pos = .{
-                            .x = smith.nextBetween(f32, -100.0, 100.0),
-                            .y = smith.nextBetween(f32, -100.0, 100.0),
-                        },
-                        .rot = .fromAngle(smith.next(f32)),
-                        .relative = smith.next(u8) > 25 or true,
-                        .scale = .{
-                            .x = smith.nextBetween(f32, -100.0, 100.0),
-                            .y = smith.nextBetween(f32, -100.0, 100.0),
-                        },
-                    };
-                    try expectEqual(child.add(&cb, Transform, transform).*, transform);
-                    try all.append(gpa, child);
-                    if (smith.next(u8) > 40) {
-                        const parent: Entity.Optional = all.items[
-                            smith.nextLessThan(
-                                usize,
-                                all.items.len,
-                            )
-                        ].toOptional();
-                        if (log) std.debug.print("  {f}.parent = {f}\n", .{ child, parent });
-                        try expectEqual(
-                            cb.ext(SetParent, .{ .child = child, .parent = parent }).*,
-                            SetParent{ .child = child, .parent = parent },
-                        );
+            while (!smith.isEmpty()) {
+                // Get a list of all the entities
+                {
+                    all.clearRetainingCapacity();
+                    var iter = es.iterator(struct { e: Entity });
+                    while (iter.next(&es)) |vw| {
+                        try all.append(gpa, vw.e);
                     }
                 }
-                mode = .{ .mutate = .{ .steps = 5 } };
-            },
-            .mutate => |mutate| {
-                if (log) std.debug.print("mutate step {} ({}/{})\n", .{
-                    mutate.steps,
-                    smith.index,
-                    smith.input.len,
-                });
-                // Generate random commands
-                for (0..smith.nextBetween(u8, 1, 10)) |_| {
-                    switch (smith.next(enum { reserve, parent, remove, move })) {
-                        .reserve => {
-                            if (smith.next(bool)) {
-                                const child = Entity.reserve(&cb);
-                                if (log) std.debug.print("  reserve {f}\n", .{child});
-                                const transform: Transform = .{
-                                    .pos = .{
-                                        .x = smith.nextBetween(f32, -100.0, 100.0),
-                                        .y = smith.nextBetween(f32, -100.0, 100.0),
-                                    },
-                                    .rot = .fromAngle(smith.next(f32)),
-                                    .relative = smith.next(u8) > 25,
-                                };
-                                try expectEqual(child.add(&cb, Transform, transform).*, transform);
-                                try all.append(gpa, child);
-                                if (smith.next(u8) > 40) {
-                                    const parent: Entity.Optional = all.items[
-                                        smith.nextLessThan(
-                                            usize,
-                                            all.items.len,
-                                        )
-                                    ].toOptional();
-                                    if (log) std.debug.print("  {f}.parent = {f}\n", .{
-                                        child,
-                                        parent,
-                                    });
-                                    try expectEqual(
-                                        cb.ext(SetParent, .{ .child = child, .parent = parent }).*,
-                                        SetParent{ .child = child, .parent = parent },
-                                    );
-                                }
-                            }
-                        },
-                        .parent => if (all.items.len > 0) {
-                            const parent = if (smith.nextLessThan(u8, 100) > 10) b: {
-                                break :b all.items[
+
+                switch (mode) {
+                    .build => {
+                        // Build a random tree with interesting topology
+                        if (log) std.debug.print("build phase ({}/{})\n", .{
+                            smith.index,
+                            smith.input.len,
+                        });
+                        for (0..smith.nextBetween(u8, 8, 16)) |_| {
+                            if (smith.isEmpty()) break;
+
+                            const child = Entity.reserve(&cb);
+                            if (log) std.debug.print("  reserve {f}\n", .{child});
+                            const transform: Transform = .{
+                                .pos = .{
+                                    .x = smith.nextBetween(f32, -100.0, 100.0),
+                                    .y = smith.nextBetween(f32, -100.0, 100.0),
+                                },
+                                .rot = .fromAngle(smith.next(f32)),
+                                .relative = smith.next(u8) > 25 or true,
+                                .scale = .{
+                                    .x = smith.nextBetween(f32, -100.0, 100.0),
+                                    .y = smith.nextBetween(f32, -100.0, 100.0),
+                                },
+                            };
+                            try expectEqual(child.add(&cb, Transform, transform).*, transform);
+                            try all.append(gpa, child);
+                            if (smith.next(u8) > 40) {
+                                const parent: Entity.Optional = all.items[
                                     smith.nextLessThan(
                                         usize,
                                         all.items.len,
                                     )
                                 ].toOptional();
-                            } else Entity.Optional.none;
-                            const child = all.items[smith.nextLessThan(usize, all.items.len)];
-                            if (log) std.debug.print("  {f}.parent = {f}\n", .{ child, parent });
-                            try expectEqual(
-                                cb.ext(SetParent, .{ .child = child, .parent = parent }).*,
-                                SetParent{ .child = child, .parent = parent },
-                            );
-                        },
-                        .remove => {
-                            // Sometimes destroy entities, but not too often
-                            if (all.items.len == 0) continue;
-                            const e = all.items[smith.nextLessThan(usize, all.items.len)];
-                            switch (smith.next(enum { transform, node, entity })) {
-                                .transform => {
-                                    if (log) std.debug.print("  remove transform from {f}\n", .{e});
-                                    e.remove(&cb, Transform);
+                                if (log) std.debug.print("  {f}.parent = {f}\n", .{ child, parent });
+                                try expectEqual(
+                                    cb.ext(SetParent, .{ .child = child, .parent = parent }).*,
+                                    SetParent{ .child = child, .parent = parent },
+                                );
+                            }
+                        }
+                        mode = .{ .mutate = .{ .steps = 5 } };
+                    },
+                    .mutate => |mutate| {
+                        if (log) std.debug.print("mutate step {} ({}/{})\n", .{
+                            mutate.steps,
+                            smith.index,
+                            smith.input.len,
+                        });
+                        // Generate random commands
+                        for (0..smith.nextBetween(u8, 1, 10)) |_| {
+                            switch (smith.next(enum { reserve, parent, remove, move })) {
+                                .reserve => {
+                                    if (smith.next(bool)) {
+                                        const child = Entity.reserve(&cb);
+                                        if (log) std.debug.print("  reserve {f}\n", .{child});
+                                        const transform: Transform = .{
+                                            .pos = .{
+                                                .x = smith.nextBetween(f32, -100.0, 100.0),
+                                                .y = smith.nextBetween(f32, -100.0, 100.0),
+                                            },
+                                            .rot = .fromAngle(smith.next(f32)),
+                                            .relative = smith.next(u8) > 25,
+                                        };
+                                        try expectEqual(child.add(&cb, Transform, transform).*, transform);
+                                        try all.append(gpa, child);
+                                        if (smith.next(u8) > 40) {
+                                            const parent: Entity.Optional = all.items[
+                                                smith.nextLessThan(
+                                                    usize,
+                                                    all.items.len,
+                                                )
+                                            ].toOptional();
+                                            if (log) std.debug.print("  {f}.parent = {f}\n", .{
+                                                child,
+                                                parent,
+                                            });
+                                            try expectEqual(
+                                                cb.ext(SetParent, .{ .child = child, .parent = parent }).*,
+                                                SetParent{ .child = child, .parent = parent },
+                                            );
+                                        }
+                                    }
                                 },
-                                .node => {
-                                    if (log) std.debug.print("  remove node from {f}\n", .{e});
-                                    e.remove(&cb, Node);
+                                .parent => if (all.items.len > 0) {
+                                    const parent = if (smith.nextLessThan(u8, 100) > 10) b: {
+                                        break :b all.items[
+                                            smith.nextLessThan(
+                                                usize,
+                                                all.items.len,
+                                            )
+                                        ].toOptional();
+                                    } else Entity.Optional.none;
+                                    const child = all.items[smith.nextLessThan(usize, all.items.len)];
+                                    if (log) std.debug.print("  {f}.parent = {f}\n", .{ child, parent });
+                                    try expectEqual(
+                                        cb.ext(SetParent, .{ .child = child, .parent = parent }).*,
+                                        SetParent{ .child = child, .parent = parent },
+                                    );
                                 },
-                                .entity => {
-                                    if (log) std.debug.print("  destroy {f}\n", .{e});
-                                    e.destroy(&cb);
+                                .remove => {
+                                    // Sometimes destroy entities, but not too often
+                                    if (all.items.len == 0) continue;
+                                    const e = all.items[smith.nextLessThan(usize, all.items.len)];
+                                    switch (smith.next(enum { transform, node, entity })) {
+                                        .transform => {
+                                            if (log) std.debug.print("  remove transform from {f}\n", .{e});
+                                            e.remove(&cb, Transform);
+                                        },
+                                        .node => {
+                                            if (log) std.debug.print("  remove node from {f}\n", .{e});
+                                            e.remove(&cb, Node);
+                                        },
+                                        .entity => {
+                                            if (log) std.debug.print("  destroy {f}\n", .{e});
+                                            e.destroy(&cb);
+                                        },
+                                    }
+                                },
+                                .move => {
+                                    if (all.items.len == 0) continue;
+                                    const e = all.items[smith.nextLessThan(usize, all.items.len)];
+                                    const transform = e.get(&es, Transform) orelse continue;
+                                    if (smith.next(bool)) {
+                                        transform.setPos(&es, .{
+                                            .x = smith.nextBetween(f32, -100.0, 100.0),
+                                            .y = smith.nextBetween(f32, -100.0, 100.0),
+                                        });
+                                    }
+                                    if (smith.next(bool)) {
+                                        if (smith.next(bool)) {
+                                            transform.setRot(&es, .fromAngle(smith.next(f32)));
+                                            transform.setScale(&es, .{
+                                                .x = smith.nextBetween(f32, -100.0, 100.0),
+                                                .y = smith.nextBetween(f32, -100.0, 100.0),
+                                            });
+                                        } else {
+                                            // Mainly making sure it compiles
+                                            transform.rotate(&es, .fromTo(.x_pos, .y_pos));
+                                            transform.scaleBy(&es, .{
+                                                .x = smith.nextBetween(f32, -2.0, 2.0),
+                                                .y = smith.nextBetween(f32, -2.0, 2.0),
+                                            });
+                                        }
+                                        if (log) std.debug.print("  {f} pos = {}, rot = {}\n", .{
+                                            e,
+                                            transform.pos,
+                                            transform.rot,
+                                        });
+                                    }
                                 },
                             }
-                        },
-                        .move => {
-                            if (all.items.len == 0) continue;
-                            const e = all.items[smith.nextLessThan(usize, all.items.len)];
-                            const transform = e.get(&es, Transform) orelse continue;
-                            if (smith.next(bool)) {
-                                transform.setPos(&es, .{
-                                    .x = smith.nextBetween(f32, -100.0, 100.0),
-                                    .y = smith.nextBetween(f32, -100.0, 100.0),
-                                });
-                            }
-                            if (smith.next(bool)) {
-                                if (smith.next(bool)) {
-                                    transform.setRot(&es, .fromAngle(smith.next(f32)));
-                                    transform.setScale(&es, .{
-                                        .x = smith.nextBetween(f32, -100.0, 100.0),
-                                        .y = smith.nextBetween(f32, -100.0, 100.0),
-                                    });
-                                } else {
-                                    // Mainly making sure it compiles
-                                    transform.rotate(&es, .fromTo(.x_pos, .y_pos));
-                                    transform.scaleBy(&es, .{
-                                        .x = smith.nextBetween(f32, -2.0, 2.0),
-                                        .y = smith.nextBetween(f32, -2.0, 2.0),
-                                    });
-                                }
-                                if (log) std.debug.print("  {f} pos = {}, rot = {}\n", .{
-                                    e,
-                                    transform.pos,
-                                    transform.rot,
-                                });
-                            }
-                        },
-                    }
+                        }
+                        if (mutate.steps == 0) {
+                            mode = .build;
+                        } else {
+                            mode = .{ .mutate = .{ .steps = mutate.steps - 1 } };
+                        }
+                    },
                 }
-                if (mutate.steps == 0) {
-                    mode = .build;
-                } else {
-                    mode = .{ .mutate = .{ .steps = mutate.steps - 1 } };
-                }
-            },
-        }
 
-        Transform.Exec.immediate(&es, &cb, &tr);
-        try checkOracle(&es);
-    }
-}
-
-fn checkOracle(es: *const Entities) !void {
-    if (log) std.debug.print("check oracle\n", .{});
-
-    var path: std.ArrayListUnmanaged(*const Transform) = .{};
-    defer path.deinit(gpa);
-
-    var iter = es.iterator(struct {
-        node: ?*const Node,
-        transform: *const Transform,
-    });
-    while (iter.next(es)) |vw| {
-        // Get the path
-        try path.append(gpa, vw.transform);
-        if (vw.transform.relative) {
-            if (vw.node) |node| {
-                var ancestors = node.ancestorIterator();
-                while (ancestors.next(es)) |ancestor| {
-                    const transform = ancestor.entity.get(es, Transform) orelse break;
-                    try path.append(gpa, transform);
-                    if (!transform.relative) break;
-                }
+                Transform.Exec.immediate(&es, &cb, &tr);
+                try checkOracle(&es);
             }
         }
-        if (log) std.debug.print("  {f} path len: {}\n", .{
-            es.getEntity(vw.transform),
-            path.items.len,
-        });
 
-        // Iterate over the path in reverse order to get the ground truth world matrix
-        var world_from_model: Mat2x3 = .identity;
-        var sum: Vec2 = .zero;
-        while (path.pop()) |ancestor| {
-            const scale: Mat2x3 = .scale(ancestor.scale);
-            const rotation: Mat2x3 = .rotation(ancestor.rot);
-            const translation: Mat2x3 = .translation(ancestor.pos);
-            world_from_model = scale
-                .applied(rotation)
-                .applied(translation)
-                .applied(world_from_model);
-            sum.add(ancestor.pos);
+        fn checkOracle(es: *const Entities) !void {
+            if (log) std.debug.print("check oracle\n", .{});
+
+            var path: std.ArrayListUnmanaged(*const Transform) = .{};
+            defer path.deinit(gpa);
+
+            var iter = es.iterator(struct {
+                node: ?*const Node,
+                transform: *const Transform,
+            });
+            while (iter.next(es)) |vw| {
+                // Get the path
+                try path.append(gpa, vw.transform);
+                if (vw.transform.relative) {
+                    if (vw.node) |node| {
+                        var ancestors = node.ancestorIterator();
+                        while (ancestors.next(es)) |ancestor| {
+                            const transform = ancestor.entity.get(es, Transform) orelse break;
+                            try path.append(gpa, transform);
+                            if (!transform.relative) break;
+                        }
+                    }
+                }
+                if (log) std.debug.print("  {f} path len: {}\n", .{
+                    es.getEntity(vw.transform),
+                    path.items.len,
+                });
+
+                // Iterate over the path in reverse order to get the ground truth world matrix
+                var world_from_model: Mat2x3 = .identity;
+                var sum: Vec2 = .zero;
+                while (path.pop()) |ancestor| {
+                    const scale: Mat2x3 = .scale(ancestor.scale);
+                    const rotation: Mat2x3 = .rotation(ancestor.rot);
+                    const translation: Mat2x3 = .translation(ancestor.pos);
+                    world_from_model = scale
+                        .applied(rotation)
+                        .applied(translation)
+                        .applied(world_from_model);
+                    sum.add(ancestor.pos);
+                }
+                try expectMat2x3Equal(world_from_model, vw.transform.world_from_model);
+                try expectEqual(world_from_model.getTranslation(), vw.transform.getWorldPos());
+            }
         }
-        try expectMat2x3Equal(world_from_model, vw.transform.world_from_model);
-        try expectEqual(world_from_model.getTranslation(), vw.transform.getWorldPos());
-    }
-}
 
-fn expectMat2x3Equal(expected: Mat2x3, found: Mat2x3) !void {
-    if (!expected.eql(found)) {
-        std.debug.print("expected:\n{d} {d} {d}\n{d} {d} {d}\n", .{
-            expected.r0.x,
-            expected.r0.y,
-            expected.r0.z,
-            expected.r1.x,
-            expected.r1.y,
-            expected.r1.z,
-        });
-        std.debug.print("found:\n{d} {d} {d}\n{d} {d} {d}\n", .{
-            found.r0.x,
-            found.r0.y,
-            found.r0.z,
-            found.r1.x,
-            found.r1.y,
-            found.r1.z,
-        });
-        return error.TestExpectedMat2x3Equal;
-    }
+        fn expectMat2x3Equal(expected: Mat2x3, found: Mat2x3) !void {
+            if (!expected.eql(found)) {
+                std.debug.print("expected:\n{d} {d} {d}\n{d} {d} {d}\n", .{
+                    expected.r0.x,
+                    expected.r0.y,
+                    expected.r0.z,
+                    expected.r1.x,
+                    expected.r1.y,
+                    expected.r1.z,
+                });
+                std.debug.print("found:\n{d} {d} {d}\n{d} {d} {d}\n", .{
+                    found.r0.x,
+                    found.r0.y,
+                    found.r0.z,
+                    found.r1.x,
+                    found.r1.y,
+                    found.r1.z,
+                });
+                return error.TestExpectedMat2x3Equal;
+            }
+        }
+    };
 }
