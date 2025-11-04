@@ -7,7 +7,7 @@ const assert = std.debug.assert;
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const CmdBuf = zcs.CmdBuf;
-const Transform2D = zcs.ext.Transform2D;
+const Transform2 = zcs.ext.Transform2;
 const ZoneCmd = zcs.ext.ZoneCmd;
 
 const Zone = tracy.Zone;
@@ -411,7 +411,7 @@ pub fn main() !void {
             for (0..max_entities) |_| {
                 assert(Entity.reserveImmediate(&es).changeArchImmediate(
                     &es,
-                    struct { Transform2D },
+                    struct { Transform2 },
                     .{ .add = .{.{}} },
                 ));
             }
@@ -420,7 +420,7 @@ pub fn main() !void {
         {
             const queue_zone = Zone.begin(.{ .name = "move", .src = @src() });
             defer queue_zone.end();
-            var iter = es.iterator(struct { transform: *Transform2D });
+            var iter = es.iterator(struct { transform: *Transform2 });
             var f: f32 = 0;
             while (iter.next(&es)) |vw| {
                 vw.transform.move(&es, .{ .x = f, .y = f });

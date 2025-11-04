@@ -15,8 +15,8 @@ const CompFlag = zcs.CompFlag;
 const CmdBuf = zcs.CmdBuf;
 const Node = zcs.ext.Node;
 const SetParent = zcs.ext.Node.SetParent;
-const Transform2D = zcs.ext.Transform2D;
-const Transform3D = zcs.ext.Transform3D;
+const Transform2 = zcs.ext.Transform2;
+const Transform3 = zcs.ext.Transform3;
 const Vec2 = zcs.ext.geom.Vec2;
 const Mat2x3 = zcs.ext.geom.Mat2x3;
 
@@ -65,15 +65,15 @@ test "exec" {
         cb.ext(SetParent, .{ .child = child, .parent = parent.toOptional() }).*,
         SetParent{ .child = child, .parent = parent.toOptional() },
     );
-    Transform2D.Exec.immediate(&es, &cb, &tr);
+    Transform2.Exec.immediate(&es, &cb, &tr);
 
     const child_node = child.get(&es, Node).?;
     try expectEqual(child_node.parent, parent.toOptional());
 }
 
 const Transforms: []const type = &.{
-    Transform2D,
-    Transform3D,
+    Transform2,
+    Transform3,
 };
 
 test "fuzz transform cb" {
