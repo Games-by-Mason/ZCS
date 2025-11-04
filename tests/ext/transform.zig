@@ -16,6 +16,7 @@ const CmdBuf = zcs.CmdBuf;
 const Node = zcs.ext.Node;
 const SetParent = zcs.ext.Node.SetParent;
 const Transform2D = zcs.ext.Transform2D;
+const Transform3D = zcs.ext.Transform3D;
 const Vec2 = zcs.ext.geom.Vec2;
 const Mat2x3 = zcs.ext.geom.Mat2x3;
 
@@ -72,15 +73,16 @@ test "exec" {
 
 const Transforms: []const type = &.{
     Transform2D,
+    Transform3D,
 };
 
-test "fuzz cb" {
+test "fuzz transform cb" {
     inline for (Transforms) |Transform| {
         try std.testing.fuzz({}, Tests(Transform).fuzzTransformsCmdBuf, .{ .corpus = &.{} });
     }
 }
 
-test "rand cb" {
+test "rand transform cb" {
     var xoshiro_256: std.Random.Xoshiro256 = .init(0);
     const rand = xoshiro_256.random();
     const input: []u8 = try gpa.alloc(u8, 262144);
@@ -92,6 +94,8 @@ test "rand cb" {
 }
 
 fn Tests(Transform: type) type {
+    const MatAffine = @FieldType(Transform, "world_from_model");
+    const Vec = @FieldType(Transform, "pos");
     return struct {
         fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
             defer CompFlag.unregisterAll();
@@ -154,16 +158,10 @@ fn Tests(Transform: type) type {
                             const child = Entity.reserve(&cb);
                             if (log) std.debug.print("  reserve {f}\n", .{child});
                             const transform: Transform = .{
-                                .pos = .{
-                                    .x = smith.nextBetween(f32, -100.0, 100.0),
-                                    .y = smith.nextBetween(f32, -100.0, 100.0),
-                                },
-                                .rot = .fromAngle(smith.next(f32)),
+                                .pos = nextVec(&smith, -100, 100),
+                                .rot = .fromTo(nextVec(&smith, -1, 1), nextVec(&smith, -1, 1)),
                                 .relative = smith.next(u8) > 25 or true,
-                                .scale = .{
-                                    .x = smith.nextBetween(f32, -100.0, 100.0),
-                                    .y = smith.nextBetween(f32, -100.0, 100.0),
-                                },
+                                .scale = nextVec(&smith, -100, 100),
                             };
                             try expectEqual(child.add(&cb, Transform, transform).*, transform);
                             try all.append(gpa, child);
@@ -197,11 +195,8 @@ fn Tests(Transform: type) type {
                                         const child = Entity.reserve(&cb);
                                         if (log) std.debug.print("  reserve {f}\n", .{child});
                                         const transform: Transform = .{
-                                            .pos = .{
-                                                .x = smith.nextBetween(f32, -100.0, 100.0),
-                                                .y = smith.nextBetween(f32, -100.0, 100.0),
-                                            },
-                                            .rot = .fromAngle(smith.next(f32)),
+                                            .pos = nextVec(&smith, -100, 100),
+                                            .rot = .fromTo(nextVec(&smith, -1, 1), nextVec(&smith, -1, 1)),
                                             .relative = smith.next(u8) > 25,
                                         };
                                         try expectEqual(child.add(&cb, Transform, transform).*, transform);
@@ -264,25 +259,16 @@ fn Tests(Transform: type) type {
                                     const e = all.items[smith.nextLessThan(usize, all.items.len)];
                                     const transform = e.get(&es, Transform) orelse continue;
                                     if (smith.next(bool)) {
-                                        transform.setPos(&es, .{
-                                            .x = smith.nextBetween(f32, -100.0, 100.0),
-                                            .y = smith.nextBetween(f32, -100.0, 100.0),
-                                        });
+                                        transform.setPos(&es, nextVec(&smith, -100, 100));
                                     }
                                     if (smith.next(bool)) {
                                         if (smith.next(bool)) {
-                                            transform.setRot(&es, .fromAngle(smith.next(f32)));
-                                            transform.setScale(&es, .{
-                                                .x = smith.nextBetween(f32, -100.0, 100.0),
-                                                .y = smith.nextBetween(f32, -100.0, 100.0),
-                                            });
+                                            transform.setRot(&es, .fromTo(nextVec(&smith, -1, 1), nextVec(&smith, -1, 1)));
+                                            transform.setScale(&es, nextVec(&smith, -100, 100));
                                         } else {
                                             // Mainly making sure it compiles
                                             transform.rotate(&es, .fromTo(.x_pos, .y_pos));
-                                            transform.scaleBy(&es, .{
-                                                .x = smith.nextBetween(f32, -2.0, 2.0),
-                                                .y = smith.nextBetween(f32, -2.0, 2.0),
-                                            });
+                                            transform.scaleBy(&es, nextVec(&smith, -2, 2));
                                         }
                                         if (log) std.debug.print("  {f} pos = {}, rot = {}\n", .{
                                             e,
@@ -335,43 +321,29 @@ fn Tests(Transform: type) type {
                 });
 
                 // Iterate over the path in reverse order to get the ground truth world matrix
-                var world_from_model: Mat2x3 = .identity;
-                var sum: Vec2 = .zero;
+                var world_from_model: MatAffine = .identity;
+                var sum: Vec = .zero;
                 while (path.pop()) |ancestor| {
-                    const scale: Mat2x3 = .scale(ancestor.scale);
-                    const rotation: Mat2x3 = .rotation(ancestor.rot);
-                    const translation: Mat2x3 = .translation(ancestor.pos);
+                    const scale: MatAffine = .scale(ancestor.scale);
+                    const rotation: MatAffine = .rotation(ancestor.rot);
+                    const translation: MatAffine = .translation(ancestor.pos);
                     world_from_model = scale
                         .applied(rotation)
                         .applied(translation)
                         .applied(world_from_model);
                     sum.add(ancestor.pos);
                 }
-                try expectMat2x3Equal(world_from_model, vw.transform.world_from_model);
+                try expectEqual(world_from_model, vw.transform.world_from_model);
                 try expectEqual(world_from_model.getTranslation(), vw.transform.getWorldPos());
             }
         }
 
-        fn expectMat2x3Equal(expected: Mat2x3, found: Mat2x3) !void {
-            if (!expected.eql(found)) {
-                std.debug.print("expected:\n{d} {d} {d}\n{d} {d} {d}\n", .{
-                    expected.r0.x,
-                    expected.r0.y,
-                    expected.r0.z,
-                    expected.r1.x,
-                    expected.r1.y,
-                    expected.r1.z,
-                });
-                std.debug.print("found:\n{d} {d} {d}\n{d} {d} {d}\n", .{
-                    found.r0.x,
-                    found.r0.y,
-                    found.r0.z,
-                    found.r1.x,
-                    found.r1.y,
-                    found.r1.z,
-                });
-                return error.TestExpectedMat2x3Equal;
+        fn nextVec(smith: *Smith, min: f32, max: f32) Vec {
+            var result: Vec = undefined;
+            inline for (@typeInfo(Vec).@"struct".fields) |field| {
+                @field(result, field.name) = smith.nextBetween(f32, min, max);
             }
+            return result;
         }
     };
 }

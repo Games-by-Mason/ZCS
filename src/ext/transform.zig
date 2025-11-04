@@ -221,7 +221,13 @@ pub fn Transform(dimensions: Dimensions) type {
                                 var delta: CmdBuf.Batch.ArchChange.Delta = .{};
                                 var ops = arch_change.iterator();
                                 while (ops.next()) |op| {
-                                    Node.Exec.beforeArchChangeImmediate(es, tr, arch_change, op);
+                                    Node.Exec.beforeArchChangeImmediate(
+                                        es,
+                                        tr,
+                                        arch_change,
+                                        delta,
+                                        op,
+                                    );
                                     delta.updateImmediate(op);
                                 }
 
