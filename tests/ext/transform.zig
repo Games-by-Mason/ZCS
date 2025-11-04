@@ -15,8 +15,6 @@ const CompFlag = zcs.CompFlag;
 const CmdBuf = zcs.CmdBuf;
 const Node = zcs.ext.Node;
 const SetParent = zcs.ext.Node.SetParent;
-const Transform2 = zcs.ext.Transform2;
-const Transform3 = zcs.ext.Transform3;
 const Vec2 = zcs.ext.geom.Vec2;
 const Mat2x3 = zcs.ext.geom.Mat2x3;
 
@@ -65,15 +63,17 @@ test "exec" {
         cb.ext(SetParent, .{ .child = child, .parent = parent.toOptional() }).*,
         SetParent{ .child = child, .parent = parent.toOptional() },
     );
-    Transform2.Exec.immediate(&es, &cb, &tr);
+    zcs.ext.Transform2.Exec.immediate(&es, &cb, &tr);
 
     const child_node = child.get(&es, Node).?;
     try expectEqual(child_node.parent, parent.toOptional());
 }
 
 const Transforms: []const type = &.{
-    Transform2,
-    Transform3,
+    zcs.ext.Transform2,
+    zcs.ext.Transform2Ordered,
+    zcs.ext.Transform3,
+    zcs.ext.Transform3Ordered,
 };
 
 test "fuzz transform cb" {
@@ -96,6 +96,7 @@ test "rand transform cb" {
 fn Tests(Transform: type) type {
     const MatAffine = @FieldType(Transform, "world_from_model");
     const Vec = @FieldType(Transform, "pos");
+    const Order = @FieldType(Transform, "order");
     return struct {
         fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
             defer CompFlag.unregisterAll();
@@ -276,6 +277,18 @@ fn Tests(Transform: type) type {
                                             transform.rot,
                                         });
                                     }
+
+                                    if (smith.next(bool)) {
+                                        if (@sizeOf(Order) == 0) {
+                                            transform.setOrder(&es, 0);
+                                        } else {
+                                            transform.setOrder(&es, @floatFromInt(smith.nextBetween(
+                                                i8,
+                                                -10,
+                                                10,
+                                            )));
+                                        }
+                                    }
                                 },
                             }
                         }
@@ -323,6 +336,7 @@ fn Tests(Transform: type) type {
                 // Iterate over the path in reverse order to get the ground truth world matrix
                 var world_from_model: MatAffine = .identity;
                 var sum: Vec = .zero;
+                var global_order: Order = 0;
                 while (path.pop()) |ancestor| {
                     const scale: MatAffine = .scale(ancestor.scale);
                     const rotation: MatAffine = .rotation(ancestor.rot);
@@ -332,9 +346,11 @@ fn Tests(Transform: type) type {
                         .applied(translation)
                         .applied(world_from_model);
                     sum.add(ancestor.pos);
+                    global_order += ancestor.order;
                 }
                 try expectEqual(world_from_model, vw.transform.world_from_model);
                 try expectEqual(world_from_model.getTranslation(), vw.transform.getWorldPos());
+                try expectEqual(global_order, vw.transform.global_order);
             }
         }
 

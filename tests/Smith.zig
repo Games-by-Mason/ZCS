@@ -106,7 +106,7 @@ pub fn nextBetween(self: *@This(), T: type, min: T, less_than: T) T {
             assert(std.math.maxInt(T) >= less_than);
             assert(less_than >= min);
             const n: T = self.next(T);
-            return min + (n % (less_than - min));
+            return min + @mod(n, less_than - min);
         },
         else => comptime unreachable,
     }

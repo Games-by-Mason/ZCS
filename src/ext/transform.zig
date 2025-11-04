@@ -57,6 +57,7 @@ pub fn Transform(options: Options) type {
         .@"2" => Mat2x3,
         .@"3" => Mat3x4,
     };
+    const Order = options.Order;
 
     return struct {
         const Self = @This();
@@ -70,9 +71,9 @@ pub fn Transform(options: Options) type {
         /// The transform's world from model matrix.
         world_from_model: Mat = .identity,
         /// The transform's local sort order.
-        order: options.Order = 0,
+        order: Order = 0,
         /// The transform's world sort order.
-        global_order: options.Order = 0,
+        global_order: Order = 0,
         /// Whether or not this transform's space and order is relative to its parent.
         relative: bool = true,
 
@@ -125,29 +126,32 @@ pub fn Transform(options: Options) type {
             return self.world_from_model.getTranslation();
         }
 
-        /// Updates the `world_from_model` matrix on this transform, and all of its transitive
-        /// relative children.
+        /// Updates the `world_from_model` matrix and `order` on this transform, and all of its
+        /// transitive relative children.
         pub fn sync(self: *@This(), es: *const Entities) void {
             var transforms = self.preOrderIterator(es);
             while (transforms.next(es)) |curr| {
+                const relative_parent = b: {
+                    if (!curr.transform.relative) break :b null;
+                    const node = es.getComp(curr.transform, Node) orelse break :b null;
+                    const parent = node.parent.unwrap() orelse break :b null;
+                    break :b parent.get(es, Self);
+                };
                 const translation: Mat = .translation(curr.transform.pos);
                 const rotation: Mat = .rotation(curr.transform.rot);
                 const scale: Mat = .scale(curr.transform.scale);
-                const parent_world_from_model = curr.transform.getRelativeWorldFromModel(es);
+                const parent_world_from_model: Mat = if (relative_parent) |rp|
+                    rp.world_from_model
+                else
+                    .identity;
                 curr.transform.world_from_model = scale
                     .applied(rotation)
                     .applied(translation)
                     .applied(parent_world_from_model);
-            }
-        }
 
-        /// Returns the parent's world form model matrix, or identity if not relative.
-        pub inline fn getRelativeWorldFromModel(self: *const @This(), es: *const Entities) Mat {
-            if (!self.relative) return .identity;
-            const node = es.getComp(self, Node) orelse return .identity;
-            const parent = node.parent.unwrap() orelse return .identity;
-            const parent_transform = parent.get(es, Self) orelse return .identity;
-            return parent_transform.world_from_model;
+                const parent_global_order = if (relative_parent) |rp| rp.global_order else 0;
+                curr.transform.global_order = parent_global_order + curr.transform.order;
+            }
         }
 
         /// Returns the forward direction of this transform.
@@ -157,27 +161,9 @@ pub fn Transform(options: Options) type {
 
         /// Sets this transform's relative sort order, and updates all of its transitive relative
         /// children.
-        pub fn setOrder(self: *@This(), es: *const Entities, order: options.Order) void {
+        pub fn setOrder(self: *@This(), es: *const Entities, order: Order) void {
             self.order = order;
-            self.syncOrder(es);
-        }
-        /// Updates the `global_order` value on this transform, and all of its transitive relative
-        /// children.
-        pub fn syncOrder(self: *@This(), es: *const Entities) void {
-            var transforms = self.preOrderIterator(es);
-            while (transforms.next(es)) |curr| {
-                const parent_world_order = curr.transform.getRelativeWorldFromModel(es);
-                curr.transform.global_order = self.order + parent_world_order;
-            }
-        }
-
-        /// Returns the parent's world order, or `0` if not relative.
-        pub inline fn getRelativeWorldOrder(self: *const @This(), es: *const Entities) Mat {
-            if (!self.relative) return 0;
-            const node = es.getComp(self, Node) orelse return 0;
-            const parent = node.parent.unwrap() orelse return 0;
-            const parent_transform = parent.get(es, Self) orelse return 0;
-            return parent_transform.global_order;
+            self.sync(es);
         }
 
         /// Returns a pre-order iterator over the subtree of relative transforms starting at `self`. This

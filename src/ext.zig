@@ -8,7 +8,9 @@ pub const Node = @import("ext/Node.zig");
 pub const ZoneCmd = @import("ext/ZoneCmd.zig");
 pub const Tag = @import("ext/tag.zig").Tag;
 pub const Transform2 = Transform(.{ .dimensions = .@"2", .Order = u0 });
+pub const Transform2Ordered = Transform(.{ .dimensions = .@"2", .Order = f32 });
 pub const Transform3 = Transform(.{ .dimensions = .@"3", .Order = u0 });
+pub const Transform3Ordered = Transform(.{ .dimensions = .@"3", .Order = f32 });
 pub const geom = @import("geom");
 
 test {
