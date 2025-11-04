@@ -23,7 +23,7 @@ const zcs = @import("zcs");
 const Entities = zcs.Entities;
 const Entity = zcs.Entity;
 const CmdBuf = zcs.CmdBuf;
-const Transform = zcs.ext.Transform2D;
+const Transform = zcs.ext.Transform2;
 const Node = zcs.ext.Node;
 
 pub fn main() !void {
@@ -236,9 +236,15 @@ Node.Exec.immediate(&es, &cb);
 
 Keep in mind that this will call the default exec behavior as well as implement the extended behavior provided by `Node`. If you're also integrating other unrelated extensions, a lower level composable API is provided in [`Node.Exec`](https://docs.gamesbymason.com/zcs/#zcs.ext.Node.Exec) for building your own executor.
 
-### Transform2D
+### Transform
 
-The [`Transform2D`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform2D) component represents the position and orientation of an entity in 2D space. If an entity also has a [`Node`](https://docs.gamesbymason.com/zcs/#zcs.ext.Node) and `relative` is `true`, its local space is relative to that of its parent.
+A few transform variations are provided:
+* [`Transform2`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform2)
+* [`Transform2Order`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform2Order)
+* [`Transform3`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform3)
+* [`Transform3Order`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform3)
+
+A transform component represents the position and orientation of an entity in space. If an entity also has a [`Node`](https://docs.gamesbymason.com/zcs/#zcs.ext.Node) and `relative` is `true`, its local space is relative to that of its parent.
 
 ```zig
 vw.transform.move(es, vw.rb.vel.scaled(delta_s));
@@ -247,7 +253,9 @@ vw.transform.rotate(es, .fromAngle(vw.rb.rotation_vel * delta_s));
 
 Transform children are immediately synchronized by these helpers, but you can defer synchronization until a later point by bypassing the helpers and then later calling `transform.sync(es)`.
 
-[`Transform2D`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform2D) depends on [geom](https://github.com/games-by-Mason/geom) for math.
+The ordered variants also expose an `order` field of type `f32`. This field is unused internally, but may be set by users to store sort order, e.g. to break depth ties when using painter's algorithm. This is often preferable over breaking ties by offsetting layers along the Z axis as it prevents visual issues where intersecting objects can have some but not all layers occluded.
+
+Transform depends on [geom](https://github.com/games-by-Mason/geom) for math.
 
 ### ZoneCmd
 
