@@ -925,14 +925,31 @@ fn removeCmd(fz: *Fuzzer, o: *Oracle, cb: *CmdBuf) !void {
 
     // Get a random entity
     const entity = fz.randomEntity().unwrap() orelse return;
-    if (log) std.debug.print("remove {f}\n", .{entity});
 
-    // Remove from the real entity
-    entity.remove(cb, Node);
+    const overwrite = fz.smith.next(bool);
+
+    // Update from the real entity
+    if (overwrite) {
+        if (log) std.debug.print("overwrite {f}\n", .{entity});
+        try expectEqual(entity.add(cb, Node, .{}).*, Node{});
+    } else {
+        if (log) std.debug.print("remove {f}\n", .{entity});
+        entity.remove(cb, Node);
+    }
+
+    // Update the oracle
     _ = o.roots.orderedRemove(entity);
 
     // Remove from in the oracle
     try removeInOracle(fz, o, entity);
+
+    // If we're overwriting, insert the new node
+    if (overwrite) {
+        if (o.entities.getPtr(entity)) |oe| {
+            oe.node = .{};
+            try o.roots.put(gpa, entity, {});
+        }
+    }
 }
 
 fn destroyInOracle(fz: *Fuzzer, o: *Oracle, e: Entity) !void {

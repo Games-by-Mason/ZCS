@@ -556,10 +556,9 @@ pub const Exec = struct {
                         var delta: CmdBuf.Batch.ArchChange.Delta = .{};
                         var ops = arch_change.iterator();
                         while (ops.next()) |op| {
-                            beforeArchChangeImmediate(es, tr, arch_change, op);
+                            beforeArchChangeImmediate(es, tr, arch_change, delta, op);
                             delta.updateImmediate(op);
                         }
-
                         _ = try arch_change.execImmediateOrErr(es, delta);
                     }
 
@@ -647,23 +646,41 @@ pub const Exec = struct {
         }
     }
 
+    /// Called before a node is removed.
+    pub fn beforeRemoveNode(
+        es: *Entities,
+        tr: *Tree,
+        entity: Entity,
+        delta: CmdBuf.Batch.ArchChange.Delta,
+    ) void {
+        const comp_flag = typeId(Node).comp_flag orelse return; // Can't exist yet
+        if (delta.remove.contains(comp_flag)) return; // Already removed
+        const node = entity.get(es, Node) orelse return; // Doesn't exist
+
+        _ = node.destroyChildrenAndPluckImmediate(es, tr);
+    }
+
     /// Call this before executing a command.
     pub inline fn beforeArchChangeImmediate(
         es: *Entities,
         tr: *Tree,
         arch_change: CmdBuf.Batch.ArchChange,
+        delta: CmdBuf.Batch.ArchChange.Delta,
         op: CmdBuf.Batch.ArchChange.Op,
     ) void {
         switch (op) {
-            .destroy => if (arch_change.entity.get(es, Node)) |node| {
-                _ = node.destroyChildrenAndPluckImmediate(es, tr);
+            .destroy => {
+                // If this entity has a node, remove it from the tree first
+                beforeRemoveNode(es, tr, arch_change.entity, delta);
             },
             .remove => |id| if (id == typeId(Node)) {
-                if (arch_change.entity.get(es, Node)) |node| {
-                    _ = node.destroyChildrenAndPluckImmediate(es, tr);
-                }
+                // Remove this node from the tree
+                beforeRemoveNode(es, tr, arch_change.entity, delta);
             },
-            .add => {},
+            .add => |any| if (any.id == typeId(Node)) {
+                // If we're overwriting an existing node, remove it from the tree first
+                beforeRemoveNode(es, tr, arch_change.entity, delta);
+            },
         }
     }
 
