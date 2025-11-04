@@ -97,19 +97,9 @@ pub fn nextLessThan(self: *@This(), T: type, less_than: T) T {
 }
 
 pub fn nextBetween(self: *@This(), T: type, min: T, less_than: T) T {
-    switch (@typeInfo(T)) {
-        .float, .comptime_float => {
-            const n: T = self.next(T);
-            return min + @mod(n, less_than - min);
-        },
-        .int, .comptime_int => {
-            assert(std.math.maxInt(T) >= less_than);
-            assert(less_than >= min);
-            const n: T = self.next(T);
-            return min + @mod(n, less_than - min);
-        },
-        else => comptime unreachable,
-    }
+    assert(less_than >= min);
+    const n: T = self.next(T);
+    return min + @mod(n, less_than - min);
 }
 
 fn nextRaw(self: *@This(), T: type) T {

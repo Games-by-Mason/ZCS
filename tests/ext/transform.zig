@@ -96,7 +96,6 @@ test "rand transform cb" {
 fn Tests(Transform: type) type {
     const MatAffine = @FieldType(Transform, "world_from_model");
     const Vec = @FieldType(Transform, "pos");
-    const Order = @FieldType(Transform, "order");
     return struct {
         fn fuzzTransformsCmdBuf(_: void, input: []const u8) !void {
             defer CompFlag.unregisterAll();
@@ -277,18 +276,6 @@ fn Tests(Transform: type) type {
                                             transform.rot,
                                         });
                                     }
-
-                                    if (smith.next(bool)) {
-                                        if (@sizeOf(Order) == 0) {
-                                            transform.setOrder(&es, 0);
-                                        } else {
-                                            transform.setOrder(&es, @floatFromInt(smith.nextBetween(
-                                                i8,
-                                                -10,
-                                                10,
-                                            )));
-                                        }
-                                    }
                                 },
                             }
                         }
@@ -336,7 +323,6 @@ fn Tests(Transform: type) type {
                 // Iterate over the path in reverse order to get the ground truth world matrix
                 var world_from_model: MatAffine = .identity;
                 var sum: Vec = .zero;
-                var global_order: Order = 0;
                 while (path.pop()) |ancestor| {
                     const scale: MatAffine = .scale(ancestor.scale);
                     const rotation: MatAffine = .rotation(ancestor.rot);
@@ -346,11 +332,9 @@ fn Tests(Transform: type) type {
                         .applied(translation)
                         .applied(world_from_model);
                     sum.add(ancestor.pos);
-                    global_order += ancestor.order;
                 }
                 try expectEqual(world_from_model, vw.transform.world_from_model);
                 try expectEqual(world_from_model.getTranslation(), vw.transform.getWorldPos());
-                try expectEqual(global_order, vw.transform.global_order);
             }
         }
 
