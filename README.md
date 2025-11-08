@@ -240,9 +240,9 @@ Keep in mind that this will call the default exec behavior as well as implement 
 
 A few transform variations are provided:
 * [`Transform2`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform2)
-* [`Transform2Order`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform2Order)
+* [`Transform2Ordered`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform2Ordered)
 * [`Transform3`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform3)
-* [`Transform3Order`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform3)
+* [`Transform3Ordered`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform3)
 
 A transform component represents the position and orientation of an entity in space. If an entity also has a [`Node`](https://docs.gamesbymason.com/zcs/#zcs.ext.Node) and `relative` is `true`, its local space is relative to that of its parent.
 

@@ -23,6 +23,7 @@ const Zone = tracy.Zone;
 
 pub const Options = struct {
     dimensions: enum { @"2", @"3" },
+    Layer: type,
     Order: type,
 };
 
@@ -36,9 +37,6 @@ pub const Options = struct {
 /// To alleviate this burden, a number of setters are provided that call `sync` for you, and command
 /// buffer integration is provided for automatically calling sync when transforms are added and
 /// removed.
-///
-/// Order is a relative value that may be used to sort transforms at the same depth, or may be
-/// ignored by using a zero sized type (e.g. `u0`).
 ///
 /// For more information on command buffer integration, see `exec`.
 ///
@@ -57,6 +55,7 @@ pub fn Transform(options: Options) type {
         .@"2" => Mat2x3,
         .@"3" => Mat3x4,
     };
+    const Layer = options.Layer;
     const Order = options.Order;
 
     return struct {
@@ -72,8 +71,10 @@ pub fn Transform(options: Options) type {
         world_from_model: Mat = .identity,
         /// Whether or not this transform's space and order is relative to its parent.
         relative: bool = true,
-        /// The transform's sort order. Unused internally, user can interpret as desired.
-        order: Order = 0,
+        /// The transform's sort layer. Ignored internally, user can interpret as desired.
+        layer: Layer = std.mem.zeroes(Layer),
+        /// The transform's sort order. Ignored internally, user can interpret as desired.
+        order: Order = std.mem.zeroes(Order),
 
         /// It's frequently useful to pair an entity and transform together.
         ///

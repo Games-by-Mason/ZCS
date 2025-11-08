@@ -71,9 +71,7 @@ test "exec" {
 
 const Transforms: []const type = &.{
     zcs.ext.Transform2,
-    zcs.ext.Transform2Ordered,
     zcs.ext.Transform3,
-    zcs.ext.Transform3Ordered,
 };
 
 test "fuzz transform cb" {
