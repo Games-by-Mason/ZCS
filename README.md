@@ -238,11 +238,12 @@ Keep in mind that this will call the default exec behavior as well as implement 
 
 ### Transform
 
-A few transform variations are provided:
+A generic transform is provided:
+* [`Transform`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform)
+
+As well as some instantiations:
 * [`Transform2`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform2)
-* [`Transform2Ordered`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform2Ordered)
 * [`Transform3`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform3)
-* [`Transform3Ordered`](https://docs.gamesbymason.com/zcs/#zcs.ext.Transform3)
 
 A transform component represents the position and orientation of an entity in space. If an entity also has a [`Node`](https://docs.gamesbymason.com/zcs/#zcs.ext.Node) and `relative` is `true`, its local space is relative to that of its parent.
 
@@ -253,7 +254,7 @@ vw.transform.rotate(es, .fromAngle(vw.rb.rotation_vel * delta_s));
 
 Transform children are immediately synchronized by these helpers, but you can defer synchronization until a later point by bypassing the helpers and then later calling `transform.sync(es)`.
 
-The ordered variants also expose an `order` field of type `f32`. This field is unused internally, but may be set by users to store sort order, e.g. to break depth ties when using painter's algorithm. This is often preferable over breaking ties by offsetting layers along the Z axis as it prevents visual issues where intersecting objects can have some but not all layers occluded.
+If you call `Transform` yourself, you can also set types for the `order` and `layer` fields. These values are ignored internally, but may be used by user code to change the sort order. Typically in a 2D game the sort is decided by layer, depth, and then order. This is often preferable over breaking ties by offsetting layers along the Z axis as it prevents visual issues where intersecting objects can have some but not all layers occluded. By default these types are set to `u0` as to not take up space if unused.
 
 Transform depends on [geom](https://github.com/games-by-Mason/geom) for math.
 
