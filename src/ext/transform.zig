@@ -1,19 +1,3 @@
-//! A component that tracks the position and orientation of an entity in 2D. Hierarchical
-//! relationships formed by the `Node` component are respected if present.
-//!
-//! You can synchronize a transform's `world_from_model` field, and the `world_from_model` fields of
-//! all its relative children by calling `sync`. This is necessary when modifying the transform, or
-//! changing the hierarchy by adding or removing a transform.
-//!
-//! To alleviate this burden, a number of setters are provided that call `sync` for you, and command
-//! buffer integration is provided for automatically calling sync when transforms are added and
-//! removed.
-//!
-//! For more information on command buffer integration, see `exec`.
-//!
-//! If you need features not provided by this implementation, for example a third dimension, you're
-//! encouraged to use this as a reference for your own transform component.
-
 const std = @import("std");
 const zcs = @import("../root.zig");
 const tracy = @import("tracy");
@@ -37,24 +21,42 @@ const Mat3x4 = zcs.ext.geom.Mat3x4;
 
 const Zone = tracy.Zone;
 
-pub const Dimensions = enum {
-    @"2",
-    @"3",
+pub const Options = struct {
+    dimensions: enum { @"2", @"3" },
+    Layer: type,
+    Order: type,
 };
 
-pub fn Transform(dimensions: Dimensions) type {
-    const Vec = switch (dimensions) {
+/// A component that tracks the position and orientation of an entity in 2D or 3D. Hierarchical
+/// relationships formed by the `Node` component are respected if present.
+///
+/// You can synchronize a transform's `world_from_model` field, and the `world_from_model` fields of
+/// all its relative children by calling `sync`. This is necessary when modifying the transform, or
+/// changing the hierarchy by adding or removing a transform.
+///
+/// To alleviate this burden, a number of setters are provided that call `sync` for you, and command
+/// buffer integration is provided for automatically calling sync when transforms are added and
+/// removed.
+///
+/// For more information on command buffer integration, see `exec`.
+///
+/// If you need features not provided by this implementation, you're encouraged to use this as a
+/// reference for your own transform component.
+pub fn Transform(options: Options) type {
+    const Vec = switch (options.dimensions) {
         .@"2" => Vec2,
         .@"3" => Vec3,
     };
-    const Rotor = switch (dimensions) {
+    const Rotor = switch (options.dimensions) {
         .@"2" => Rotor2,
         .@"3" => Rotor3,
     };
-    const Mat = switch (dimensions) {
+    const Mat = switch (options.dimensions) {
         .@"2" => Mat2x3,
         .@"3" => Mat3x4,
     };
+    const Layer = options.Layer;
+    const Order = options.Order;
 
     return struct {
         const Self = @This();
@@ -67,8 +69,12 @@ pub fn Transform(dimensions: Dimensions) type {
         scale: Vec = .splat(1),
         /// The transform's world from model matrix.
         world_from_model: Mat = .identity,
-        /// Whether or not this transform's space is relative to its parent.
+        /// Whether or not this transform's space and order is relative to its parent.
         relative: bool = true,
+        /// The transform's sort layer. Ignored internally, user can interpret as desired.
+        layer: Layer = std.mem.zeroes(Layer),
+        /// The transform's sort order. Ignored internally, user can interpret as desired.
+        order: Order = std.mem.zeroes(Order),
 
         /// It's frequently useful to pair an entity and transform together.
         ///
@@ -119,8 +125,8 @@ pub fn Transform(dimensions: Dimensions) type {
             return self.world_from_model.getTranslation();
         }
 
-        /// Updates the `world_from_model` matrix on this transform, and all of its transitive relative
-        /// children.
+        /// Updates the `world_from_model` matrix on this transform, and all of its transitive
+        /// relative children.
         pub fn sync(self: *@This(), es: *const Entities) void {
             var transforms = self.preOrderIterator(es);
             while (transforms.next(es)) |curr| {
@@ -128,7 +134,10 @@ pub fn Transform(dimensions: Dimensions) type {
                 const rotation: Mat = .rotation(curr.transform.rot);
                 const scale: Mat = .scale(curr.transform.scale);
                 const parent_world_from_model = curr.transform.getRelativeWorldFromModel(es);
-                curr.transform.world_from_model = scale.applied(rotation).applied(translation).applied(parent_world_from_model);
+                curr.transform.world_from_model = scale
+                    .applied(rotation)
+                    .applied(translation)
+                    .applied(parent_world_from_model);
             }
         }
 
