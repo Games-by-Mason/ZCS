@@ -254,7 +254,7 @@ vw.transform.rotate(es, .fromAngle(vw.rb.rotation_vel * delta_s));
 
 Transform children are immediately synchronized by these helpers, but you can defer synchronization until a later point by bypassing the helpers and then later calling `transform.sync(es)`.
 
-If you call `Transform` yourself, you can also set types for the `order` and `layer` fields. These values are ignored internally, but may be used by user code to change the sort order. Typically in a 2D game the sort is decided by layer, depth, and then order. This is often preferable over breaking ties by offsetting layers along the Z axis as it prevents visual issues where intersecting objects can have some but not all layers occluded. By default these types are set to `u0` as to not take up space if unused.
+If you call `Transform` yourself, you can also set types for the `layer` field. This value is ignored internally, but may be used by user code to change the render order. Defaults to `u0`.
 
 Transform depends on [geom](https://github.com/games-by-Mason/geom) for math.
 

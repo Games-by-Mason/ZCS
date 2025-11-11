@@ -24,7 +24,6 @@ const Zone = tracy.Zone;
 pub const Options = struct {
     dimensions: enum { @"2", @"3" },
     Layer: type,
-    Order: type,
 };
 
 /// A component that tracks the position and orientation of an entity in 2D or 3D. Hierarchical
@@ -56,7 +55,6 @@ pub fn Transform(options: Options) type {
         .@"3" => Mat3x4,
     };
     const Layer = options.Layer;
-    const Order = options.Order;
 
     return struct {
         const Self = @This();
@@ -69,12 +67,10 @@ pub fn Transform(options: Options) type {
         scale: Vec = .splat(1),
         /// The transform's world from model matrix.
         world_from_model: Mat = .identity,
-        /// Whether or not this transform's space and order is relative to its parent.
+        /// Whether or not this transform's space is relative to its parent.
         relative: bool = true,
         /// The transform's sort layer. Ignored internally, user can interpret as desired.
         layer: Layer = std.mem.zeroes(Layer),
-        /// The transform's sort order. Ignored internally, user can interpret as desired.
-        order: Order = std.mem.zeroes(Order),
 
         /// It's frequently useful to pair an entity and transform together.
         ///
