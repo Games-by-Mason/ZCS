@@ -12,7 +12,7 @@ pub const TypeInfo = struct {
     pub const max_align: std.mem.Alignment = .@"16";
 
     /// The component's type name.
-    name: []const u8,
+    name: [:0]const u8,
     /// The component type's size.
     size: usize,
     /// The component type's alignment.
