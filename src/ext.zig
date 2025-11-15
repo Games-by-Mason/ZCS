@@ -2,7 +2,8 @@
 
 const std = @import("std");
 
-pub const Node = @import("ext/Node.zig");
+pub const NodeWithOptions = @import("ext/node.zig").NodeWithOptions;
+pub const Node = NodeWithOptions(.{ .Name = ?[:0]const u8 });
 pub const ZoneCmd = @import("ext/ZoneCmd.zig");
 pub const Tag = @import("ext/tag.zig").Tag;
 pub const Transform = @import("ext/transform.zig").Transform;
