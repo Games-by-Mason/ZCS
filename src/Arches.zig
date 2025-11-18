@@ -107,12 +107,20 @@ pub fn indexOf(lists: *const @This(), self: *const ChunkList) ChunkList.Index {
     return @enumFromInt(index);
 }
 
+pub const IteratorOptions = struct {
+    /// Only iterate over chunks containing these components.
+    require: CompFlag.Set = .{},
+    /// Skip chunks containing any of these components.
+    skip: CompFlag.Set = .{},
+};
+
 /// Returns an iterator over the chunk lists that have the given components.
 ///
 /// Invalidating pointers while iterating results in safety checked illegal behavior.
-pub fn iterator(self: @This(), es: *const Entities, required_comps: CompFlag.Set) Iterator {
+pub fn iterator(self: @This(), es: *const Entities, options: IteratorOptions) Iterator {
     return .{
-        .required_comps = required_comps,
+        .require = options.require,
+        .skip = options.skip,
         .all = self.map.iterator(),
         .pointer_lock = es.pointer_generation.lock(),
     };
@@ -120,14 +128,16 @@ pub fn iterator(self: @This(), es: *const Entities, required_comps: CompFlag.Set
 
 /// An iterator over chunk lists that have the given components.
 pub const Iterator = struct {
-    required_comps: CompFlag.Set,
+    require: CompFlag.Set,
+    skip: CompFlag.Set,
     all: @FieldType(Arches, "map").Iterator,
     pointer_lock: PointerLock,
 
     /// Returns an empty iterator.
     pub fn empty(es: *const Entities) @This() {
         return .{
-            .required_comps = .{},
+            .require = .{},
+            .skip = .{},
             .all = b: {
                 const map: @FieldType(Arches, "map") = .{};
                 break :b map.iterator();
@@ -139,7 +149,9 @@ pub const Iterator = struct {
     pub fn next(self: *@This(), es: *const Entities) ?*const ChunkList {
         self.pointer_lock.check(es.pointer_generation);
         while (self.all.next()) |item| {
-            if (item.key_ptr.*.supersetOf(self.required_comps)) {
+            if (item.key_ptr.*.supersetOf(self.require) and
+                item.key_ptr.*.intersectWith(self.skip).eql(.{}))
+            {
                 return item.value_ptr;
             }
         }

@@ -197,6 +197,15 @@ pub const AllView = struct {
     }
 };
 
+pub const ModelView = struct {
+    model: *Model,
+    entity: Entity,
+
+    fn checkWithHandle(self: @This(), fz: *EntitiesFuzzer) void {
+        checkModelsWithHandle(fz, self.model, self.entity);
+    }
+};
+
 fn checkAllWithHandle(
     self: *@This(),
     tag: *const Tag,
@@ -322,7 +331,11 @@ pub fn checkIterators(self: *@This()) !void {
         // Per chunk, with handles
         {
             defer self.found_buf.clearRetainingCapacity();
-            self.es.forEachChunk("countEntitiesChunkedWithHandles", countEntitiesChunkedWithHandles, self);
+            self.es.forEachChunk(
+                "countEntitiesChunkedWithHandles",
+                countEntitiesChunkedWithHandles,
+                .{ .ctx = self },
+            );
             try expectEqual(self.committed.count(), self.found_buf.count());
         }
 
@@ -340,21 +353,25 @@ pub fn checkIterators(self: *@This()) !void {
         {
             defer self.found_buf.clearRetainingCapacity();
             self.es.forEach("checkRigidBodies", checkRigidBodies, self);
-            try expectEqual(self.expectedOfArch(.{ .rb = true }), self.found_buf.count());
+            try expectEqual(self.expectedOfArch(.{ .rb = true }, .{}), self.found_buf.count());
         }
 
         // Per entity, with handle
         {
             defer self.found_buf.clearRetainingCapacity();
             self.es.forEach("checkRigidBodiesWithHandle", checkRigidBodiesWithHandle, self);
-            try expectEqual(self.expectedOfArch(.{ .rb = true }), self.found_buf.count());
+            try expectEqual(self.expectedOfArch(.{ .rb = true }, .{}), self.found_buf.count());
         }
 
         // Per chunk, without handles
         {
             defer self.found_buf.clearRetainingCapacity();
-            self.es.forEachChunk("checkRigidBodiesChunked", checkRigidBodiesChunked, self);
-            try expectEqual(self.expectedOfArch(.{ .rb = true }), self.found_buf.count());
+            self.es.forEachChunk(
+                "checkRigidBodiesChunked",
+                checkRigidBodiesChunked,
+                .{ .ctx = self },
+            );
+            try expectEqual(self.expectedOfArch(.{ .rb = true }, .{}), self.found_buf.count());
         }
 
         // Per chunk, with handles
@@ -363,9 +380,9 @@ pub fn checkIterators(self: *@This()) !void {
             self.es.forEachChunk(
                 "checkRigidBodiesChunkedWithHandles",
                 checkRigidBodiesChunkedWithHandles,
-                self,
+                .{ .ctx = self },
             );
-            try expectEqual(self.expectedOfArch(.{ .rb = true }), self.found_buf.count());
+            try expectEqual(self.expectedOfArch(.{ .rb = true }, .{}), self.found_buf.count());
         }
     }
 
@@ -373,9 +390,21 @@ pub fn checkIterators(self: *@This()) !void {
     {
         defer self.found_buf.clearRetainingCapacity();
         self.es.forEach("checkModelsWithHandle", checkModelsWithHandle, self);
-        try expectEqual(self.expectedOfArch(.{ .model = true }), self.found_buf.count());
+        try expectEqual(self.expectedOfArch(.{ .model = true }, .{}), self.found_buf.count());
         try expectEqual(
-            self.expectedOfArch(.{ .model = true }),
+            self.expectedOfArch(.{ .model = true }, .{}),
+            self.found_buf.count(),
+        );
+    }
+
+    // Models but no tags
+    {
+        defer self.found_buf.clearRetainingCapacity();
+        self.es.forEachWithOptions("checkModelsWithHandle", checkModelsWithHandle, self, .{
+            .skip = zcs.view.comps(struct { *Tag }, .{ .size = .one }) orelse .{},
+        });
+        try expectEqual(
+            self.expectedOfArch(.{ .model = true }, .{ .tag = true }),
             self.found_buf.count(),
         );
     }
@@ -384,11 +413,7 @@ pub fn checkIterators(self: *@This()) !void {
     {
         defer self.found_buf.clearRetainingCapacity();
         self.es.forEach("checkTagsWithHandle", checkTagsWithHandle, self);
-        try expectEqual(self.expectedOfArch(.{ .tag = true }), self.found_buf.count());
-        try expectEqual(
-            self.expectedOfArch(.{ .tag = true }),
-            self.found_buf.count(),
-        );
+        try expectEqual(self.expectedOfArch(.{ .tag = true }, .{}), self.found_buf.count());
     }
 
     // All three, with handle
@@ -396,7 +421,7 @@ pub fn checkIterators(self: *@This()) !void {
         defer self.found_buf.clearRetainingCapacity();
         self.es.forEach("checkAllWithHandle", checkAllWithHandle, self);
         try expectEqual(
-            self.expectedOfArch(.{ .rb = true, .model = true, .tag = true }),
+            self.expectedOfArch(.{ .rb = true, .model = true, .tag = true }, .{}),
             self.found_buf.count(),
         );
     }
@@ -406,7 +431,24 @@ pub fn checkIterators(self: *@This()) !void {
         defer self.found_buf.clearRetainingCapacity();
         self.es.forEachView("AllView.checkWithHandle", AllView.checkWithHandle, .{self});
         try expectEqual(
-            self.expectedOfArch(.{ .rb = true, .model = true, .tag = true }),
+            self.expectedOfArch(.{ .rb = true, .model = true, .tag = true }, .{}),
+            self.found_buf.count(),
+        );
+    }
+
+    // Models but no tags as view
+    {
+        defer self.found_buf.clearRetainingCapacity();
+        self.es.forEachViewWithOptions(
+            "ModelView.checkWithHandle",
+            ModelView.checkWithHandle,
+            .{self},
+            .{
+                .skip = zcs.view.comps(struct { *Tag }, .{ .size = .one }) orelse .{},
+            },
+        );
+        try expectEqual(
+            self.expectedOfArch(.{ .model = true }, .{ .tag = true }),
             self.found_buf.count(),
         );
     }
@@ -425,7 +467,7 @@ pub fn checkIterators(self: *@This()) !void {
             defer self.found_buf.clearRetainingCapacity();
             self.es.forEach("checkSomeOptional", checkSomeOptional, self);
             try expectEqual(
-                self.expectedOfArch(.{ .rb = true, .model = true }),
+                self.expectedOfArch(.{ .rb = true, .model = true }, .{}),
                 self.found_buf.count(),
             );
         }
@@ -435,7 +477,7 @@ pub fn checkIterators(self: *@This()) !void {
             defer self.found_buf.clearRetainingCapacity();
             self.es.forEach("checkSomeOptionalWithHandle", checkSomeOptionalWithHandle, self);
             try expectEqual(
-                self.expectedOfArch(.{ .rb = true, .tag = true }),
+                self.expectedOfArch(.{ .rb = true, .tag = true }, .{}),
                 self.found_buf.count(),
             );
         }
@@ -443,9 +485,30 @@ pub fn checkIterators(self: *@This()) !void {
         // Per entity, without handles chunked
         {
             defer self.found_buf.clearRetainingCapacity();
-            self.es.forEachChunk("checkSomeOptionalChunked", checkSomeOptionalChunked, self);
+            self.es.forEachChunk(
+                "checkSomeOptionalChunked",
+                checkSomeOptionalChunked,
+                .{ .ctx = self },
+            );
             try expectEqual(
-                self.expectedOfArch(.{ .rb = true, .model = true }),
+                self.expectedOfArch(.{ .rb = true, .model = true }, .{}),
+                self.found_buf.count(),
+            );
+        }
+
+        // Per entity, without handles chunked, skip tags
+        {
+            defer self.found_buf.clearRetainingCapacity();
+            self.es.forEachChunk(
+                "checkSomeOptionalChunked",
+                checkSomeOptionalChunked,
+                .{
+                    .ctx = self,
+                    .skip = zcs.view.comps(struct { *Tag }, .{ .size = .one }) orelse .{},
+                },
+            );
+            try expectEqual(
+                self.expectedOfArch(.{ .rb = true, .model = true }, .{ .tag = true }),
                 self.found_buf.count(),
             );
         }
@@ -456,10 +519,10 @@ pub fn checkIterators(self: *@This()) !void {
             self.es.forEachChunk(
                 "checkSomeOptionalChunkedWithHandles",
                 checkSomeOptionalChunkedWithHandles,
-                self,
+                .{ .ctx = self },
             );
             try expectEqual(
-                self.expectedOfArch(.{ .rb = true, .model = true }),
+                self.expectedOfArch(.{ .rb = true, .model = true }, .{}),
                 self.found_buf.count(),
             );
         }
@@ -482,19 +545,18 @@ pub const Arch = packed struct {
     tag: bool = false,
 };
 
-pub fn expectedOfArch(self: *@This(), arch: Arch) usize {
+pub fn expectedOfArch(self: *@This(), arch: Arch, skip: Arch) usize {
     var count: usize = 0;
     var iter = self.committed.iterator();
     while (iter.next()) |entry| {
-        if (arch.rb) {
-            if (entry.value_ptr.rb == null) continue;
-        }
-        if (arch.model) {
-            if (entry.value_ptr.model == null) continue;
-        }
-        if (arch.tag) {
-            if (entry.value_ptr.tag == null) continue;
-        }
+        if (arch.rb and entry.value_ptr.rb == null) continue;
+        if (arch.model and entry.value_ptr.model == null) continue;
+        if (arch.tag and entry.value_ptr.tag == null) continue;
+
+        if (skip.rb and entry.value_ptr.rb != null) continue;
+        if (skip.model and entry.value_ptr.model != null) continue;
+        if (skip.tag and entry.value_ptr.tag != null) continue;
+
         count += 1;
     }
     return count;

@@ -132,7 +132,7 @@ pub fn deinit(self: *@This(), gpa: Allocator) void {
 /// Destroys all entities matching the given arch immediately.
 pub fn destroyArchImmediate(self: *@This(), arch: CompFlag.Set) void {
     self.pointer_generation.increment();
-    var chunk_lists_iter = self.arches.iterator(self, arch);
+    var chunk_lists_iter = self.arches.iterator(self, .{ .require = arch });
     while (chunk_lists_iter.next(self)) |chunk_list| {
         var chunk_list_iter = chunk_list.iterator(self);
         while (chunk_list_iter.next(self)) |chunk| {
@@ -152,7 +152,7 @@ pub fn destroyArchImmediate(self: *@This(), arch: CompFlag.Set) void {
 /// Invalidates pointers.
 pub fn recycleArchImmediate(self: *@This(), arch: CompFlag.Set) void {
     self.pointer_generation.increment();
-    var chunk_lists_iter = self.arches.iterator(self, arch);
+    var chunk_lists_iter = self.arches.iterator(self, .{ .require = arch });
     while (chunk_lists_iter.next(self)) |chunk_list| {
         var chunk_list_iter = chunk_list.iterator(self);
         while (chunk_list_iter.next(self)) |chunk| {
@@ -301,11 +301,22 @@ pub fn forEachView(
     comptime updateView: anytype,
     ctx: view.Tuple(view.params(@TypeOf(updateView))[1..]),
 ) void {
+    self.forEachViewWithOptions(name, updateView, ctx, .{});
+}
+
+/// Similar to `forEachView`, but takes additional options.
+pub fn forEachViewWithOptions(
+    self: *@This(),
+    comptime name: [:0]const u8,
+    comptime updateView: anytype,
+    ctx: view.Tuple(view.params(@TypeOf(updateView))[1..]),
+    options: IteratorOptions,
+) void {
     const zone = Zone.begin(.{ .src = @src(), .name = name });
     defer zone.end();
     const params = view.params(@TypeOf(updateView));
     const View = params[0];
-    var iter = self.iterator(View);
+    var iter = self.iteratorWithOptions(View, options);
     while (iter.next(self)) |vw| {
         @call(.auto, updateView, .{vw} ++ ctx);
     }
@@ -327,14 +338,35 @@ pub fn forEach(
     comptime updateEntity: anytype,
     ctx: view.params(@TypeOf(updateEntity))[0],
 ) void {
+    self.forEachWithOptions(name, updateEntity, ctx, .{});
+}
+
+/// Similar to `forEach`, but takes additional options.
+pub fn forEachWithOptions(
+    self: *@This(),
+    comptime name: [:0]const u8,
+    comptime updateEntity: anytype,
+    ctx: view.params(@TypeOf(updateEntity))[0],
+    options: IteratorOptions,
+) void {
     const zone = Zone.begin(.{ .src = @src(), .name = name });
     defer zone.end();
     const params = view.params(@TypeOf(updateEntity));
     const View = view.Tuple(params[1..]);
-    var iter = self.iterator(View);
+    var iter = self.iteratorWithOptions(View, options);
     while (iter.next(self)) |vw| {
         @call(.auto, updateEntity, .{ctx} ++ vw);
     }
+}
+
+/// Options for `forEachChunk`.
+pub fn ForEachChunkOptions(f: type) type {
+    return struct {
+        const Ctx = view.params(f)[0];
+        ctx: Ctx,
+        /// Skip entities containing any of these components.
+        skip: CompFlag.Set = .{},
+    };
 }
 
 /// Prefer `forEach`. Calls `updateChunk` on each compatible chunk in an implementation
@@ -348,16 +380,19 @@ pub fn forEachChunk(
     self: *@This(),
     comptime name: [:0]const u8,
     comptime updateChunk: anytype,
-    ctx: view.params(@TypeOf(updateChunk))[0],
+    options: ForEachChunkOptions(@TypeOf(updateChunk)),
 ) void {
     const zone = Zone.begin(.{ .src = @src(), .name = name });
     defer zone.end();
     const params = view.params(@TypeOf(updateChunk));
-    const required_comps = view.comps(view.Tuple(params[1..]), .{ .size = .slice }) orelse return;
-    var chunks = self.chunkIterator(required_comps);
+    const require_comps = view.comps(view.Tuple(params[1..]), .{ .size = .slice }) orelse return;
+    var chunks = self.chunkIterator(.{
+        .require = require_comps,
+        .skip = options.skip,
+    });
     while (chunks.next(self)) |chunk| {
         const chunk_view = chunk.view(self, view.Tuple(params[1..])).?;
-        @call(.auto, updateChunk, .{ctx} ++ chunk_view);
+        @call(.auto, updateChunk, .{options.ctx} ++ chunk_view);
     }
 }
 
@@ -372,6 +407,8 @@ pub fn ForEachThreadedOptions(f: type) type {
         tp: *std.Thread.Pool,
         wg: *std.Thread.WaitGroup,
         cp: ?*CmdPool,
+        /// Skip entities containing any of these components.
+        skip: CompFlag.Set = .{},
     };
 }
 
@@ -434,8 +471,11 @@ pub fn forEachThreaded(
         }
     };
 
-    const required_comps = view.comps(Opt.Comps, .{ .size = .one }) orelse return;
-    var chunks = self.chunkIterator(required_comps);
+    const require_comps = view.comps(Opt.Comps, .{ .size = .one }) orelse return;
+    var chunks = self.chunkIterator(.{
+        .require = require_comps,
+        .skip = options.skip,
+    });
     while (chunks.next(self)) |chunk| {
         if (Opt.acquire_cb) {
             options.tp.spawnWg(options.wg, Wrapped.processChunkCb, .{
@@ -463,6 +503,8 @@ pub fn ForEachChunkThreadedOptions(f: type) type {
         ctx: Ctx,
         tp: *std.Thread.Pool,
         wg: *std.Thread.WaitGroup,
+        /// Skip entities containing any of these components.
+        skip: CompFlag.Set = .{},
     };
 }
 
@@ -492,8 +534,11 @@ pub fn forEachChunkThreaded(
         }
     };
 
-    const required_comps = view.comps(Opt.Comps, .{ .size = .slice }) orelse return;
-    var chunks = self.chunkIterator(required_comps);
+    const require_comps = view.comps(Opt.Comps, .{ .size = .slice }) orelse return;
+    var chunks = self.chunkIterator(.{
+        .require = require_comps,
+        .skip = options.skip,
+    });
     while (chunks.next(self)) |chunk| {
         std.Thread.Pool.spawnWg(options.tp, options.wg, Wrapped.processChunk, .{
             self,
@@ -561,15 +606,17 @@ pub fn updateStats(self: *@This()) void {
     }
 }
 
-/// Returns an iterator over all the chunks with at least the components in `required_comps` in
+pub const ChunkIteratorOptions = Arches.IteratorOptions;
+
+/// Returns an iterator over all the chunks with at least the components in `require_comps` in
 /// an implementation defined order.
 ///
 /// Invalidating pointers while iterating results in safety checked illegal behavior.
 pub fn chunkIterator(
     self: *const @This(),
-    required_comps: CompFlag.Set,
+    options: ChunkIteratorOptions,
 ) ChunkIterator {
-    var lists = self.arches.iterator(self, required_comps);
+    var lists = self.arches.iterator(self, options);
     const chunks: ChunkList.Iterator = if (lists.next(self)) |l| l.iterator(self) else .empty(self);
     var result: ChunkIterator = .{
         .lists = lists,
@@ -640,7 +687,7 @@ pub const ChunkIterator = struct {
     }
 };
 
-/// Returns an iterator over all entities that have at least the components in `required_comps` in
+/// Returns an iterator over all entities that have at least the components in `require_comps` in
 /// chunk order. The results are of type `View` which is a struct where each field is either a
 /// pointer to a component, an optional pointer to a component, or `Entity`.
 ///
@@ -651,9 +698,28 @@ pub const ChunkIterator = struct {
 ///
 /// Invalidating pointers while iterating results in safety checked illegal behavior.
 pub fn iterator(self: *const @This(), View: type) Iterator(View) {
-    const required_comps: CompFlag.Set = view.comps(View, .{ .size = .one }) orelse
+    return self.iteratorWithOptions(View, .{});
+}
+
+/// Options for `iteratorWithOptions`.
+pub const IteratorOptions = struct {
+    // XXX: allow requiring additional comps here that aren't in the view?
+    /// Skip entities containing any of these components.
+    skip: CompFlag.Set = .{},
+};
+
+/// Similar to `iterator`, but takes additional options.
+pub fn iteratorWithOptions(
+    self: *const @This(),
+    View: type,
+    options: IteratorOptions,
+) Iterator(View) {
+    const require_comps: CompFlag.Set = view.comps(View, .{ .size = .one }) orelse
         return .empty(self);
-    const chunks = self.chunkIterator(required_comps);
+    const chunks = self.chunkIterator(.{
+        .require = require_comps,
+        .skip = options.skip,
+    });
     const slices = if (chunks.peek(self)) |c| c.view(self, view.Slice(View)).? else undefined;
     return .{
         .chunks = chunks,
