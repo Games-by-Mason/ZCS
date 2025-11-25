@@ -15,7 +15,7 @@ const Node = zcs.ext.Node;
 ///
 /// Instead, this tag component tags entities with a type ID. This solves both the extension and the
 /// fragmentation issue.
-pub const Tag = packed struct {
+pub const Tag = struct {
     id: TypeId,
 
     /// Initializes a tag from a type, most often an empty struct.
@@ -28,7 +28,7 @@ pub const Tag = packed struct {
         var ancestors = node.ancestorIterator();
         while (ancestors.next(es)) |ancestor| {
             if (ancestor.entity.get(es, Tag)) |tag| {
-                if (tag.* == self) {
+                if (self.eql(tag.*)) {
                     return ancestor.entity.toOptional();
                 }
             }
@@ -39,6 +39,12 @@ pub const Tag = packed struct {
     /// Returns true if the given entity matches this tag.
     pub fn matches(self: @This(), es: *const Entities, entity: Entity) bool {
         const tag = entity.get(es, Tag) orelse return false;
-        return tag.* == self;
+        return self.eql(tag);
+    }
+
+    /// We could avoid the `eql` method by making tag a packed struct, but that's currently blocked
+    /// by [this issue](https://github.com/ziglang/zig/issues/26044).
+    pub fn eql(lhs: @This(), rhs: @This()) bool {
+        return lhs.id == rhs.id;
     }
 };

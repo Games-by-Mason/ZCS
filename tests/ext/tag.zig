@@ -22,6 +22,14 @@ const expectEqualEntity = @import("../root.zig").expectEqualEntity;
 
 const log = false;
 
+// https://github.com/ziglang/zig/issues/26044
+const global: Tag = .init(u32);
+test "miscompilation" {
+    var copy: Tag = undefined;
+    copy = global;
+    try std.testing.expectEqual(global.id, copy.id);
+}
+
 test "tags" {
     defer CompFlag.unregisterAll();
 
