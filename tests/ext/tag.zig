@@ -22,7 +22,8 @@ const expectEqualEntity = @import("../root.zig").expectEqualEntity;
 
 const log = false;
 
-// https://github.com/ziglang/zig/issues/26044
+// This miscompiled when `Tag` was marked as a packed struct, see discussion
+// [here](https://github.com/ziglang/zig/issues/26044).
 const global: Tag = .init(u32);
 test "miscompilation" {
     var copy: Tag = undefined;

@@ -39,11 +39,13 @@ pub const Tag = struct {
     /// Returns true if the given entity matches this tag.
     pub fn matches(self: @This(), es: *const Entities, entity: Entity) bool {
         const tag = entity.get(es, Tag) orelse return false;
-        return self.eql(tag);
+        return self.eql(tag.*);
     }
 
-    /// We could avoid the `eql` method by making tag a packed struct, but that's currently blocked
-    /// by [this issue](https://github.com/ziglang/zig/issues/26044).
+    /// Returns true if the tags match.
+    ///
+    /// Don't get tempted to sidestep this by changing this type to be a packed struct, see the
+    /// discussion [here](https://github.com/ziglang/zig/issues/26044).
     pub fn eql(lhs: @This(), rhs: @This()) bool {
         return lhs.id == rhs.id;
     }
