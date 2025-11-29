@@ -703,7 +703,6 @@ pub fn iterator(self: *const @This(), View: type) Iterator(View) {
 
 /// Options for `iteratorWithOptions`.
 pub const IteratorOptions = struct {
-    // XXX: allow requiring additional comps here that aren't in the view?
     /// Skip entities containing any of these components.
     skip: CompFlag.Set = .{},
 };
