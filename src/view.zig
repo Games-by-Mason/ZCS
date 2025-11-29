@@ -92,8 +92,8 @@ pub inline fn comps(T: type, options: ViewOptions) ?CompFlag.Set {
 /// Converts an entity view type into an entity slice view type.
 pub fn Slice(EntityView: type) type {
     const entity_view_fields = @typeInfo(EntityView).@"struct".fields;
-    comptime var fields: [entity_view_fields.len]std.builtin.Type.StructField = undefined;
-    inline for (&fields, entity_view_fields, 0..) |*field, entity_view_field, i| {
+    comptime var field_types: [entity_view_fields.len]type = undefined;
+    inline for (&field_types, entity_view_fields) |*field_type, entity_view_field| {
         const T = entity_view_field.type;
         const S = b: {
             if (T == Entity) break :b []const Entity.Index;
@@ -110,20 +110,9 @@ pub fn Slice(EntityView: type) type {
             const S = if (@typeInfo(Ptr).pointer.is_const) []const Child else []Child;
             break :b if (@typeInfo(T) == .optional) ?S else S;
         };
-        field.* = .{
-            .name = std.fmt.comptimePrint("{}", .{i}),
-            .type = S,
-            .default_value_ptr = null,
-            .is_comptime = false,
-            .alignment = @alignOf(S),
-        };
+        field_type.* = S;
     }
-    return @Type(.{ .@"struct" = .{
-        .layout = .auto,
-        .fields = &fields,
-        .decls = &.{},
-        .is_tuple = true,
-    } });
+    return @Tuple(&field_types);
 }
 
 /// Returns the list of parameter types for a function type.
@@ -140,22 +129,11 @@ pub fn params(T: type) [@typeInfo(T).@"fn".params.len]type {
 /// Generates a tuple from a list of types. Similar to `std.meta.Tuple`, but does not call
 /// `@setEvalBranchQuota`.
 pub fn Tuple(types: []const type) type {
-    comptime var fields: [types.len]std.builtin.Type.StructField = undefined;
-    inline for (&fields, types, 0..) |*field, param, i| {
-        field.* = .{
-            .name = std.fmt.comptimePrint("{}", .{i}),
-            .type = param,
-            .default_value_ptr = null,
-            .is_comptime = false,
-            .alignment = @alignOf(param),
-        };
+    comptime var field_types: [types.len]type = undefined;
+    inline for (&field_types, types) |*field_type, param| {
+        field_type.* = param;
     }
-    return @Type(.{ .@"struct" = .{
-        .layout = .auto,
-        .fields = &fields,
-        .decls = &.{},
-        .is_tuple = true,
-    } });
+    return @Tuple(&field_types);
 }
 
 /// If `T` is an optional type, returns its child. Otherwise returns it unchanged.
