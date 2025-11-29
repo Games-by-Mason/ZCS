@@ -1,7 +1,7 @@
 .{
     .name = .zcs,
     .fingerprint = 0x21fb2c76fcd0125a,
-    .version = "0.1.0",
+    .version = "0.1.1",
     .minimum_zig_version = "0.15.0",
     .dependencies = .{
         .slot_map = .{
