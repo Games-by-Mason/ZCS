@@ -43,18 +43,20 @@ pub fn main() !void {
     });
     defer cb.deinit(gpa.allocator(), &es);
 
+    var tr: Node.Tree = .empty;
+
     // Create an entity and associate some component data with it.
     // We could do this directly, but instead we're demonstrating the
     // command buffer API.
     const e: Entity = .reserve(&cb);
-    e.add(&cb, Transform, .{});
-    e.add(&cb, Node, .{});
+    _ = e.add(&cb, Transform, .{});
+    _ = e.add(&cb, Node, .{});
 
     // Execute the command buffer
     // We're using a helper from the `transform` extension here instead of
     // executing it directly. This is part of ZCS's support for command
     // buffer extensions, we'll touch more on this later.
-    Transform.Exec.immediate(&es, &cb);
+    Transform.Exec.immediate(&es, &cb, &tr);
 
     // Iterate over entities that contain both transform and node
     var iter = es.iterator(struct {
